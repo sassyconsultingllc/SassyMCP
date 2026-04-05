@@ -37,7 +37,7 @@ nmap — for advanced port scanning
 ### 2. Clone
 
 ```bash
-git clone https://github.com/sassyconsultingllc/SassyMCP.git
+git clone https://github.com/your-org/SassyMCP.git
 cd SassyMCP
 uv sync
 ```
@@ -174,4 +174,4 @@ To add a new module:
 
 ## License
 
-MIT — Sassy Consulting LLC (c) 2026
+MIT License (c) 2026

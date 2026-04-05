@@ -10,8 +10,32 @@ from pathlib import Path
 
 _LOG_DIR = Path.home() / ".sassymcp"
 _LOG_FILE = _LOG_DIR / "audit.log"
+_JSONL_FILE = _LOG_DIR / "audit.jsonl"
 _MAX_LOG_SIZE = 10 * 1024 * 1024  # 10 MB
 _MAX_ROTATIONS = 5
+
+# In-memory counters for get_stats()
+_stats = {
+    "total_calls": 0,
+    "successful_calls": 0,
+    "failed_calls": 0,
+    "tool_counts": {},
+    "session_start": time.time(),
+}
+
+
+def get_stats() -> dict:
+    """Return session usage statistics."""
+    return {
+        "total_calls": _stats["total_calls"],
+        "successful_calls": _stats["successful_calls"],
+        "failed_calls": _stats["failed_calls"],
+        "tool_counts": dict(sorted(
+            _stats["tool_counts"].items(),
+            key=lambda x: x[1], reverse=True
+        )),
+        "session_uptime_seconds": int(time.time() - _stats["session_start"]),
+    }
 
 
 def _rotate_if_needed():
@@ -40,6 +64,29 @@ def _rotate_if_needed():
         pass
 
 
+def _rotate_jsonl_if_needed():
+    """Rotate JSONL file if it exceeds max size."""
+    if not _JSONL_FILE.exists():
+        return
+    try:
+        if _JSONL_FILE.stat().st_size < _MAX_LOG_SIZE:
+            return
+    except OSError:
+        return
+    for i in range(_MAX_ROTATIONS - 1, 0, -1):
+        src = _LOG_DIR / f"audit.jsonl.{i}"
+        dst = _LOG_DIR / f"audit.jsonl.{i + 1}"
+        if src.exists():
+            try:
+                src.rename(dst)
+            except OSError:
+                pass
+    try:
+        _JSONL_FILE.rename(_LOG_DIR / "audit.jsonl.1")
+    except OSError:
+        pass
+
+
 def log_tool_call(tool_name: str, args: dict, elapsed_ms: int = 0, error: str = None):
     """Log a tool invocation. Called by the audit wrapper in server.py.
 
@@ -63,6 +110,7 @@ def log_tool_call(tool_name: str, args: dict, elapsed_ms: int = 0, error: str = 
 
         entry = {
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "timestamp": time.time(),
             "tool": tool_name,
             "args": sanitized,
             "ms": elapsed_ms,
@@ -70,7 +118,20 @@ def log_tool_call(tool_name: str, args: dict, elapsed_ms: int = 0, error: str = 
         if error:
             entry["error"] = error[:500]
 
+        # Update in-memory stats
+        _stats["total_calls"] += 1
+        if error:
+            _stats["failed_calls"] += 1
+        else:
+            _stats["successful_calls"] += 1
+        _stats["tool_counts"][tool_name] = _stats["tool_counts"].get(tool_name, 0) + 1
+
         with _LOG_FILE.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+
+        # Also write JSONL for structured queries (rotate same as log)
+        _rotate_jsonl_if_needed()
+        with _JSONL_FILE.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
     except OSError:
         pass  # Don't let logging failures break tools

@@ -2,7 +2,7 @@
 
 **Unified MCP server for Windows desktop automation, Android device control, security auditing, GitHub operations, web inspection, cross-session communication, and AI workflow persona.**
 
-Built for [Claude Desktop](https://claude.com/download) by [Sassy Consulting LLC](https://sassyconsultingllc.com).
+Compatible with Claude Desktop, Grok Desktop, Cursor, Windsurf, and any MCP client.
 
 > **The official GitHub MCP server has [critical SHA-handling bugs](https://github.com/github/github-mcp-server/issues/2133).** SassyMCP's GitHub module uses correct blob SHA lookups, proper path encoding, atomic multi-file commits via Git Data API, retry logic with exponential backoff, and rate-limit awareness. It's a drop-in replacement that actually works.
 
@@ -26,7 +26,7 @@ SassyMCP replaces multiple fragmented MCP servers (Windows-MCP, Desktop Commande
 | **Shell** | 6 | core | PowerShell, CMD, WSL, exec (Python/Node), persistent sessions |
 | **UIAutomation** | 5 | core | Desktop state, click, type, hotkeys, screenshots |
 | **GitHub Quick** | 6 | github_quick | Daily-driver: push_files, get_file, issue, PR, protect |
-| **Persona** | 5 | persona | SaS workflow style, decision framework, dev practices |
+| **Persona** | 6 | persona | Expert-mode directives, decision framework, engineering standards |
 | **GitHub Full** | 80 | github_full | Complete GitHub API: repos, issues, PRs, actions, security, gists |
 | **ADB** | 10 | android | Android shell, packages, file transfer, logcat, screencap |
 | **PhoneScreen** | 3 | android | scrcpy start/stop, screen recording |
@@ -84,7 +84,7 @@ Data persists across sessions in `~/.sassymcp/tool_usage.json`.
 ## Install
 
 ```bash
-git clone https://github.com/sassyconsultingllc/SassyMCP.git
+git clone https://github.com/your-org/SassyMCP.git
 cd SassyMCP
 uv sync
 
@@ -170,4 +170,4 @@ SassyMCP's GitHub module:
 
 ## License
 
-MIT — Sassy Consulting LLC © 2026
+MIT License © 2026

@@ -20,7 +20,19 @@ def register(server):
     @server.tool()
     async def sassy_env_get(name: str) -> str:
         """Get an environment variable value. Returns error if not set."""
-        val = os.environ.get(name)
+        val = os.environ.get(name) or os.getenv(name)
+        if val is None:
+            # Fallback: try reading from shell (catches inherited vars not in os.environ)
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "cmd.exe", "/c", f"echo %{name}%",
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+                shell_val = stdout.decode("utf-8", errors="replace").strip()
+                if shell_val and shell_val != f"%{name}%":
+                    val = shell_val
+            except Exception:
+                pass
         if val is None:
             return json.dumps({"error": f"'{name}' not set"})
         # Mask anything that looks like a token/key (show first 4 + last 4 chars)
@@ -66,8 +78,15 @@ def register(server):
         Useful for alerting when a long-running task completes.
         Falls back to a BurntToast PowerShell module, then to msg.exe.
         """
+        # Sanitize inputs for XML/PowerShell safety
+        import xml.sax.saxutils
+        safe_title = title.replace(chr(39), chr(39)+chr(39))  # PS single-quote escape
+        safe_message = message.replace(chr(39), chr(39)+chr(39))
+        xml_title = xml.sax.saxutils.escape(title)
+        xml_message = xml.sax.saxutils.escape(message)
+
         # Try BurntToast first (most capable)
-        ps_bt = f"New-BurntToastNotification -Text '{title.replace(chr(39), chr(39)+chr(39))}', '{message.replace(chr(39), chr(39)+chr(39))}'"
+        ps_bt = f"New-BurntToastNotification -Text '{safe_title}', '{safe_message}'"
         proc = await asyncio.create_subprocess_exec(
             "powershell.exe", "-NoProfile", "-Command", ps_bt,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
@@ -87,7 +106,7 @@ def register(server):
             "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType=WindowsRuntime] | Out-Null; "
             "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom, ContentType=WindowsRuntime] | Out-Null; "
             f"$xml = '<toast duration=\"{duration}\"><visual><binding template=\"ToastGeneric\">"
-            f"<text>{title}</text><text>{message}</text></binding></visual></toast>'; "
+            f"<text>{xml_title}</text><text>{xml_message}</text></binding></visual></toast>'; "
             "$xdoc = [Windows.Data.Xml.Dom.XmlDocument]::new(); $xdoc.LoadXml($xml); "
             "$toast = [Windows.UI.Notifications.ToastNotification]::new($xdoc); "
             "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('SassyMCP').Show($toast)"
@@ -187,7 +206,13 @@ def register(server):
 
         try:
             pwd = password.encode() if password else None
+            dest_resolved = os.path.realpath(destination)
             with zipfile.ZipFile(p, "r") as zf:
+                # Zip-slip protection: validate all entry paths before extraction
+                for member in zf.namelist():
+                    member_path = os.path.realpath(os.path.join(destination, member))
+                    if not member_path.startswith(dest_resolved):
+                        return json.dumps({"error": f"Zip-slip detected: {member} escapes destination"})
                 zf.extractall(destination, pwd=pwd)
                 names = zf.namelist()
             return json.dumps({
@@ -305,6 +330,11 @@ def register(server):
         headers: JSON object of headers, e.g. {"Authorization": "Bearer xxx"}
         body: request body (string or JSON)
         """
+        from sassymcp.modules._security import validate_url
+        ok, err = validate_url(url)
+        if not ok:
+            return json.dumps({"error": err})
+
         try:
             import httpx
         except ImportError:

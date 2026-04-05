@@ -33,20 +33,22 @@ def register(server):
         """Check TLS certificate for a host."""
         import re
         import ssl
+        import socket
         if not re.match(r'^[A-Za-z0-9\.\-\:]+$', target):
             return f"Error: invalid target: {target!r}"
+        # Use synchronous ssl socket — avoids Python 3.14 asyncio
+        # APPLICATION_DATA_AFTER_CLOSE_NOTIFY errors
         ctx = ssl.create_default_context()
         try:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(target, port, ssl=ctx), timeout=10
-            )
-            cert = writer.transport.get_extra_info("peercert")
-            writer.close()
-            await writer.wait_closed()
+            def _get_cert():
+                with socket.create_connection((target, port), timeout=10) as sock:
+                    with ctx.wrap_socket(sock, server_hostname=target) as ssock:
+                        return ssock.getpeercert()
+            cert = await asyncio.get_event_loop().run_in_executor(None, _get_cert)
         except Exception as e:
-            return f"Error: {e}"
+            return json.dumps({"error": str(e)})
         if not cert:
-            return "Error: could not retrieve certificate"
+            return json.dumps({"error": "could not retrieve certificate"})
         return json.dumps({
             "subject": dict(x[0] for x in cert.get("subject", ())),
             "issuer": dict(x[0] for x in cert.get("issuer", ())),

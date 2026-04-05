@@ -30,7 +30,12 @@ def _err(msg: str) -> str:
 def register(server):
     """Register lean GitHub tools for daily workflow."""
 
-    gh = get_client()
+    _gh = None
+    def _get_gh():
+        nonlocal _gh
+        if _gh is None:
+            _gh = get_client()
+        return _gh
 
     @server.tool()
     async def sassy_ghq_push(
@@ -43,7 +48,7 @@ def register(server):
         """
         try:
             file_list = json.loads(files) if isinstance(files, str) else files
-            result = await gh.push_files_atomic(owner, repo, branch, file_list, message)
+            result = await _get_gh().push_files_atomic(owner, repo, branch, file_list, message)
             return _ok(result)
         except (json.JSONDecodeError, TypeError) as e:
             return _err(f"Invalid files JSON: {e}")
@@ -55,8 +60,8 @@ def register(server):
         """Get file contents + SHA from a repo."""
         try:
             params = {"ref": ref} if ref else {}
-            resp = await gh.get(f"repos/{owner}/{repo}/contents/{path}", params=params)
-            data = gh._check(resp, f"get {path}")
+            resp = await _get_gh().get(f"repos/{owner}/{repo}/contents/{path}", params=params)
+            data = _get_gh()._check(resp, f"get {path}")
             if isinstance(data, dict) and data.get("encoding") == "base64" and data.get("content"):
                 try:
                     data["decoded_content"] = base64.b64decode(data["content"]).decode("utf-8", errors="replace")
@@ -78,8 +83,8 @@ def register(server):
                 payload["body"] = body
             if labels:
                 payload["labels"] = [l.strip() for l in labels.split(",")]
-            resp = await gh.post(f"repos/{owner}/{repo}/issues", json_body=payload)
-            return _ok(gh._check(resp, "create issue"))
+            resp = await _get_gh().post(f"repos/{owner}/{repo}/issues", json_body=payload)
+            return _ok(_get_gh()._check(resp, "create issue"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -87,11 +92,11 @@ def register(server):
     async def sassy_ghq_issues(owner: str, repo: str, state: str = "open", page: int = 1) -> str:
         """List issues."""
         try:
-            resp = await gh.get(
+            resp = await _get_gh().get(
                 f"repos/{owner}/{repo}/issues",
                 params={"state": state, "page": page, "per_page": 30},
             )
-            return _ok(gh._check(resp, "list issues"))
+            return _ok(_get_gh()._check(resp, "list issues"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -101,11 +106,11 @@ def register(server):
     ) -> str:
         """Create a pull request."""
         try:
-            resp = await gh.post(
+            resp = await _get_gh().post(
                 f"repos/{owner}/{repo}/pulls",
                 json_body={"title": title, "head": head, "base": base, "body": body},
             )
-            return _ok(gh._check(resp, "create PR"))
+            return _ok(_get_gh()._check(resp, "create PR"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -121,7 +126,7 @@ def register(server):
                 "allow_force_pushes": False,
                 "allow_deletions": False,
             }
-            resp = await gh.put(f"repos/{owner}/{repo}/branches/{branch}/protection", json_body=body)
-            return _ok(gh._check(resp, "protect branch"))
+            resp = await _get_gh().put(f"repos/{owner}/{repo}/branches/{branch}/protection", json_body=body)
+            return _ok(_get_gh()._check(resp, "protect branch"))
         except GitHubAPIError as e:
             return _err(str(e))

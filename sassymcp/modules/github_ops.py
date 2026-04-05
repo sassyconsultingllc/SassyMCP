@@ -33,7 +33,12 @@ def _err(msg: str) -> str:
 def register(server):
     """Register all GitHub tools — 80 tools covering full GitHub API."""
 
-    gh = get_client()
+    _gh = None
+    def _get_gh():
+        nonlocal _gh
+        if _gh is None:
+            _gh = get_client()
+        return _gh
 
     # ══════════════════════════════════════════════════════════════════
     # CONTEXT
@@ -43,8 +48,8 @@ def register(server):
     async def sassy_gh_get_me() -> str:
         """Get the authenticated GitHub user's profile."""
         try:
-            resp = await gh.get("user")
-            return _ok(gh._check(resp, "get user"))
+            resp = await _get_gh().get("user")
+            return _ok(_get_gh()._check(resp, "get user"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -52,8 +57,8 @@ def register(server):
     async def sassy_gh_get_teams(org: str) -> str:
         """List teams for an organization."""
         try:
-            resp = await gh.get(f"orgs/{org}/teams")
-            return _ok(gh._check(resp, "list teams"))
+            resp = await _get_gh().get(f"orgs/{org}/teams")
+            return _ok(_get_gh()._check(resp, "list teams"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -61,8 +66,8 @@ def register(server):
     async def sassy_gh_get_team_members(org: str, team_slug: str) -> str:
         """List members of a team."""
         try:
-            resp = await gh.get(f"orgs/{org}/teams/{team_slug}/members")
-            return _ok(gh._check(resp, "list team members"))
+            resp = await _get_gh().get(f"orgs/{org}/teams/{team_slug}/members")
+            return _ok(_get_gh()._check(resp, "list team members"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -74,8 +79,8 @@ def register(server):
     async def sassy_gh_search_repos(query: str, page: int = 1, per_page: int = 30) -> str:
         """Search GitHub repositories."""
         try:
-            resp = await gh.get("search/repositories", params={"q": query, "page": page, "per_page": per_page})
-            return _ok(gh._check(resp, "search repos"))
+            resp = await _get_gh().get("search/repositories", params={"q": query, "page": page, "per_page": per_page})
+            return _ok(_get_gh()._check(resp, "search repos"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -86,8 +91,8 @@ def register(server):
             params = {}
             if ref:
                 params["ref"] = ref
-            resp = await gh.get(f"repos/{owner}/{repo}/contents/{path}", params=params)
-            data = gh._check(resp, f"get contents {path}")
+            resp = await _get_gh().get(f"repos/{owner}/{repo}/contents/{path}", params=params)
+            data = _get_gh()._check(resp, f"get contents {path}")
             if isinstance(data, dict) and data.get("encoding") == "base64" and data.get("content"):
                 try:
                     data["decoded_content"] = base64.b64decode(data["content"]).decode("utf-8", errors="replace")
@@ -104,8 +109,8 @@ def register(server):
         try:
             encoded = base64.b64encode(content.encode()).decode()
             body = {"message": message, "content": encoded, "branch": branch}
-            resp = await gh.put(f"repos/{owner}/{repo}/contents/{path}", json_body=body)
-            return _ok(gh._check(resp, "create file"))
+            resp = await _get_gh().put(f"repos/{owner}/{repo}/contents/{path}", json_body=body)
+            return _ok(_get_gh()._check(resp, "create file"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -114,13 +119,13 @@ def register(server):
         """Update EXISTING file. Auto-fetches blob SHA if not provided."""
         try:
             if not sha:
-                sha = await gh.get_file_sha(owner, repo, path, branch)
+                sha = await _get_gh().get_file_sha(owner, repo, path, branch)
                 if not sha:
                     return _err(f"File {path} not found on {branch}. Use create_file.")
             encoded = base64.b64encode(content.encode()).decode()
             body = {"message": message, "content": encoded, "branch": branch, "sha": sha}
-            resp = await gh.put(f"repos/{owner}/{repo}/contents/{path}", json_body=body)
-            return _ok(gh._check(resp, "update file"))
+            resp = await _get_gh().put(f"repos/{owner}/{repo}/contents/{path}", json_body=body)
+            return _ok(_get_gh()._check(resp, "update file"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -129,12 +134,12 @@ def register(server):
         """Delete a file from a repository."""
         try:
             if not sha:
-                sha = await gh.get_file_sha(owner, repo, path, branch)
+                sha = await _get_gh().get_file_sha(owner, repo, path, branch)
                 if not sha:
                     return _err(f"File {path} not found on {branch}")
             body = {"message": message, "sha": sha, "branch": branch}
-            resp = await gh.delete(f"repos/{owner}/{repo}/contents/{path}", json_body=body)
-            return _ok(gh._check(resp, "delete file"))
+            resp = await _get_gh().delete(f"repos/{owner}/{repo}/contents/{path}", json_body=body)
+            return _ok(_get_gh()._check(resp, "delete file"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -144,7 +149,7 @@ def register(server):
         files: JSON array of {"path": "...", "content": "..."} objects."""
         try:
             file_list = json.loads(files) if isinstance(files, str) else files
-            result = await gh.push_files_atomic(owner, repo, branch, file_list, message)
+            result = await _get_gh().push_files_atomic(owner, repo, branch, file_list, message)
             return _ok(result)
         except (json.JSONDecodeError, TypeError) as e:
             return _err(f"Invalid files JSON: {e}")
@@ -157,8 +162,8 @@ def register(server):
         try:
             body: dict[str, Any] = {"name": name, "description": description, "private": private, "auto_init": auto_init}
             path = f"orgs/{org}/repos" if org else "user/repos"
-            resp = await gh.post(path, json_body=body)
-            return _ok(gh._check(resp, "create repo"))
+            resp = await _get_gh().post(path, json_body=body)
+            return _ok(_get_gh()._check(resp, "create repo"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -167,8 +172,8 @@ def register(server):
         """Fork a repository."""
         try:
             body = {"organization": org} if org else {}
-            resp = await gh.post(f"repos/{owner}/{repo}/forks", json_body=body)
-            return _ok(gh._check(resp, "fork repo"))
+            resp = await _get_gh().post(f"repos/{owner}/{repo}/forks", json_body=body)
+            return _ok(_get_gh()._check(resp, "fork repo"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -177,8 +182,8 @@ def register(server):
         """Update repo settings. settings: JSON e.g. {"visibility":"public"}"""
         try:
             body = json.loads(settings) if isinstance(settings, str) else settings
-            resp = await gh.patch(f"repos/{owner}/{repo}", json_body=body)
-            return _ok(gh._check(resp, "update repo"))
+            resp = await _get_gh().patch(f"repos/{owner}/{repo}", json_body=body)
+            return _ok(_get_gh()._check(resp, "update repo"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -186,8 +191,8 @@ def register(server):
     async def sassy_gh_get_commit(owner: str, repo: str, sha: str) -> str:
         """Get details for a specific commit."""
         try:
-            resp = await gh.get(f"repos/{owner}/{repo}/commits/{sha}")
-            return _ok(gh._check(resp, "get commit"))
+            resp = await _get_gh().get(f"repos/{owner}/{repo}/commits/{sha}")
+            return _ok(_get_gh()._check(resp, "get commit"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -198,8 +203,8 @@ def register(server):
             params: dict[str, Any] = {"page": page, "per_page": per_page}
             if sha: params["sha"] = sha
             if author: params["author"] = author
-            resp = await gh.get(f"repos/{owner}/{repo}/commits", params=params)
-            return _ok(gh._check(resp, "list commits"))
+            resp = await _get_gh().get(f"repos/{owner}/{repo}/commits", params=params)
+            return _ok(_get_gh()._check(resp, "list commits"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -207,8 +212,8 @@ def register(server):
     async def sassy_gh_list_branches(owner: str, repo: str, page: int = 1, per_page: int = 30) -> str:
         """List branches in a repository."""
         try:
-            resp = await gh.get(f"repos/{owner}/{repo}/branches", params={"page": page, "per_page": per_page})
-            return _ok(gh._check(resp, "list branches"))
+            resp = await _get_gh().get(f"repos/{owner}/{repo}/branches", params={"page": page, "per_page": per_page})
+            return _ok(_get_gh()._check(resp, "list branches"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -217,14 +222,14 @@ def register(server):
         """Create a new branch."""
         try:
             if not from_branch:
-                repo_resp = await gh.get(f"repos/{owner}/{repo}")
-                repo_data = gh._check(repo_resp, "get repo")
+                repo_resp = await _get_gh().get(f"repos/{owner}/{repo}")
+                repo_data = _get_gh()._check(repo_resp, "get repo")
                 from_branch = repo_data["default_branch"]
-            ref_resp = await gh.get(f"repos/{owner}/{repo}/git/refs/heads/{from_branch}")
-            ref_data = gh._check(ref_resp, "get source branch")
+            ref_resp = await _get_gh().get(f"repos/{owner}/{repo}/git/refs/heads/{from_branch}")
+            ref_data = _get_gh()._check(ref_resp, "get source branch")
             body = {"ref": f"refs/heads/{branch}", "sha": ref_data["object"]["sha"]}
-            resp = await gh.post(f"repos/{owner}/{repo}/git/refs", json_body=body)
-            return _ok(gh._check(resp, "create branch"))
+            resp = await _get_gh().post(f"repos/{owner}/{repo}/git/refs", json_body=body)
+            return _ok(_get_gh()._check(resp, "create branch"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -232,8 +237,8 @@ def register(server):
     async def sassy_gh_list_tags(owner: str, repo: str, page: int = 1, per_page: int = 30) -> str:
         """List tags in a repository."""
         try:
-            resp = await gh.get(f"repos/{owner}/{repo}/tags", params={"page": page, "per_page": per_page})
-            return _ok(gh._check(resp, "list tags"))
+            resp = await _get_gh().get(f"repos/{owner}/{repo}/tags", params={"page": page, "per_page": per_page})
+            return _ok(_get_gh()._check(resp, "list tags"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -241,10 +246,10 @@ def register(server):
     async def sassy_gh_get_tag(owner: str, repo: str, tag: str) -> str:
         """Get details for a specific tag."""
         try:
-            ref_resp = await gh.get(f"repos/{owner}/{repo}/git/refs/tags/{tag}")
-            ref_data = gh._check(ref_resp, "get tag ref")
-            tag_resp = await gh.get(f"repos/{owner}/{repo}/git/tags/{ref_data['object']['sha']}")
-            return _ok(gh._check(tag_resp, "get tag"))
+            ref_resp = await _get_gh().get(f"repos/{owner}/{repo}/git/refs/tags/{tag}")
+            ref_data = _get_gh()._check(ref_resp, "get tag ref")
+            tag_resp = await _get_gh().get(f"repos/{owner}/{repo}/git/tags/{ref_data['object']['sha']}")
+            return _ok(_get_gh()._check(tag_resp, "get tag"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -252,8 +257,8 @@ def register(server):
     async def sassy_gh_list_releases(owner: str, repo: str, page: int = 1, per_page: int = 30) -> str:
         """List releases."""
         try:
-            resp = await gh.get(f"repos/{owner}/{repo}/releases", params={"page": page, "per_page": per_page})
-            return _ok(gh._check(resp, "list releases"))
+            resp = await _get_gh().get(f"repos/{owner}/{repo}/releases", params={"page": page, "per_page": per_page})
+            return _ok(_get_gh()._check(resp, "list releases"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -261,8 +266,8 @@ def register(server):
     async def sassy_gh_get_latest_release(owner: str, repo: str) -> str:
         """Get latest release."""
         try:
-            resp = await gh.get(f"repos/{owner}/{repo}/releases/latest")
-            return _ok(gh._check(resp, "get latest release"))
+            resp = await _get_gh().get(f"repos/{owner}/{repo}/releases/latest")
+            return _ok(_get_gh()._check(resp, "get latest release"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -270,8 +275,8 @@ def register(server):
     async def sassy_gh_get_release_by_tag(owner: str, repo: str, tag: str) -> str:
         """Get release by tag name."""
         try:
-            resp = await gh.get(f"repos/{owner}/{repo}/releases/tags/{tag}")
-            return _ok(gh._check(resp, "get release"))
+            resp = await _get_gh().get(f"repos/{owner}/{repo}/releases/tags/{tag}")
+            return _ok(_get_gh()._check(resp, "get release"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -280,8 +285,8 @@ def register(server):
         """List starred repos. Empty username = authenticated user."""
         try:
             path = f"users/{username}/starred" if username else "user/starred"
-            resp = await gh.get(path, params={"page": page, "per_page": per_page})
-            return _ok(gh._check(resp, "list starred"))
+            resp = await _get_gh().get(path, params={"page": page, "per_page": per_page})
+            return _ok(_get_gh()._check(resp, "list starred"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -289,7 +294,7 @@ def register(server):
     async def sassy_gh_star_repo(owner: str, repo: str) -> str:
         """Star a repository."""
         try:
-            await gh.put(f"user/starred/{owner}/{repo}")
+            await _get_gh().put(f"user/starred/{owner}/{repo}")
             return _ok({"status": "starred", "repo": f"{owner}/{repo}"})
         except GitHubAPIError as e:
             return _err(str(e))
@@ -298,7 +303,7 @@ def register(server):
     async def sassy_gh_unstar_repo(owner: str, repo: str) -> str:
         """Unstar a repository."""
         try:
-            await gh.delete(f"user/starred/{owner}/{repo}")
+            await _get_gh().delete(f"user/starred/{owner}/{repo}")
             return _ok({"status": "unstarred", "repo": f"{owner}/{repo}"})
         except GitHubAPIError as e:
             return _err(str(e))
@@ -308,8 +313,8 @@ def register(server):
         """Get a Git tree. recursive=True for full listing."""
         try:
             params = {"recursive": "1"} if recursive else {}
-            resp = await gh.get(f"repos/{owner}/{repo}/git/trees/{sha}", params=params)
-            return _ok(gh._check(resp, "get tree"))
+            resp = await _get_gh().get(f"repos/{owner}/{repo}/git/trees/{sha}", params=params)
+            return _ok(_get_gh()._check(resp, "get tree"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -321,8 +326,8 @@ def register(server):
     async def sassy_gh_get_issue(owner: str, repo: str, issue_number: int) -> str:
         """Get issue details."""
         try:
-            resp = await gh.get(f"repos/{owner}/{repo}/issues/{issue_number}")
-            return _ok(gh._check(resp, "get issue"))
+            resp = await _get_gh().get(f"repos/{owner}/{repo}/issues/{issue_number}")
+            return _ok(_get_gh()._check(resp, "get issue"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -332,8 +337,8 @@ def register(server):
         try:
             params: dict[str, Any] = {"state": state, "sort": sort, "direction": direction, "page": page, "per_page": per_page}
             if labels: params["labels"] = labels
-            resp = await gh.get(f"repos/{owner}/{repo}/issues", params=params)
-            return _ok(gh._check(resp, "list issues"))
+            resp = await _get_gh().get(f"repos/{owner}/{repo}/issues", params=params)
+            return _ok(_get_gh()._check(resp, "list issues"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -345,8 +350,8 @@ def register(server):
             if body: payload["body"] = body
             if labels: payload["labels"] = [l.strip() for l in labels.split(",")]
             if assignees: payload["assignees"] = [a.strip() for a in assignees.split(",")]
-            resp = await gh.post(f"repos/{owner}/{repo}/issues", json_body=payload)
-            return _ok(gh._check(resp, "create issue"))
+            resp = await _get_gh().post(f"repos/{owner}/{repo}/issues", json_body=payload)
+            return _ok(_get_gh()._check(resp, "create issue"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -360,8 +365,8 @@ def register(server):
             if state: payload["state"] = state
             if labels: payload["labels"] = [l.strip() for l in labels.split(",")]
             if assignees: payload["assignees"] = [a.strip() for a in assignees.split(",")]
-            resp = await gh.patch(f"repos/{owner}/{repo}/issues/{issue_number}", json_body=payload)
-            return _ok(gh._check(resp, "update issue"))
+            resp = await _get_gh().patch(f"repos/{owner}/{repo}/issues/{issue_number}", json_body=payload)
+            return _ok(_get_gh()._check(resp, "update issue"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -369,8 +374,8 @@ def register(server):
     async def sassy_gh_add_issue_comment(owner: str, repo: str, issue_number: int, body: str) -> str:
         """Add a comment to an issue."""
         try:
-            resp = await gh.post(f"repos/{owner}/{repo}/issues/{issue_number}/comments", json_body={"body": body})
-            return _ok(gh._check(resp, "add comment"))
+            resp = await _get_gh().post(f"repos/{owner}/{repo}/issues/{issue_number}/comments", json_body={"body": body})
+            return _ok(_get_gh()._check(resp, "add comment"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -380,8 +385,8 @@ def register(server):
         try:
             params: dict[str, Any] = {"q": query, "order": order, "page": page, "per_page": per_page}
             if sort: params["sort"] = sort
-            resp = await gh.get("search/issues", params=params)
-            return _ok(gh._check(resp, "search issues"))
+            resp = await _get_gh().get("search/issues", params=params)
+            return _ok(_get_gh()._check(resp, "search issues"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -393,8 +398,8 @@ def register(server):
     async def sassy_gh_get_pr(owner: str, repo: str, pull_number: int) -> str:
         """Get PR details."""
         try:
-            resp = await gh.get(f"repos/{owner}/{repo}/pulls/{pull_number}")
-            return _ok(gh._check(resp, "get PR"))
+            resp = await _get_gh().get(f"repos/{owner}/{repo}/pulls/{pull_number}")
+            return _ok(_get_gh()._check(resp, "get PR"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -405,8 +410,8 @@ def register(server):
             params: dict[str, Any] = {"state": state, "sort": sort, "direction": direction, "page": page, "per_page": per_page}
             if base: params["base"] = base
             if head: params["head"] = head
-            resp = await gh.get(f"repos/{owner}/{repo}/pulls", params=params)
-            return _ok(gh._check(resp, "list PRs"))
+            resp = await _get_gh().get(f"repos/{owner}/{repo}/pulls", params=params)
+            return _ok(_get_gh()._check(resp, "list PRs"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -414,8 +419,8 @@ def register(server):
     async def sassy_gh_create_pr(owner: str, repo: str, title: str, head: str, base: str, body: str = "", draft: bool = False) -> str:
         """Create a pull request."""
         try:
-            resp = await gh.post(f"repos/{owner}/{repo}/pulls", json_body={"title": title, "head": head, "base": base, "body": body, "draft": draft})
-            return _ok(gh._check(resp, "create PR"))
+            resp = await _get_gh().post(f"repos/{owner}/{repo}/pulls", json_body={"title": title, "head": head, "base": base, "body": body, "draft": draft})
+            return _ok(_get_gh()._check(resp, "create PR"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -428,8 +433,8 @@ def register(server):
             if body: payload["body"] = body
             if state: payload["state"] = state
             if base: payload["base"] = base
-            resp = await gh.patch(f"repos/{owner}/{repo}/pulls/{pull_number}", json_body=payload)
-            return _ok(gh._check(resp, "update PR"))
+            resp = await _get_gh().patch(f"repos/{owner}/{repo}/pulls/{pull_number}", json_body=payload)
+            return _ok(_get_gh()._check(resp, "update PR"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -440,8 +445,8 @@ def register(server):
             payload: dict[str, Any] = {"merge_method": merge_method}
             if commit_title: payload["commit_title"] = commit_title
             if commit_message: payload["commit_message"] = commit_message
-            resp = await gh.put(f"repos/{owner}/{repo}/pulls/{pull_number}/merge", json_body=payload)
-            return _ok(gh._check(resp, "merge PR"))
+            resp = await _get_gh().put(f"repos/{owner}/{repo}/pulls/{pull_number}/merge", json_body=payload)
+            return _ok(_get_gh()._check(resp, "merge PR"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -449,8 +454,8 @@ def register(server):
     async def sassy_gh_pr_files(owner: str, repo: str, pull_number: int) -> str:
         """Get files changed in a PR."""
         try:
-            resp = await gh.get(f"repos/{owner}/{repo}/pulls/{pull_number}/files")
-            return _ok(gh._check(resp, "PR files"))
+            resp = await _get_gh().get(f"repos/{owner}/{repo}/pulls/{pull_number}/files")
+            return _ok(_get_gh()._check(resp, "PR files"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -458,8 +463,8 @@ def register(server):
     async def sassy_gh_pr_reviews(owner: str, repo: str, pull_number: int) -> str:
         """Get reviews on a PR."""
         try:
-            resp = await gh.get(f"repos/{owner}/{repo}/pulls/{pull_number}/reviews")
-            return _ok(gh._check(resp, "PR reviews"))
+            resp = await _get_gh().get(f"repos/{owner}/{repo}/pulls/{pull_number}/reviews")
+            return _ok(_get_gh()._check(resp, "PR reviews"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -467,8 +472,8 @@ def register(server):
     async def sassy_gh_pr_review_comments(owner: str, repo: str, pull_number: int) -> str:
         """Get review comments on a PR."""
         try:
-            resp = await gh.get(f"repos/{owner}/{repo}/pulls/{pull_number}/comments")
-            return _ok(gh._check(resp, "PR comments"))
+            resp = await _get_gh().get(f"repos/{owner}/{repo}/pulls/{pull_number}/comments")
+            return _ok(_get_gh()._check(resp, "PR comments"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -479,8 +484,8 @@ def register(server):
             payload: dict[str, Any] = {"event": event}
             if body: payload["body"] = body
             if comments: payload["comments"] = json.loads(comments)
-            resp = await gh.post(f"repos/{owner}/{repo}/pulls/{pull_number}/reviews", json_body=payload)
-            return _ok(gh._check(resp, "create review"))
+            resp = await _get_gh().post(f"repos/{owner}/{repo}/pulls/{pull_number}/reviews", json_body=payload)
+            return _ok(_get_gh()._check(resp, "create review"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -488,8 +493,8 @@ def register(server):
     async def sassy_gh_update_pr_branch(owner: str, repo: str, pull_number: int) -> str:
         """Update PR branch with latest from base."""
         try:
-            resp = await gh.put(f"repos/{owner}/{repo}/pulls/{pull_number}/update-branch")
-            return _ok(gh._check(resp, "update PR branch"))
+            resp = await _get_gh().put(f"repos/{owner}/{repo}/pulls/{pull_number}/update-branch")
+            return _ok(_get_gh()._check(resp, "update PR branch"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -497,10 +502,10 @@ def register(server):
     async def sassy_gh_pr_status(owner: str, repo: str, pull_number: int) -> str:
         """Get combined status checks for a PR."""
         try:
-            pr_resp = await gh.get(f"repos/{owner}/{repo}/pulls/{pull_number}")
-            pr_data = gh._check(pr_resp, "get PR")
-            resp = await gh.get(f"repos/{owner}/{repo}/commits/{pr_data['head']['sha']}/status")
-            return _ok(gh._check(resp, "PR status"))
+            pr_resp = await _get_gh().get(f"repos/{owner}/{repo}/pulls/{pull_number}")
+            pr_data = _get_gh()._check(pr_resp, "get PR")
+            resp = await _get_gh().get(f"repos/{owner}/{repo}/commits/{pr_data['head']['sha']}/status")
+            return _ok(_get_gh()._check(resp, "PR status"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -512,8 +517,8 @@ def register(server):
     async def sassy_gh_search_code(query: str, page: int = 1, per_page: int = 30) -> str:
         """Search code across GitHub."""
         try:
-            resp = await gh.get("search/code", params={"q": query, "page": page, "per_page": per_page})
-            return _ok(gh._check(resp, "search code"))
+            resp = await _get_gh().get("search/code", params={"q": query, "page": page, "per_page": per_page})
+            return _ok(_get_gh()._check(resp, "search code"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -523,8 +528,8 @@ def register(server):
         try:
             params: dict[str, Any] = {"q": query, "order": order, "page": page, "per_page": per_page}
             if sort: params["sort"] = sort
-            resp = await gh.get("search/users", params=params)
-            return _ok(gh._check(resp, "search users"))
+            resp = await _get_gh().get("search/users", params=params)
+            return _ok(_get_gh()._check(resp, "search users"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -532,8 +537,8 @@ def register(server):
     async def sassy_gh_search_orgs(query: str, page: int = 1, per_page: int = 30) -> str:
         """Search GitHub organizations."""
         try:
-            resp = await gh.get("search/users", params={"q": f"{query} type:org", "page": page, "per_page": per_page})
-            return _ok(gh._check(resp, "search orgs"))
+            resp = await _get_gh().get("search/users", params={"q": f"{query} type:org", "page": page, "per_page": per_page})
+            return _ok(_get_gh()._check(resp, "search orgs"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -545,8 +550,8 @@ def register(server):
     async def sassy_gh_list_code_scanning(owner: str, repo: str, state: str = "open", page: int = 1) -> str:
         """List code scanning alerts."""
         try:
-            resp = await gh.get(f"repos/{owner}/{repo}/code-scanning/alerts", params={"state": state, "page": page})
-            return _ok(gh._check(resp, "code scanning"))
+            resp = await _get_gh().get(f"repos/{owner}/{repo}/code-scanning/alerts", params={"state": state, "page": page})
+            return _ok(_get_gh()._check(resp, "code scanning"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -554,8 +559,8 @@ def register(server):
     async def sassy_gh_get_code_scanning(owner: str, repo: str, alert_number: int) -> str:
         """Get specific code scanning alert."""
         try:
-            resp = await gh.get(f"repos/{owner}/{repo}/code-scanning/alerts/{alert_number}")
-            return _ok(gh._check(resp, "code scanning alert"))
+            resp = await _get_gh().get(f"repos/{owner}/{repo}/code-scanning/alerts/{alert_number}")
+            return _ok(_get_gh()._check(resp, "code scanning alert"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -563,8 +568,8 @@ def register(server):
     async def sassy_gh_list_secret_scanning(owner: str, repo: str, state: str = "open", page: int = 1) -> str:
         """List secret scanning alerts."""
         try:
-            resp = await gh.get(f"repos/{owner}/{repo}/secret-scanning/alerts", params={"state": state, "page": page})
-            return _ok(gh._check(resp, "secret scanning"))
+            resp = await _get_gh().get(f"repos/{owner}/{repo}/secret-scanning/alerts", params={"state": state, "page": page})
+            return _ok(_get_gh()._check(resp, "secret scanning"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -572,8 +577,8 @@ def register(server):
     async def sassy_gh_get_secret_scanning(owner: str, repo: str, alert_number: int) -> str:
         """Get specific secret scanning alert."""
         try:
-            resp = await gh.get(f"repos/{owner}/{repo}/secret-scanning/alerts/{alert_number}")
-            return _ok(gh._check(resp, "secret alert"))
+            resp = await _get_gh().get(f"repos/{owner}/{repo}/secret-scanning/alerts/{alert_number}")
+            return _ok(_get_gh()._check(resp, "secret alert"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -581,8 +586,8 @@ def register(server):
     async def sassy_gh_list_dependabot(owner: str, repo: str, state: str = "open", page: int = 1) -> str:
         """List Dependabot alerts."""
         try:
-            resp = await gh.get(f"repos/{owner}/{repo}/dependabot/alerts", params={"state": state, "page": page})
-            return _ok(gh._check(resp, "dependabot"))
+            resp = await _get_gh().get(f"repos/{owner}/{repo}/dependabot/alerts", params={"state": state, "page": page})
+            return _ok(_get_gh()._check(resp, "dependabot"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -590,8 +595,8 @@ def register(server):
     async def sassy_gh_get_dependabot(owner: str, repo: str, alert_number: int) -> str:
         """Get specific Dependabot alert."""
         try:
-            resp = await gh.get(f"repos/{owner}/{repo}/dependabot/alerts/{alert_number}")
-            return _ok(gh._check(resp, "dependabot alert"))
+            resp = await _get_gh().get(f"repos/{owner}/{repo}/dependabot/alerts/{alert_number}")
+            return _ok(_get_gh()._check(resp, "dependabot alert"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -605,8 +610,8 @@ def register(server):
         try:
             params: dict[str, Any] = {"page": page}
             if all_notifs: params["all"] = "true"
-            resp = await gh.get("notifications", params=params)
-            return _ok(gh._check(resp, "notifications"))
+            resp = await _get_gh().get("notifications", params=params)
+            return _ok(_get_gh()._check(resp, "notifications"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -614,8 +619,8 @@ def register(server):
     async def sassy_gh_get_notification(thread_id: str) -> str:
         """Get notification thread."""
         try:
-            resp = await gh.get(f"notifications/threads/{thread_id}")
-            return _ok(gh._check(resp, "notification"))
+            resp = await _get_gh().get(f"notifications/threads/{thread_id}")
+            return _ok(_get_gh()._check(resp, "notification"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -623,7 +628,7 @@ def register(server):
     async def sassy_gh_mark_notification_read(thread_id: str) -> str:
         """Mark notification read."""
         try:
-            await gh.patch(f"notifications/threads/{thread_id}")
+            await _get_gh().patch(f"notifications/threads/{thread_id}")
             return _ok({"status": "read", "thread_id": thread_id})
         except GitHubAPIError as e:
             return _err(str(e))
@@ -632,7 +637,7 @@ def register(server):
     async def sassy_gh_mark_all_read() -> str:
         """Mark all notifications read."""
         try:
-            await gh.put("notifications", json_body={"read": True})
+            await _get_gh().put("notifications", json_body={"read": True})
             return _ok({"status": "all_read"})
         except GitHubAPIError as e:
             return _err(str(e))
@@ -641,8 +646,8 @@ def register(server):
     async def sassy_gh_notification_sub(thread_id: str, ignored: bool = False) -> str:
         """Set notification subscription. ignored=True to mute."""
         try:
-            resp = await gh.put(f"notifications/threads/{thread_id}/subscription", json_body={"ignored": ignored})
-            return _ok(gh._check(resp, "subscription"))
+            resp = await _get_gh().put(f"notifications/threads/{thread_id}/subscription", json_body={"ignored": ignored})
+            return _ok(_get_gh()._check(resp, "subscription"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -650,8 +655,8 @@ def register(server):
     async def sassy_gh_repo_notification_sub(owner: str, repo: str, ignored: bool = False) -> str:
         """Set repo notification subscription."""
         try:
-            resp = await gh.put(f"repos/{owner}/{repo}/subscription", json_body={"subscribed": not ignored, "ignored": ignored})
-            return _ok(gh._check(resp, "repo subscription"))
+            resp = await _get_gh().put(f"repos/{owner}/{repo}/subscription", json_body={"subscribed": not ignored, "ignored": ignored})
+            return _ok(_get_gh()._check(resp, "repo subscription"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -664,8 +669,8 @@ def register(server):
         """List discussions (GraphQL)."""
         try:
             q = "query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){discussions(first:$n,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{number title url author{login}createdAt category{name}answeredAt}}}}"
-            resp = await gh.post("graphql", json_body={"query": q, "variables": {"o": owner, "r": repo, "n": per_page}})
-            data = gh._check(resp, "discussions")
+            resp = await _get_gh().post("graphql", json_body={"query": q, "variables": {"o": owner, "r": repo, "n": per_page}})
+            data = _get_gh()._check(resp, "discussions")
             return _ok(data.get("data", {}).get("repository", {}).get("discussions", {}).get("nodes", []))
         except GitHubAPIError as e:
             return _err(str(e))
@@ -675,8 +680,8 @@ def register(server):
         """Get discussion by number (GraphQL)."""
         try:
             q = "query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){discussion(number:$n){number title url body author{login}createdAt category{name}comments(first:20){nodes{body author{login}createdAt}}}}}"
-            resp = await gh.post("graphql", json_body={"query": q, "variables": {"o": owner, "r": repo, "n": number}})
-            data = gh._check(resp, "discussion")
+            resp = await _get_gh().post("graphql", json_body={"query": q, "variables": {"o": owner, "r": repo, "n": number}})
+            data = _get_gh()._check(resp, "discussion")
             return _ok(data.get("data", {}).get("repository", {}).get("discussion", {}))
         except GitHubAPIError as e:
             return _err(str(e))
@@ -686,8 +691,8 @@ def register(server):
         """List discussion categories."""
         try:
             q = "query($o:String!,$r:String!){repository(owner:$o,name:$r){discussionCategories(first:25){nodes{id name description emoji}}}}"
-            resp = await gh.post("graphql", json_body={"query": q, "variables": {"o": owner, "r": repo}})
-            data = gh._check(resp, "categories")
+            resp = await _get_gh().post("graphql", json_body={"query": q, "variables": {"o": owner, "r": repo}})
+            data = _get_gh()._check(resp, "categories")
             return _ok(data.get("data", {}).get("repository", {}).get("discussionCategories", {}).get("nodes", []))
         except GitHubAPIError as e:
             return _err(str(e))
@@ -703,8 +708,8 @@ def register(server):
             path = f"repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs" if workflow_id else f"repos/{owner}/{repo}/actions/runs"
             params: dict[str, Any] = {"page": page, "per_page": per_page}
             if status: params["status"] = status
-            resp = await gh.get(path, params=params)
-            return _ok(gh._check(resp, "workflow runs"))
+            resp = await _get_gh().get(path, params=params)
+            return _ok(_get_gh()._check(resp, "workflow runs"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -712,8 +717,8 @@ def register(server):
     async def sassy_gh_get_run(owner: str, repo: str, run_id: int) -> str:
         """Get workflow run."""
         try:
-            resp = await gh.get(f"repos/{owner}/{repo}/actions/runs/{run_id}")
-            return _ok(gh._check(resp, "workflow run"))
+            resp = await _get_gh().get(f"repos/{owner}/{repo}/actions/runs/{run_id}")
+            return _ok(_get_gh()._check(resp, "workflow run"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -723,10 +728,10 @@ def register(server):
         try:
             body: dict[str, Any] = {"ref": ref}
             if inputs: body["inputs"] = json.loads(inputs)
-            resp = await gh.post(f"repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches", json_body=body)
+            resp = await _get_gh().post(f"repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches", json_body=body)
             if resp.status_code == 204:
                 return _ok({"status": "triggered", "workflow": workflow_id})
-            return _ok(gh._check(resp, "trigger"))
+            return _ok(_get_gh()._check(resp, "trigger"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -734,7 +739,7 @@ def register(server):
     async def sassy_gh_get_job_logs(owner: str, repo: str, job_id: int) -> str:
         """Get workflow job logs."""
         try:
-            resp = await gh.get(f"repos/{owner}/{repo}/actions/jobs/{job_id}/logs")
+            resp = await _get_gh().get(f"repos/{owner}/{repo}/actions/jobs/{job_id}/logs")
             return resp.text[:50000]
         except GitHubAPIError as e:
             return _err(str(e))
@@ -750,8 +755,8 @@ def register(server):
             params: dict[str, Any] = {"page": page, "per_page": per_page}
             if ecosystem: params["ecosystem"] = ecosystem
             if severity: params["severity"] = severity
-            resp = await gh.get("advisories", params=params)
-            return _ok(gh._check(resp, "advisories"))
+            resp = await _get_gh().get("advisories", params=params)
+            return _ok(_get_gh()._check(resp, "advisories"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -759,8 +764,8 @@ def register(server):
     async def sassy_gh_get_advisory(ghsa_id: str) -> str:
         """Get global advisory by GHSA ID."""
         try:
-            resp = await gh.get(f"advisories/{ghsa_id}")
-            return _ok(gh._check(resp, "advisory"))
+            resp = await _get_gh().get(f"advisories/{ghsa_id}")
+            return _ok(_get_gh()._check(resp, "advisory"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -770,8 +775,8 @@ def register(server):
         try:
             params: dict[str, Any] = {"page": page}
             if state: params["state"] = state
-            resp = await gh.get(f"repos/{owner}/{repo}/security-advisories", params=params)
-            return _ok(gh._check(resp, "repo advisories"))
+            resp = await _get_gh().get(f"repos/{owner}/{repo}/security-advisories", params=params)
+            return _ok(_get_gh()._check(resp, "repo advisories"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -784,8 +789,8 @@ def register(server):
         """List gists. Empty username = authenticated user."""
         try:
             path = f"users/{username}/gists" if username else "gists"
-            resp = await gh.get(path, params={"page": page, "per_page": per_page})
-            return _ok(gh._check(resp, "gists"))
+            resp = await _get_gh().get(path, params={"page": page, "per_page": per_page})
+            return _ok(_get_gh()._check(resp, "gists"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -793,8 +798,8 @@ def register(server):
     async def sassy_gh_get_gist(gist_id: str) -> str:
         """Get a gist."""
         try:
-            resp = await gh.get(f"gists/{gist_id}")
-            return _ok(gh._check(resp, "gist"))
+            resp = await _get_gh().get(f"gists/{gist_id}")
+            return _ok(_get_gh()._check(resp, "gist"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -805,8 +810,8 @@ def register(server):
             file_data = json.loads(files) if isinstance(files, str) else files
             body: dict[str, Any] = {"files": file_data, "public": public}
             if description: body["description"] = description
-            resp = await gh.post("gists", json_body=body)
-            return _ok(gh._check(resp, "create gist"))
+            resp = await _get_gh().post("gists", json_body=body)
+            return _ok(_get_gh()._check(resp, "create gist"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -817,8 +822,8 @@ def register(server):
             file_data = json.loads(files) if isinstance(files, str) else files
             body: dict[str, Any] = {"files": file_data}
             if description: body["description"] = description
-            resp = await gh.patch(f"gists/{gist_id}", json_body=body)
-            return _ok(gh._check(resp, "update gist"))
+            resp = await _get_gh().patch(f"gists/{gist_id}", json_body=body)
+            return _ok(_get_gh()._check(resp, "update gist"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -830,8 +835,8 @@ def register(server):
     async def sassy_gh_list_labels(owner: str, repo: str, page: int = 1, per_page: int = 100) -> str:
         """List labels."""
         try:
-            resp = await gh.get(f"repos/{owner}/{repo}/labels", params={"page": page, "per_page": per_page})
-            return _ok(gh._check(resp, "labels"))
+            resp = await _get_gh().get(f"repos/{owner}/{repo}/labels", params={"page": page, "per_page": per_page})
+            return _ok(_get_gh()._check(resp, "labels"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -839,8 +844,8 @@ def register(server):
     async def sassy_gh_get_label(owner: str, repo: str, name: str) -> str:
         """Get a label."""
         try:
-            resp = await gh.get(f"repos/{owner}/{repo}/labels/{name}")
-            return _ok(gh._check(resp, "label"))
+            resp = await _get_gh().get(f"repos/{owner}/{repo}/labels/{name}")
+            return _ok(_get_gh()._check(resp, "label"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -851,8 +856,8 @@ def register(server):
             body: dict[str, Any] = {"name": name}
             if color: body["color"] = color.lstrip("#")
             if description: body["description"] = description
-            resp = await gh.post(f"repos/{owner}/{repo}/labels", json_body=body)
-            return _ok(gh._check(resp, "create label"))
+            resp = await _get_gh().post(f"repos/{owner}/{repo}/labels", json_body=body)
+            return _ok(_get_gh()._check(resp, "create label"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -864,8 +869,8 @@ def register(server):
             if new_name: body["new_name"] = new_name
             if color: body["color"] = color.lstrip("#")
             if description: body["description"] = description
-            resp = await gh.patch(f"repos/{owner}/{repo}/labels/{name}", json_body=body)
-            return _ok(gh._check(resp, "update label"))
+            resp = await _get_gh().patch(f"repos/{owner}/{repo}/labels/{name}", json_body=body)
+            return _ok(_get_gh()._check(resp, "update label"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -879,8 +884,8 @@ def register(server):
         try:
             t = "organization" if is_org else "user"
             q = f"query($o:String!,$n:Int!){{{t}(login:$o){{projectsV2(first:$n){{nodes{{id number title url closed}}}}}}}}"
-            resp = await gh.post("graphql", json_body={"query": q, "variables": {"o": owner, "n": per_page}})
-            data = gh._check(resp, "projects")
+            resp = await _get_gh().post("graphql", json_body={"query": q, "variables": {"o": owner, "n": per_page}})
+            data = _get_gh()._check(resp, "projects")
             return _ok(data.get("data", {}).get(t, {}).get("projectsV2", {}).get("nodes", []))
         except GitHubAPIError as e:
             return _err(str(e))
@@ -891,8 +896,8 @@ def register(server):
         try:
             t = "organization" if is_org else "user"
             q = f"query($o:String!,$n:Int!){{{t}(login:$o){{projectV2(number:$n){{id number title url closed shortDescription items(first:50){{nodes{{id content{{...on Issue{{title number}}...on PullRequest{{title number}}...on DraftIssue{{title}}}}}}}}}}}}}}"
-            resp = await gh.post("graphql", json_body={"query": q, "variables": {"o": owner, "n": project_number}})
-            data = gh._check(resp, "project")
+            resp = await _get_gh().post("graphql", json_body={"query": q, "variables": {"o": owner, "n": project_number}})
+            data = _get_gh()._check(resp, "project")
             return _ok(data.get("data", {}).get(t, {}).get("projectV2", {}))
         except GitHubAPIError as e:
             return _err(str(e))
@@ -910,8 +915,8 @@ def register(server):
                 body["required_pull_request_reviews"] = {"required_approving_review_count": max(required_approvals, 1), "dismiss_stale_reviews": True}
             else:
                 body["required_pull_request_reviews"] = None
-            resp = await gh.put(f"repos/{owner}/{repo}/branches/{branch}/protection", json_body=body)
-            return _ok(gh._check(resp, "protect branch"))
+            resp = await _get_gh().put(f"repos/{owner}/{repo}/branches/{branch}/protection", json_body=body)
+            return _ok(_get_gh()._check(resp, "protect branch"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -919,8 +924,8 @@ def register(server):
     async def sassy_gh_get_branch_protection(owner: str, repo: str, branch: str = "main") -> str:
         """Get branch protection rules."""
         try:
-            resp = await gh.get(f"repos/{owner}/{repo}/branches/{branch}/protection")
-            return _ok(gh._check(resp, "branch protection"))
+            resp = await _get_gh().get(f"repos/{owner}/{repo}/branches/{branch}/protection")
+            return _ok(_get_gh()._check(resp, "branch protection"))
         except GitHubAPIError as e:
             return _err(str(e))
 
@@ -928,7 +933,7 @@ def register(server):
     async def sassy_gh_remove_branch_protection(owner: str, repo: str, branch: str = "main") -> str:
         """Remove branch protection."""
         try:
-            await gh.delete(f"repos/{owner}/{repo}/branches/{branch}/protection")
+            await _get_gh().delete(f"repos/{owner}/{repo}/branches/{branch}/protection")
             return _ok({"status": "removed", "branch": branch})
         except GitHubAPIError as e:
             return _err(str(e))

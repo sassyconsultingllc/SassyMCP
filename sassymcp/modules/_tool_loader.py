@@ -1,27 +1,45 @@
-"""SassyMCP Smart Tool Loader — Adaptive tool registration with usage tracking.
+"""SassyMCP Smart Tool Loader v1.0 — Production + Nuclear features.
 
 Tracks which tools are actually called, scores them, and enables
 dynamic tool set management via MCP notifications/tools/list_changed.
 
 Features:
-- Usage frequency tracking (persisted to JSON)
-- Exponential decay scoring (recent usage weighted higher)
+- Usage frequency tracking with exponential decay (persisted to JSON)
 - Tool group enable/disable at runtime
 - Context window estimation
 - Response minification for GitHub API payloads
+- Proactive pruning suggestions
+- Tool dependency graph
+- Pre-registration schema validation
+- Live reload in dev mode (watchdog)
+- Schema versioning for efficient tool discovery
+- Per-group rate limiting
 
 Storage: ~/.sassymcp/tool_usage.json
 """
 
+import asyncio
+import hashlib
+import importlib
+import inspect
 import json
 import logging
 import math
 import os
 import time
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Optional
 
 logger = logging.getLogger("sassymcp.loader")
+
+# Optional live reload (pip install watchdog)
+try:
+    from watchdog.observers import Observer
+    from watchdog.events import FileSystemEventHandler
+    WATCHDOG_AVAILABLE = True
+except ImportError:
+    WATCHDOG_AVAILABLE = False
 
 USAGE_DIR = Path.home() / ".sassymcp"
 USAGE_FILE = USAGE_DIR / "tool_usage.json"
@@ -54,20 +72,31 @@ class ToolUsageTracker:
                 recent = [t for t in timestamps if t > cutoff][-500:]
                 if recent:
                     pruned[tool] = recent
-            USAGE_FILE.write_text(json.dumps({"tools": pruned, "updated": time.time()}, indent=1))
+            # Update in-memory data with pruned version (prevent unbounded growth)
+            self._data = pruned
+            # Atomic write: temp file then rename
+            tmp = USAGE_FILE.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"tools": pruned, "updated": time.time()}, indent=1))
+            tmp.replace(USAGE_FILE)
         except Exception as e:
             logger.warning(f"Failed to save tool usage: {e}")
 
     def record(self, tool_name: str):
-        """Record a tool invocation."""
+        """Record a tool invocation with debounced saves (every 30s max)."""
         if tool_name not in self._data:
             self._data[tool_name] = []
         self._data[tool_name].append(time.time())
-        self._save()
+        # Debounce: save at most once per 30 seconds
+        if not hasattr(self, "_last_save"):
+            self._last_save = 0.0
+        now = time.time()
+        if now - self._last_save > 30.0:
+            self._save()
+            self._last_save = now
 
     def score(self, tool_name: str) -> float:
         """Score a tool 0.0-1.0 based on recency-weighted usage frequency.
-        
+
         Uses exponential decay: recent invocations count more.
         Score formula: sum(e^(-lambda * age)) where lambda = ln(2) / half_life
         """
@@ -111,6 +140,13 @@ class ToolUsageTracker:
             "top_10": self.top_tools(10),
         }
 
+    def suggest_pruning(self, threshold: float = 0.05) -> list[str]:
+        """Return tools with score below threshold — candidates for disabling."""
+        try:
+            return [name for name, sc in self.top_tools(50) if sc < threshold]
+        except Exception:
+            return []
+
 
 # Module-level singleton
 _tracker: Optional[ToolUsageTracker] = None
@@ -125,55 +161,155 @@ def get_tracker() -> ToolUsageTracker:
 
 # ── Tool Groups ────────────────────────────────────────────────────────
 
-# Define which modules belong to which load tier
 TOOL_GROUPS = {
     "meta": {
         "modules": ["meta"],
         "description": "Context estimation, tool usage stats, group management (always loaded)",
         "always_load": True,
+        "max_concurrent": 10,
+        "calls_per_minute": 120,
     },
     "core": {
         "modules": ["fileops", "shell", "ui_automation", "editor", "audit", "session"],
         "description": "File operations, shell commands, desktop automation, surgical editing, audit logging, persistent terminal sessions",
         "always_load": True,
+        "max_concurrent": 10,
+        "calls_per_minute": 120,
+    },
+    "infrastructure": {
+        "modules": ["observability", "state_manager", "runtime_config"],
+        "description": "Metrics, health, persistent state, runtime config (always loaded)",
+        "always_load": True,
+        "max_concurrent": 10,
+        "calls_per_minute": 120,
     },
     "android": {
         "modules": ["adb", "phone_screen"],
         "description": "ADB device control, screen mirroring",
         "always_load": False,
+        "max_concurrent": 3,
+        "calls_per_minute": 30,
     },
     "system": {
         "modules": ["network_audit", "process_manager", "security_audit",
                      "registry", "bluetooth", "eventlog", "clipboard"],
         "description": "System monitoring, security, networking",
         "always_load": False,
+        "max_concurrent": 5,
+        "calls_per_minute": 60,
+    },
+    "linux": {
+        "modules": ["linux"],
+        "description": "Remote Linux SSH commands via plink (streaming)",
+        "always_load": False,
+        "max_concurrent": 3,
+        "calls_per_minute": 30,
     },
     "github_quick": {
         "modules": ["github_quick"],
         "description": "Daily-driver GitHub tools (6 tools)",
         "always_load": True,
+        "max_concurrent": 5,
+        "calls_per_minute": 30,
     },
     "github_full": {
         "modules": ["github_ops"],
         "description": "Full GitHub API (80 tools) — heavy context cost",
         "always_load": False,
+        "max_concurrent": 5,
+        "calls_per_minute": 30,
     },
     "v020": {
         "modules": ["vision", "app_launcher", "web_inspector", "crosslink"],
         "description": "Vision, app launcher, web inspector, crosslink",
         "always_load": False,
+        "max_concurrent": 5,
+        "calls_per_minute": 60,
     },
     "persona": {
         "modules": ["persona"],
-        "description": "SaS workflow persona and dev practices",
+        "description": "Expert-mode persona, decision framework, engineering standards",
         "always_load": True,
+        "max_concurrent": 10,
+        "calls_per_minute": 120,
     },
     "utility": {
         "modules": ["utility"],
         "description": "Env vars, toast notifications, zip/tar archives, file diff, HTTP requests",
         "always_load": True,
+        "max_concurrent": 10,
+        "calls_per_minute": 120,
+    },
+    "selfmod": {
+        "modules": ["selfmod"],
+        "description": "Self-modification: edit MCP source, hot-reload modules, git-backed rollback",
+        "always_load": True,
+        "max_concurrent": 3,
+        "calls_per_minute": 30,
+    },
+    "setup": {
+        "modules": ["setup_wizard"],
+        "description": "First-run setup wizard, auth token generation, config status",
+        "always_load": True,
+        "max_concurrent": 3,
+        "calls_per_minute": 30,
     },
 }
+
+
+# ── Tool Dependency Graph ─────────────────────────────────────────────
+
+TOOL_DEPENDENCIES = {
+    "vision": {"ui_automation", "utility"},
+    "linux": {"utility", "session"},
+    "web_inspector": {"utility"},
+    "github_ops": {"utility"},
+    "github_quick": {"utility"},
+    "app_launcher": {"ui_automation"},
+    "phone_screen": {"adb"},
+}
+
+# Reverse lookup: module name → group name
+_MODULE_TO_GROUP: dict[str, str] = {}
+for _gname, _ginfo in TOOL_GROUPS.items():
+    for _mod in _ginfo["modules"]:
+        _MODULE_TO_GROUP[_mod] = _gname
+
+
+def get_group_for_module(module_name: str) -> Optional[str]:
+    """Return the group name a module belongs to, or None."""
+    return _MODULE_TO_GROUP.get(module_name)
+
+
+_TOOL_TO_GROUP: dict[str, str] = {}
+
+
+def register_tool_group(tool_name: str, module_name: str):
+    """Record which group a tool belongs to. Called during module registration."""
+    group = _MODULE_TO_GROUP.get(module_name)
+    if group:
+        _TOOL_TO_GROUP[tool_name] = group
+
+
+def get_group_for_tool(tool_name: str) -> Optional[str]:
+    """Reverse lookup: tool name → group name. Uses explicit registry built at load time."""
+    return _TOOL_TO_GROUP.get(tool_name)
+
+
+def resolve_dependencies(modules: list[str]) -> list[str]:
+    """Given a list of modules, add any missing dependencies."""
+    resolved = set(modules)
+    changed = True
+    while changed:
+        changed = False
+        for mod in list(resolved):
+            deps = TOOL_DEPENDENCIES.get(mod, set())
+            for dep in deps:
+                if dep not in resolved:
+                    resolved.add(dep)
+                    changed = True
+                    logger.info(f"Auto-loaded dependency: {dep} (required by {mod})")
+    return list(resolved)
 
 
 def get_default_modules() -> list[str]:
@@ -182,7 +318,7 @@ def get_default_modules() -> list[str]:
     for group in TOOL_GROUPS.values():
         if group["always_load"]:
             modules.extend(group["modules"])
-    return modules
+    return resolve_dependencies(modules)
 
 
 def get_all_modules() -> list[str]:
@@ -190,7 +326,7 @@ def get_all_modules() -> list[str]:
     modules = []
     for group in TOOL_GROUPS.values():
         modules.extend(group["modules"])
-    return modules
+    return resolve_dependencies(modules)
 
 
 def get_group_info() -> dict:
@@ -200,19 +336,45 @@ def get_group_info() -> dict:
             "description": g["description"],
             "modules": g["modules"],
             "always_load": g["always_load"],
+            "max_concurrent": g.get("max_concurrent", 10),
+            "calls_per_minute": g.get("calls_per_minute", 120),
             "tool_count": "varies",
         }
         for name, g in TOOL_GROUPS.items()
     }
 
 
+# ── Schema Versioning ────────────────────────────────────────────────
+
+_schema_version: Optional[str] = None
+
+
+def compute_schema_version(tool_definitions: list[dict]) -> str:
+    """Compute a hash of tool names + descriptions for cache invalidation."""
+    global _schema_version
+    payload = json.dumps(
+        sorted([
+            (t.get("name", ""), t.get("description", ""))
+            for t in tool_definitions
+        ]),
+        separators=(",", ":"),
+    )
+    _schema_version = hashlib.sha256(payload.encode()).hexdigest()[:16]
+    return _schema_version
+
+
+def get_schema_version() -> Optional[str]:
+    """Return the last computed schema version hash."""
+    return _schema_version
+
+
 # ── Context Window Estimation ────────────────────────────────────────
 
 def estimate_tool_context_tokens(tool_definitions: list[dict]) -> dict:
     """Estimate how many tokens the tool definitions consume.
-    
+
     Each tool definition includes: name, description, parameter JSON schema.
-    Rough estimate: 1 token ≈ 4 chars of JSON.
+    Rough estimate: 1 token ~ 4 chars of JSON.
     """
     total_chars = 0
     tool_sizes = []
@@ -239,7 +401,6 @@ def estimate_tool_context_tokens(tool_definitions: list[dict]) -> dict:
 
 # ── Response Minification ────────────────────────────────────────────
 
-# Keys to strip from GitHub API responses to save context
 GITHUB_STRIP_KEYS = {
     "node_id", "gravatar_id", "followers_url", "following_url",
     "gists_url", "starred_url", "subscriptions_url", "organizations_url",
@@ -262,7 +423,7 @@ GITHUB_STRIP_KEYS = {
 
 def minify_github_response(data: Any, depth: int = 0) -> Any:
     """Strip URL-heavy metadata from GitHub API responses.
-    
+
     Saves 40-70% of tokens on typical responses.
     Preserves all actionable data (ids, shas, names, states, bodies).
     """
@@ -290,3 +451,81 @@ def minify_file_listing(data: Any) -> Any:
             if isinstance(item, dict)
         ]
     return data
+
+
+# ── Pre-registration Validation ──────────────────────────────────────
+
+def validate_tool(fn) -> bool:
+    """Pre-flight check: docstring and type-hinted parameters.
+
+    Returns True if valid, False if issues found (logs warnings).
+    Never blocks registration — just warns.
+    """
+    valid = True
+    name = getattr(fn, "__name__", "<unknown>")
+
+    if not getattr(fn, "__doc__", None):
+        logger.warning(f"Tool {name}: missing docstring")
+        valid = False
+
+    try:
+        sig = inspect.signature(fn)
+        for param_name, param in sig.parameters.items():
+            if param_name in ("self", "return"):
+                continue
+            if param.annotation is inspect.Parameter.empty:
+                logger.warning(f"Tool {name}: parameter '{param_name}' has no type hint")
+                valid = False
+    except (ValueError, TypeError):
+        pass
+
+    return valid
+
+
+# ── Live Reload (dev mode only) ──────────────────────────────────────
+
+if WATCHDOG_AVAILABLE:
+    class ModuleReloader(FileSystemEventHandler):
+        """Watches modules/ for changes and hot-reloads them."""
+
+        def __init__(self, server, modules_dir: Path):
+            self.server = server
+            self.modules_dir = modules_dir
+            self._last_reload = time.time()
+
+        def on_modified(self, event):
+            if time.time() - self._last_reload < 1.0:
+                return  # debounce
+            if not event.src_path.endswith(".py"):
+                return
+            if event.src_path.endswith("__init__.py"):
+                return
+
+            module_name = Path(event.src_path).stem
+            if module_name.startswith("_"):
+                return  # skip private modules
+
+            logger.info(f"Live reload triggered for {module_name}")
+            try:
+                mod = importlib.import_module(f"sassymcp.modules.{module_name}")
+                importlib.reload(mod)
+                if hasattr(mod, "register"):
+                    mod.register(self.server)
+                    logger.info(f"Live reload succeeded: {module_name}")
+                self._last_reload = time.time()
+            except Exception as e:
+                logger.error(f"Live reload failed for {module_name}: {e}")
+
+
+def enable_live_reload(server, modules_dir: Path):
+    """Start watchdog observer for hot module reload. Dev mode only."""
+    if not WATCHDOG_AVAILABLE:
+        logger.warning("watchdog not installed — live reload disabled (pip install watchdog)")
+        return None
+    observer = Observer()
+    handler = ModuleReloader(server, modules_dir)
+    observer.schedule(handler, str(modules_dir), recursive=False)
+    observer.daemon = True
+    observer.start()
+    logger.info("Live reload ENABLED for modules/")
+    return observer

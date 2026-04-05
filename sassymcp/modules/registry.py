@@ -41,7 +41,10 @@ def register(server):
     @server.tool()
     async def sassy_reg_export(key_path: str, output_file: str) -> str:
         """Export registry key to .reg file."""
-        return await _reg("export", key_path, output_file, "/y", timeout=30)
+        result = await _reg("export", key_path, output_file, "/y", timeout=30)
+        if "ERROR" in result.upper() or "unable to find" in result.lower():
+            return f"Error: Registry key '{key_path}' not found or access denied."
+        return result if result else f"Exported {key_path} to {output_file}"
 
     @server.tool()
     async def sassy_autorun_entries() -> str:

@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "sassymcp": {
+      "command": "REPLACE_WITH_PATH\\sassymcp.exe",
+      "args": [],
+      "env": {
+        "SASSYMCP_LOAD_ALL": "1"
+      }
+    }
+  }
+}

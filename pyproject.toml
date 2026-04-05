@@ -1,33 +1,32 @@
 [project]
 name = "sassymcp"
-version = "0.3.0"
+version = "1.0.0"
 description = "Unified MCP server for Windows desktop automation, Android device control, security auditing, web inspection, cross-session communication, GitHub operations, and AI workflow persona"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
-authors = [{name = "Sassy Consulting LLC"}]
+authors = [{name = "SassyMCP Contributors"}]
 
 dependencies = [
-    "mcp>=1.0.0",
+    "mcp>=1.0.0,<2.0.0",
     "psutil>=5.9.0",
     "pyautogui>=0.9.54",
     "pywinauto>=0.6.8",
     "pillow>=10.0.0",
+    "uvicorn>=0.30.0",
+    "cryptography>=42.0.0",
+    "httpx>=0.27.0",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff", "mypy"]
-android = ["adb-shell>=0.4.4"]
-network = ["scapy>=2.5.0"]
+reload = ["watchdog>=3.0.0"]
 vision = ["pytesseract>=0.3.10"]
-web = ["httpx>=0.27.0", "playwright>=1.40.0"]
-github = ["httpx>=0.27.0"]
+web = ["playwright>=1.40.0"]
 all = [
-    "adb-shell>=0.4.4",
-    "scapy>=2.5.0",
     "pytesseract>=0.3.10",
-    "httpx>=0.27.0",
     "playwright>=1.40.0",
+    "watchdog>=3.0.0",
 ]
 
 [project.scripts]
@@ -42,4 +41,4 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.uv]
-python = "3.12"
+# python managed by .python-version file

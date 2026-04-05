@@ -45,7 +45,7 @@ class GitHubClient:
             "Authorization": f"token {token}",
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": "SassyMCP/0.3.0",
+            "User-Agent": "SassyMCP/1.0.0",
         }
         self._client: Optional[httpx.AsyncClient] = None
 

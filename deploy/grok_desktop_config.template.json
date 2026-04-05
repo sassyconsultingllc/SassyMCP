@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "sassymcp": {
+      "command": "REPLACE_WITH_PATH\sassymcp.exe",
+      "args": ["--http", "--host", "127.0.0.1", "--port", "21001"],
+      "env": {
+        "SASSYMCP_LOAD_ALL": "1"
+      }
+    }
+  }
+}

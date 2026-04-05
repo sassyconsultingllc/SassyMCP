@@ -40,9 +40,10 @@ class _Session:
                 self.buffer += text
                 # Trim buffer if too large (keep tail)
                 if len(self.buffer) > _OUTPUT_LIMIT:
+                    trimmed = len(self.buffer) - _OUTPUT_LIMIT
                     self.buffer = self.buffer[-_OUTPUT_LIMIT:]
                     if self.read_cursor > 0:
-                        self.read_cursor = max(0, self.read_cursor - _OUTPUT_LIMIT)
+                        self.read_cursor = max(0, self.read_cursor - trimmed)
         except (asyncio.CancelledError, Exception):
             pass
 

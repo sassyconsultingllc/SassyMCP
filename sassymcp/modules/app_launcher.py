@@ -58,9 +58,17 @@ def register(server):
         """Launch an executable directly by path.
 
         path = full path to .exe. args = command-line arguments.
+        Only allows launching existing .exe files (not scripts or interpreters).
         """
+        import shlex
+        from pathlib import Path as P
+        p = P(path)
+        if not p.is_file():
+            return json.dumps({"error": f"File not found: {path}"})
+        if p.suffix.lower() not in (".exe", ".msi"):
+            return json.dumps({"error": f"Only .exe and .msi files allowed, got: {p.suffix}"})
         try:
-            cmd = [path] + (args.split() if args else [])
+            cmd = [str(p)] + (shlex.split(args) if args else [])
             proc = subprocess.Popen(cmd, creationflags=subprocess.DETACHED_PROCESS)
             time.sleep(1)
             return json.dumps({
@@ -158,7 +166,13 @@ def register(server):
                         new_w = width if width > 0 else rect.width()
                         new_h = height if height > 0 else rect.height()
 
-                        w.move_window(new_x, new_y, new_w, new_h)
+                        # Use win32 API directly — pywinauto UIA backend lacks move_window
+                        import ctypes as _ct
+                        try:
+                            hwnd = w.handle
+                            _ct.windll.user32.MoveWindow(hwnd, new_x, new_y, new_w, new_h, True)
+                        except Exception:
+                            w.move_window(new_x, new_y, new_w, new_h)
                         return json.dumps({
                             "resized": wt,
                             "position": [new_x, new_y],
@@ -226,18 +240,34 @@ def register(server):
 
             desktop = Desktop(backend="uia")
             title_lower = title.lower()
+            # Try exact-start match first, then substring (matches focus_window/resize_window behavior)
+            candidates = []
             for w in desktop.windows():
                 try:
                     wt = w.window_text()
-                    if wt and title_lower in wt.lower() and w.is_visible():
-                        w.restore()
-                        time.sleep(0.1)
-                        px, py, pw, ph = positions[position]
-                        w.move_window(px, py, pw, ph)
-                        return json.dumps({"snapped": wt, "position": position,
-                                           "rect": [px, py, pw, ph]})
+                    if wt and w.is_visible():
+                        if title_lower in wt.lower():
+                            candidates.append(w)
                 except Exception:
                     continue
-            return json.dumps({"error": f"Window not found: {title}"})
+            if not candidates:
+                return json.dumps({"error": f"Window not found: {title}"})
+            w = candidates[0]
+            wt = w.window_text()
+            try:
+                w.restore()
+            except Exception:
+                pass
+            time.sleep(0.1)
+            px, py, pw, ph = positions[position]
+            # Use win32 API directly — pywinauto UIA backend lacks move_window
+            try:
+                hwnd = w.handle
+                ctypes.windll.user32.MoveWindow(hwnd, px, py, pw, ph, True)
+            except Exception:
+                # Fallback: try pywinauto method in case backend supports it
+                w.move_window(px, py, pw, ph)
+            return json.dumps({"snapped": wt, "position": position,
+                               "rect": [px, py, pw, ph]})
         except Exception as e:
             return json.dumps({"error": str(e)})

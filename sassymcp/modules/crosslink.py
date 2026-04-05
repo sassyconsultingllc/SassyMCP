@@ -31,7 +31,7 @@ _auth_token = None  # Set when server starts
 
 def _ensure_db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
     conn.execute("CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, channel TEXT DEFAULT 'default', payload TEXT NOT NULL, created_at TEXT NOT NULL, read_by TEXT DEFAULT '', ttl_seconds INTEGER DEFAULT 0)")
     conn.execute("CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY, name TEXT, platform TEXT, last_seen TEXT, created_at TEXT)")
     # Expire old messages with TTL > 0
@@ -44,7 +44,7 @@ def _ensure_db():
 def _post_message(sid, channel, payload, ttl_seconds=0):
     _ensure_db()
     now = datetime.now(timezone.utc).isoformat()
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
     cur = conn.execute("INSERT INTO messages (session_id,channel,payload,created_at,ttl_seconds) VALUES (?,?,?,?,?)", (sid, channel, payload, now, ttl_seconds))
     mid = cur.lastrowid; conn.commit(); conn.close()
     return {"id": mid, "session_id": sid, "channel": channel, "created_at": now, "ttl_seconds": ttl_seconds}
@@ -52,7 +52,7 @@ def _post_message(sid, channel, payload, ttl_seconds=0):
 
 def _read_messages(sid, channel="default", limit=20, unread_only=True, since=""):
     _ensure_db()
-    conn = sqlite3.connect(str(DB_PATH)); conn.row_factory = sqlite3.Row
+    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False); conn.row_factory = sqlite3.Row
     q, p = "SELECT * FROM messages WHERE channel=?", [channel]
     if unread_only:
         # Escape SQL LIKE wildcards in session_id
@@ -73,7 +73,7 @@ def _read_messages(sid, channel="default", limit=20, unread_only=True, since="")
 def _register_session(sid, name="", platform=""):
     _ensure_db()
     now = datetime.now(timezone.utc).isoformat()
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
     conn.execute("INSERT INTO sessions (session_id,name,platform,last_seen,created_at) VALUES (?,?,?,?,?) ON CONFLICT(session_id) DO UPDATE SET last_seen=?,name=COALESCE(?,name)", (sid, name, platform, now, now, now, name or None))
     conn.commit(); conn.close()
     return {"session_id": sid, "name": name, "platform": platform, "last_seen": now}
@@ -81,7 +81,7 @@ def _register_session(sid, name="", platform=""):
 
 def _list_sessions():
     _ensure_db()
-    conn = sqlite3.connect(str(DB_PATH)); conn.row_factory = sqlite3.Row
+    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False); conn.row_factory = sqlite3.Row
     rows = conn.execute("SELECT * FROM sessions ORDER BY last_seen DESC").fetchall()
     conn.close(); return [dict(r) for r in rows]
 
@@ -127,6 +127,9 @@ class _Handler(BaseHTTPRequestHandler):
         if not self._check_auth(): self._unauthorized(); return
         p = urlparse(self.path)
         content_len = int(self.headers.get("Content-Length", 0) or 0)
+        if content_len > 1_048_576:  # 1MB max
+            self._json({"error": "payload too large"}, 413)
+            return
         try:
             body = json.loads(self.rfile.read(content_len)) if content_len > 0 else {}
         except (json.JSONDecodeError, ValueError):
@@ -141,7 +144,7 @@ class _Handler(BaseHTTPRequestHandler):
 def register(server):
 
     @server.tool()
-    async def sassy_crosslink_start(port: int = DEFAULT_PORT, bind: str = "0.0.0.0", token: str = "") -> str:
+    async def sassy_crosslink_start(port: int = DEFAULT_PORT, bind: str = "", token: str = "") -> str:
         """Start the Crosslink HTTP API for LAN-accessible cross-device messaging.
 
         bind: '0.0.0.0' for LAN access (default), '127.0.0.1' for localhost only.
@@ -155,6 +158,9 @@ def register(server):
             return json.dumps({"status": "already_running", "port": port})
 
         _auth_token = token or os.environ.get("SASSYMCP_CROSSLINK_TOKEN", "") or None
+        # Default to localhost when no auth — don't expose unauthenticated on LAN
+        if not bind:
+            bind = "0.0.0.0" if _auth_token else "127.0.0.1"
         _ensure_db()
 
         try:
@@ -215,7 +221,7 @@ def register(server):
     async def sassy_crosslink_status() -> str:
         """Check crosslink status: server running, sessions, message counts, channels."""
         _ensure_db()
-        conn = sqlite3.connect(str(DB_PATH))
+        conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
         total = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
         channels = [r[0] for r in conn.execute("SELECT DISTINCT channel FROM messages").fetchall()]
         conn.close()
@@ -231,7 +237,7 @@ def register(server):
     async def sassy_crosslink_broadcast(payload: str, session_id: str = "sassymcp") -> str:
         """Broadcast a message to ALL known channels."""
         _ensure_db()
-        conn = sqlite3.connect(str(DB_PATH))
+        conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
         channels = [r[0] for r in conn.execute("SELECT DISTINCT channel FROM messages").fetchall()]
         conn.close()
         if not channels: channels = ["default"]
