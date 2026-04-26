@@ -37,7 +37,7 @@ from mcp.server.auth.settings import AuthSettings
 
 logger = logging.getLogger("sassymcp.auth")
 
-_TOKENS_FILE = Path.home() / ".sassymcp" / "tokens.json"
+from sassymcp._paths import TOKENS_FILE as _TOKENS_FILE
 _MIN_TOKEN_LENGTH = 16
 _MAX_TOKEN_LENGTH = 512
 

@@ -1,7 +1,7 @@
 """SassyMCP Memory — Persistent cross-session memory with concept-based organization.
 
 This IS the MadameClaude memory layer, built into SassyMCP. No separate server needed.
-Stores memories in SQLite (~/.sassymcp/memory.db) with tags, priorities, and timestamps.
+Stores memories in SQLite ($SASSYMCP_HOME/memory.db, default ~/.sassymcp/memory.db) with tags, priorities, and timestamps.
 Survives server restarts. Searchable by concept, tag, project, or free text.
 
 Memory types:
@@ -21,11 +21,12 @@ import json
 import logging
 import sqlite3
 import time
-from pathlib import Path
+
+from sassymcp._paths import HOME as _SASSY_HOME
 
 logger = logging.getLogger("sassymcp.memory")
 
-MEMORY_DB = Path.home() / ".sassymcp" / "memory.db"
+MEMORY_DB = _SASSY_HOME / "memory.db"
 
 
 class MemoryStore:

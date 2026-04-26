@@ -319,9 +319,8 @@ for that domain. The hook was written specifically for this toolset — follow i
 
 
 def _load_user_context() -> str:
-    """Load user context from ~/.sassymcp/persona.md or return default template."""
-    from pathlib import Path
-    persona_file = Path.home() / ".sassymcp" / "persona.md"
+    """Load user context from $SASSYMCP_HOME/persona.md (default ~/.sassymcp/persona.md) or return default template."""
+    from sassymcp._paths import PERSONA_FILE as persona_file
     if persona_file.exists():
         try:
             return persona_file.read_text(encoding="utf-8")
@@ -329,7 +328,7 @@ def _load_user_context() -> str:
             pass
     return (
         "## User Context\n\n"
-        "No persona configured. Create ~/.sassymcp/persona.md with:\n"
+        f"No persona configured. Create {persona_file} with:\n"
         "- Your role and expertise level\n"
         "- Systems you manage (hostnames, platforms)\n"
         "- Active projects and their status\n"

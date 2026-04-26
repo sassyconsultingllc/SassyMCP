@@ -2,7 +2,7 @@
 
 Provides get_config (rich system snapshot), set_config_value,
 and get_recent_tool_calls (session history from audit log).
-Persisted to ~/.sassymcp/config.json.
+Persisted to $SASSYMCP_HOME/config.json (default ~/.sassymcp/config.json).
 """
 
 import json
@@ -14,11 +14,9 @@ import time
 from pathlib import Path
 
 from sassymcp import __version__
+from sassymcp._paths import HOME as CONFIG_DIR, CONFIG_FILE
 
 logger = logging.getLogger("sassymcp.config")
-
-CONFIG_DIR = Path.home() / ".sassymcp"
-CONFIG_FILE = CONFIG_DIR / "config.json"
 
 _DEFAULTS = {
     "defaultShell": "powershell",

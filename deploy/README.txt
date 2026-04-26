@@ -10,12 +10,15 @@
 
  TRANSPORT MODES:
 
- Local (stdio — Claude Desktop pipe):
+ Local (stdio — Claude Desktop / Cursor / Windsurf / Cline pipe):
    Run: start-local.bat
    Or:  sassymcp.exe
-   Config: Copy claude_desktop_config.template.json to
-           %APPDATA%\Claude\claude_desktop_config.json
-           Edit the path to match your install location.
+   Config: copy the template that matches your client and edit the path:
+     Claude Desktop  -> %APPDATA%\Claude\claude_desktop_config.json
+     Cursor          -> ~\.cursor\mcp.json
+     Windsurf        -> ~\.codeium\windsurf\mcp_config.json
+     Continue.dev    -> ~\.continue\config.json (merge under experimental)
+     Grok Desktop    -> uses HTTP, see grok_desktop_config.template.json
 
  HTTP (localhost or LAN):
    Run: start-lan.bat

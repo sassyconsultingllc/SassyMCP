@@ -62,11 +62,8 @@ from sassymcp.license import get_allowed_groups, weekly_validation_check
 
 def _generate_self_signed_cert():
     """Generate a self-signed SSL cert for HTTPS mode. Zero external deps."""
-    from pathlib import Path as _P
-    cert_dir = _P.home() / ".sassymcp"
+    from sassymcp._paths import HOME as cert_dir, SSL_CERT as cert_path, SSL_KEY as key_path
     cert_dir.mkdir(parents=True, exist_ok=True)
-    cert_path = cert_dir / "server.crt"
-    key_path = cert_dir / "server.key"
 
     try:
         from cryptography import x509
@@ -591,11 +588,11 @@ def main():
     parser.add_argument("--setup", action="store_true",
                         help="Force first-run setup wizard (regenerate persona.md)")
     parser.add_argument("--ssl", action="store_true",
-                        help="Enable HTTPS with self-signed cert (~/.sassymcp/server.crt/key)")
+                        help="Enable HTTPS with self-signed cert ($SASSYMCP_HOME/server.crt/key)")
     parser.add_argument("--ssl-cert", default="",
-                        help="Path to SSL certificate file (default: ~/.sassymcp/server.crt)")
+                        help="Path to SSL certificate file (default: $SASSYMCP_HOME/server.crt)")
     parser.add_argument("--ssl-key", default="",
-                        help="Path to SSL key file (default: ~/.sassymcp/server.key)")
+                        help="Path to SSL key file (default: $SASSYMCP_HOME/server.key)")
     args = parser.parse_args()
 
     # Auto-detect transport: if stdin is a pipe, an MCP client is calling us.
@@ -611,14 +608,13 @@ def main():
     _register_shutdown_handlers()
 
     # First-run detection
-    from pathlib import Path as _P
-    _persona = _P.home() / ".sassymcp" / "persona.md"
+    from sassymcp._paths import HOME as _SASSY_HOME, PERSONA_FILE as _persona
     first_run = not _persona.exists()
     if args.setup or first_run:
         if args.setup:
             logger.info("--setup flag: setup wizard will be available for reconfiguration")
         else:
-            logger.info("FIRST RUN DETECTED: no ~/.sassymcp/persona.md found")
+            logger.info(f"FIRST RUN DETECTED: no persona.md found in {_SASSY_HOME}")
 
     tool_count = len(mcp._tool_manager._tools) if hasattr(mcp, "_tool_manager") else "?"
     logger.info(f"SassyMCP v{__version__} started | {tool_count} tools | groups: {list(TOOL_GROUPS.keys())}")
@@ -648,13 +644,14 @@ def main():
         # SSL support
         if args.ssl:
             from pathlib import Path as _P2
-            ssl_cert = args.ssl_cert or str(_P2.home() / ".sassymcp" / "server.crt")
-            ssl_key = args.ssl_key or str(_P2.home() / ".sassymcp" / "server.key")
+            from sassymcp._paths import SSL_CERT as _DEFAULT_CERT, SSL_KEY as _DEFAULT_KEY
+            ssl_cert = args.ssl_cert or str(_DEFAULT_CERT)
+            ssl_key = args.ssl_key or str(_DEFAULT_KEY)
             if not _P2(ssl_cert).exists() or not _P2(ssl_key).exists():
                 logger.info("SSL cert/key not found — generating self-signed certificate...")
                 _generate_self_signed_cert()
-                ssl_cert = str(_P2.home() / ".sassymcp" / "server.crt")
-                ssl_key = str(_P2.home() / ".sassymcp" / "server.key")
+                ssl_cert = str(_DEFAULT_CERT)
+                ssl_key = str(_DEFAULT_KEY)
             uvicorn_kwargs["ssl_certfile"] = ssl_cert
             uvicorn_kwargs["ssl_keyfile"] = ssl_key
             logger.info(f"SSL enabled: cert={ssl_cert}")

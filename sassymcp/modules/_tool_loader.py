@@ -41,7 +41,7 @@ try:
 except ImportError:
     WATCHDOG_AVAILABLE = False
 
-USAGE_DIR = Path.home() / ".sassymcp"
+from sassymcp._paths import HOME as USAGE_DIR
 USAGE_FILE = USAGE_DIR / "tool_usage.json"
 DECAY_HALF_LIFE = 7 * 86400  # 7 days in seconds — older usage decays
 

@@ -91,3 +91,12 @@ sassymcp-oauth/.mf/
 # Mercury audit bundles — these are full-source dumps sent to the audit API.
 # Keep the markdown reports under audits/, ignore the bundle text dumps.
 audits/*_bundle.txt
+
+# personal/ holds machine-specific scripts (autostart-bridge.bat,
+# register-autostart.ps1, status.bat, vendor-flavored start-tunnel.bat)
+# that target one developer's drive layout (V: VeraCrypt mount, specific
+# tunnel name, etc.). The personal/ folder itself stays tracked so the
+# layout is documented; *contents* are per-machine and not committed.
+personal/*
+!personal/.gitkeep
+!personal/README.md

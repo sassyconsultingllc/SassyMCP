@@ -16,7 +16,10 @@ MODEL = "mercury-2"
 KEY = os.environ["INCEPTION_API_KEY"]
 MAX_OUTPUT_TOKENS = 50000
 
-ROOT = Path("V:/Projects/SassyMCP")
+# Resolve the SassyMCP repo root from this script's location: tools/<this>.py
+# is two parents up from the package root. Override with SASSYMCP_REPO if the
+# script is run from somewhere unusual.
+ROOT = Path(os.environ.get("SASSYMCP_REPO") or Path(__file__).resolve().parent.parent)
 PY_PKG = ROOT / "sassymcp"
 PY_MODS = PY_PKG / "modules"
 OAUTH_SRC = ROOT / "sassymcp-oauth" / "src"

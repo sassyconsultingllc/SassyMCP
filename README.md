@@ -425,6 +425,74 @@ A few docstrings and the legacy `.claude/skills/sassymcp-update.md` slash-comman
 | HTTPS | `sassymcp.exe --http --ssl` | Encrypted (auto-generates self-signed cert) |
 | SSE | `sassymcp.exe --http --sse` | Legacy transport |
 
+## Running Multiple Instances (Dual Session)
+
+Two SassyMCP processes on the same machine — for example, a **local stdio** instance for Claude Desktop and a **remote HTTPS** instance behind a Cloudflare Tunnel for Claude Web — can clobber each other's state if they share `~/.sassymcp/`. The fix is one env var per instance.
+
+### Conflicts to resolve per-instance
+
+| Resource | Default | How to give each instance its own |
+|----------|---------|------------------------------------|
+| HTTP port | `21001` | `--port 21002` (HTTP-mode instances only) |
+| Crosslink HTTP port | `9377` | `sassy_crosslink_register port=9378` |
+| Auth token | env `SASSYMCP_AUTH_TOKEN` | Set per-process in launcher's env |
+| Per-user state dir | `~/.sassymcp` | **`SASSYMCP_HOME=/path/to/dir`** ← the new env var (v1.3.4+) |
+| SSL cert/key | `$SASSYMCP_HOME/server.{crt,key}` | Auto-isolated when `SASSYMCP_HOME` is set; or `--ssl-cert` / `--ssl-key` |
+
+### Example: local stdio + remote tunnel side-by-side
+
+**Instance A — local stdio for Claude Desktop** (claude_desktop_config.json):
+
+```json
+{
+  "mcpServers": {
+    "sassymcp-local": {
+      "command": "C:\\Tools\\SassyMCP\\sassymcp.exe",
+      "env": {
+        "SASSYMCP_LOAD_ALL": "1",
+        "SASSYMCP_HOME": "C:\\Users\\<you>\\.sassymcp-local"
+      }
+    }
+  }
+}
+```
+
+**Instance B — remote HTTPS via Cloudflare Tunnel** (`start-tunnel.bat` + a wrapper that sets the env):
+
+```batch
+set SASSYMCP_HOME=C:\Users\<you>\.sassymcp-remote
+set SASSYMCP_AUTH_TOKEN=<token-for-remote>
+set PORT=21002
+"%~dp0sassymcp.exe" --http --host 127.0.0.1 --port %PORT%
+```
+
+Then `cloudflared tunnel run <name>` forwards `https://<your-tunnel>/mcp` to `127.0.0.1:21002`.
+
+### What's isolated when SASSYMCP_HOME differs
+
+Each instance gets its own:
+
+- `persona.md` — different profiles per session
+- `config.json` — different runtime config (allowed dirs, blocked commands, etc.)
+- `tokens.json` — different scoped auth tokens
+- `license.json` — separate license activation
+- `audit.log` / `audit.jsonl` — no interleaved writes
+- `crosslink.db` — separate cross-session message queues
+- `memory.db` — separate persistent memories
+- `tool_state.db` / `tool_usage.json` — separate per-tool state and usage analytics
+- `server.crt` / `server.key` — separate self-signed certs
+- The `_security` protected-paths check honors `SASSYMCP_HOME` too — neither instance can `sassy_safe_delete` into the other's home
+
+### What's still shared between instances
+
+- The repo source tree (always protected from delete/overwrite by `_security`)
+- `%LOCALAPPDATA%\SassyMCP\updates\` — the updater download stage (harmless; tagged by version under it)
+- The bundled tools in the portable zip (`adb`, `nmap`, `cloudflared`, etc.) — read-only from both instances
+
+### Putting it in the OS (so both start at boot)
+
+The legacy `personal/autostart-bridge.bat` + `personal/register-autostart.ps1` template is gitignored — copy it, tweak the paths and the `SASSYMCP_HOME` for each instance, then `Register-ScheduledTask` once per instance.
+
 ## Environment Variables
 
 | Variable | Purpose |
@@ -434,6 +502,8 @@ A few docstrings and the legacy `.claude/skills/sassymcp-update.md` slash-comman
 | `SASSYMCP_AUTH_TOKEN=xxx` | Bearer token for HTTP auth |
 | `SASSYMCP_DEV=1` | Enable live reload (dev mode) |
 | `SASSYMCP_NO_UPDATE_CHECK=1` | Disable the startup update check (no GitHub API call) |
+| `SASSYMCP_HOME=/path/to/dir` | Override the per-user state dir (default `~/.sassymcp`). Required when running multiple instances on one machine. |
+| `SASSYMCP_REPO=/path/to/repo` | Override the auto-detected repo root in `tools/mercury_audit_sassymcp.py` (dev tool only) |
 | `GITHUB_TOKEN=xxx` | GitHub API access |
 | `SSH_HOST=xxx` | Remote Linux hostname/IP |
 | `SSH_USER=xxx` | Remote Linux username |

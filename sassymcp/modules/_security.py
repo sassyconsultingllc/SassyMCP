@@ -419,8 +419,12 @@ def _protected_roots() -> list[Path]:
         roots.append(Path(__file__).resolve().parent.parent)  # sassymcp/
     except Exception:
         pass
-    # User config/audit.
-    roots.append(Path.home() / ".sassymcp")
+    # User config/audit (honors $SASSYMCP_HOME for dual-instance setups).
+    try:
+        from sassymcp._paths import HOME as _sassy_home
+        roots.append(_sassy_home)
+    except Exception:
+        roots.append(Path.home() / ".sassymcp")
     return roots
 
 

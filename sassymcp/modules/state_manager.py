@@ -10,9 +10,11 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Optional
 
+from sassymcp._paths import HOME as _SASSY_HOME
+
 logger = logging.getLogger("sassymcp.state")
 
-STATE_DB = Path.home() / ".sassymcp" / "tool_state.db"
+STATE_DB = _SASSY_HOME / "tool_state.db"
 
 class ToolStateManager:
     def __init__(self):

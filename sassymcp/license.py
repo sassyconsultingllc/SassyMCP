@@ -18,9 +18,9 @@ import os
 import time
 from pathlib import Path
 
-logger = logging.getLogger("sassymcp.license")
+from sassymcp._paths import LICENSE_FILE  # re-exported for back-compat
 
-LICENSE_FILE = Path.home() / ".sassymcp" / "license.json"
+logger = logging.getLogger("sassymcp.license")
 VALIDATE_URL = "https://sassyconsultingllc.com/api/license/validate"
 
 _SIGNING_SECRET = os.environ.get("SASSYMCP_LICENSE_SECRET", "sassy-mcp-v1-signing-key-change-me")

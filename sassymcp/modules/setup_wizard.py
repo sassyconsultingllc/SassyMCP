@@ -73,10 +73,12 @@ try:
 except Exception:
     pass
 
-_SASSYMCP_DIR = Path.home() / ".sassymcp"
-_PERSONA_FILE = _SASSYMCP_DIR / "persona.md"
-_CONFIG_FILE = _SASSYMCP_DIR / "config.json"
-_TOKENS_FILE = _SASSYMCP_DIR / "tokens.json"
+from sassymcp._paths import (
+    HOME as _SASSYMCP_DIR,
+    PERSONA_FILE as _PERSONA_FILE,
+    CONFIG_FILE as _CONFIG_FILE,
+    TOKENS_FILE as _TOKENS_FILE,
+)
 
 
 def _is_setup_complete() -> bool:

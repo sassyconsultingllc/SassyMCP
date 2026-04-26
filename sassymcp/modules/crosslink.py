@@ -5,12 +5,16 @@ Cline, Grok, mobile, web — anything that connects to a SassyMCP server)
 to communicate through a shared local message queue backed by SQLite.
 
 Architecture:
-  - SQLite DB at ~/.sassymcp/crosslink.db
+  - SQLite DB at $SASSYMCP_HOME/crosslink.db (default ~/.sassymcp/crosslink.db)
   - HTTP API on configurable bind address (default 0.0.0.0:9377 for LAN access)
   - Optional token auth via SASSYMCP_CROSSLINK_TOKEN env var or token param
   - Messages have sender, channel, payload, timestamp
   - Sessions register with ID/name/platform
   - Read tracking per-session
+
+For dual-instance setups (local + remote on the same machine), give each
+instance its own SASSYMCP_HOME so they get separate DBs, AND override
+DEFAULT_PORT via the sassy_crosslink_register port arg.
 """
 
 import json
@@ -23,7 +27,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
-DB_PATH = Path.home() / ".sassymcp" / "crosslink.db"
+from sassymcp._paths import CROSSLINK_DB as DB_PATH
 DEFAULT_PORT = 9377
 _server_thread = None
 _server_instance = None

@@ -1,14 +1,15 @@
 """Audit - Tool call logging with automatic rotation.
 
 Logs every MCP tool invocation with timestamp, tool name, and sanitized
-arguments. Logs are stored in ~/.sassymcp/audit.log and rotated at 10MB.
+arguments. Logs are stored in $SASSYMCP_HOME/audit.log (default
+~/.sassymcp/audit.log) and rotated at 10MB.
 """
 
 import json
 import time
-from pathlib import Path
 
-_LOG_DIR = Path.home() / ".sassymcp"
+from sassymcp._paths import HOME as _LOG_DIR
+
 _LOG_FILE = _LOG_DIR / "audit.log"
 _JSONL_FILE = _LOG_DIR / "audit.jsonl"
 _MAX_LOG_SIZE = 10 * 1024 * 1024  # 10 MB
