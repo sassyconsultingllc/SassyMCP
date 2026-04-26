@@ -333,9 +333,23 @@ cd D:\Tools\SassyMCP                           # wherever you extracted
 
 Clients then send `Authorization: Bearer <token>` against `https://<your-tunnel>.trycloudflare.com/mcp` (or your own custom hostname if you've configured DNS).
 
-## Claude Desktop Config
+## MCP Client Config
 
-### Using the exe:
+SassyMCP speaks standard MCP. Anything that connects works — **no client-side modifications required**. The portable bundle ships ready-to-edit templates under `deploy/*_config.template.json`. Pick the row for your client, copy the template, replace `REPLACE_WITH_PATH` with the absolute path to `sassymcp.exe`, and save it where the client expects.
+
+| Client | Transport | Config file location | Template |
+|--------|-----------|----------------------|----------|
+| **Claude Desktop** | stdio | `%APPDATA%\Claude\claude_desktop_config.json` (Win) / `~/Library/Application Support/Claude/claude_desktop_config.json` (mac) | `claude_desktop_config.template.json` |
+| **Cursor** | stdio | `~/.cursor/mcp.json` (global) or `<project>/.cursor/mcp.json` (per-project) | `cursor_mcp_config.template.json` |
+| **Windsurf** | stdio | `~/.codeium/windsurf/mcp_config.json` | `windsurf_mcp_config.template.json` |
+| **Cline (VS Code)** | stdio | VS Code settings → `cline.mcpServers` (same `mcpServers` shape) | use `claude_desktop_config.template.json` |
+| **Continue.dev** | stdio | `~/.continue/config.json` (merge under `experimental.modelContextProtocolServers`) | `continue_mcp_config.template.json` |
+| **Grok Desktop** | HTTP | Grok Desktop MCP settings | `grok_desktop_config.template.json` |
+| **Any other MCP client** | stdio or HTTP | client's MCP config | use the closest template; the `mcpServers` shape is conventional |
+
+### Standard `mcpServers` shape (Claude Desktop, Cursor, Windsurf, Cline)
+
+Using the exe:
 ```json
 {
   "mcpServers": {
@@ -350,7 +364,7 @@ Clients then send `Authorization: Bearer <token>` against `https://<your-tunnel>
 }
 ```
 
-### From source:
+From source:
 ```json
 {
   "mcpServers": {
@@ -365,6 +379,41 @@ Clients then send `Authorization: Bearer <token>` against `https://<your-tunnel>
   }
 }
 ```
+
+### Continue.dev shape (different schema)
+
+```json
+{
+  "experimental": {
+    "modelContextProtocolServers": [
+      {
+        "transport": {
+          "type": "stdio",
+          "command": "C:\\path\\to\\sassymcp.exe"
+        }
+      }
+    ]
+  }
+}
+```
+
+### HTTP / Grok Desktop / custom HTTP clients
+
+Run the server in HTTP mode (`sassymcp.exe --http`, default `127.0.0.1:21001`) and point your client at `http://127.0.0.1:21001/mcp/`. Set `SASSYMCP_AUTH_TOKEN` if the bind is non-loopback.
+
+```json
+{
+  "mcpServers": {
+    "sassymcp": {
+      "url": "http://127.0.0.1:21001/mcp/"
+    }
+  }
+}
+```
+
+### What's actually Claude-flavored (cosmetic only)
+
+A few docstrings and the legacy `.claude/skills/sassymcp-update.md` slash-command target Claude Code specifically. Other clients ignore them and use `sassy_update_*` tools directly. No tool, transport, or auth path requires Claude — the server doesn't know which LLM is on the other end.
 
 ## Transport Modes
 
@@ -384,6 +433,7 @@ Clients then send `Authorization: Bearer <token>` against `https://<your-tunnel>
 | `SASSYMCP_GROUPS=core,android` | Load specific groups |
 | `SASSYMCP_AUTH_TOKEN=xxx` | Bearer token for HTTP auth |
 | `SASSYMCP_DEV=1` | Enable live reload (dev mode) |
+| `SASSYMCP_NO_UPDATE_CHECK=1` | Disable the startup update check (no GitHub API call) |
 | `GITHUB_TOKEN=xxx` | GitHub API access |
 | `SSH_HOST=xxx` | Remote Linux hostname/IP |
 | `SSH_USER=xxx` | Remote Linux username |

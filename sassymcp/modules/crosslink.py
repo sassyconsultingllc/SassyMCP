@@ -1,7 +1,8 @@
 """Crosslink - Cross-session communication for SassyMCP.
 
-Enables different Claude sessions (Desktop, mobile, web) to communicate
-through a shared local message queue backed by SQLite.
+Enables different MCP client sessions (Claude Desktop, Cursor, Windsurf,
+Cline, Grok, mobile, web — anything that connects to a SassyMCP server)
+to communicate through a shared local message queue backed by SQLite.
 
 Architecture:
   - SQLite DB at ~/.sassymcp/crosslink.db

@@ -110,8 +110,9 @@ def register(server):
     async def sassy_tool_group_toggle(group: str, enable: bool = True) -> str:
         """Enable or disable a tool group. Emits tools/list_changed notification.
 
-        NOTE: Claude Desktop may require server restart for changes.
-        Claude Code and other MCP clients may support dynamic reload.
+        NOTE: clients vary. MCP clients that handle tools/list_changed
+        (Claude Code, Cursor, etc.) refresh automatically; clients that
+        don't (Claude Desktop today) require a manual server restart.
 
         group: core, android, system, github_quick, github_full, v020, persona
         enable: True to load, False to unload
@@ -139,7 +140,7 @@ def register(server):
             "status": f"Group '{group}' {action}",
             "modules": TOOL_GROUPS[group]["modules"],
             "notification_sent": notified,
-            "note": "Restart server for changes to take effect in Claude Desktop" if not notified else "Client should re-fetch tool list",
+            "note": "Restart the server if your MCP client doesn't handle tools/list_changed (e.g. Claude Desktop today)" if not notified else "Client should re-fetch tool list",
         })
 
     @server.tool()

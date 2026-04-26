@@ -1,0 +1,12 @@
+{
+  "_comment": "Cursor MCP config — copy to ~/.cursor/mcp.json (or your project's .cursor/mcp.json). Replace REPLACE_WITH_PATH with the absolute path to your sassymcp.exe.",
+  "mcpServers": {
+    "sassymcp": {
+      "command": "REPLACE_WITH_PATH\\sassymcp.exe",
+      "args": [],
+      "env": {
+        "SASSYMCP_LOAD_ALL": "1"
+      }
+    }
+  }
+}

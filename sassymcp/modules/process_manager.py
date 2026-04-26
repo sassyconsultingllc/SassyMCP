@@ -99,11 +99,12 @@ def register(server):
 
     @server.tool()
     async def sassy_kill_all_sassymcp(force: bool = False) -> str:
-        """One-click nuclear option: kill every SassyMCP, uv, and Grok/Claude-spawned Python process.
-        
-        Fixes the exact error: "another program is currently using this process"
-        when trying to open Grok Desktop or Claude Desktop.
-        
+        """One-click nuclear option: kill every SassyMCP, uv, and MCP-client-spawned Python process.
+
+        Fixes the "another program is currently using this process" lock that
+        any MCP client (Claude Desktop, Cursor, Windsurf, Cline, Grok) can
+        leave behind when its prior connection didn't shut down cleanly.
+
         force=True = more aggressive (kills any python.exe / uv.exe that might be related).
         """
         current_pid = os.getpid()

@@ -488,17 +488,73 @@ def _is_piped() -> bool:
         return False
 
 
-def _print_banner(tool_count, host, port, first_run):
+def _check_for_updates_at_startup(timeout_seconds: float = 3.0):
+    """Run a one-shot update check at startup. Returns dict or None.
+
+    Honored env: SASSYMCP_NO_UPDATE_CHECK=1 disables the check entirely.
+    Network is bounded by `timeout_seconds`; failure is silent (returns None).
+    Result is cached in the Updater singleton so the first LLM-side
+    `sassy_update_check` call within 5 min reuses the same data.
+    """
+    if os.environ.get("SASSYMCP_NO_UPDATE_CHECK") == "1":
+        return None
+    try:
+        import threading
+        from sassymcp.modules import updater as _upd_mod
+        # Reuse the per-server updater instance if registered, else make one.
+        upd = getattr(mcp, "updater", None) or _upd_mod.Updater()
+        result = {"value": None}
+
+        def _run():
+            try:
+                # Updater._http_json uses a 10s urlopen timeout; we wrap with
+                # threading so we can return early if the network is slow.
+                result["value"] = upd.check(force=False)
+            except Exception as e:
+                logger.debug(f"Startup update check raised: {e}")
+
+        t = threading.Thread(target=_run, daemon=True, name="sassymcp-update-check")
+        t.start()
+        t.join(timeout=timeout_seconds)
+        if t.is_alive():
+            logger.info(f"Startup update check timed out after {timeout_seconds}s — skipping")
+            return None
+        return result["value"]
+    except Exception as e:
+        logger.debug(f"Startup update check failed: {e}")
+        return None
+
+
+def _format_update_line(update_info) -> str | None:
+    """Turn a check() result into a single human-readable line, or None."""
+    if not update_info or "error" in update_info:
+        return None
+    if update_info.get("upgradable"):
+        return (
+            f"Update available: {update_info['current']} -> {update_info['latest']}"
+            f"  (call sassy_update_check for details)"
+        )
+    if update_info.get("latest"):
+        return f"Up to date (v{update_info['current']})"
+    return None
+
+
+def _print_banner(tool_count, host, port, first_run, update_info=None):
     """Print a human-readable startup banner with connection instructions."""
     url = f"http://{host}:{port}"
     print(flush=True)
     print("  ==============================================================", flush=True)
     print(f"   SassyMCP v{__version__}  |  {tool_count} tools  |  Ready", flush=True)
+    update_line = _format_update_line(update_info)
+    if update_line:
+        print(f"   {update_line}", flush=True)
     print("  ==============================================================", flush=True)
     print(flush=True)
     print(f"   MCP endpoint:  {url}/mcp/", flush=True)
     print(flush=True)
-    print("   Connect from Claude Desktop (add to claude_desktop_config.json):", flush=True)
+    print("   Connect from any MCP client (Claude Desktop, Cursor, Windsurf,", flush=True)
+    print("   Cline, Grok Desktop, Continue, custom). Add to your client's", flush=True)
+    print("   MCP config (most clients use the `mcpServers` shape below):", flush=True)
     print(flush=True)
     print('     {', flush=True)
     print('       "mcpServers": {', flush=True)
@@ -508,9 +564,11 @@ def _print_banner(tool_count, host, port, first_run):
     print('       }', flush=True)
     print('     }', flush=True)
     print(flush=True)
+    print("   Templates for popular clients ship in deploy/*_config.template.json.", flush=True)
+    print(flush=True)
     if first_run:
-        print("   ** FIRST RUN: After connecting, ask Claude to run the", flush=True)
-        print("      setup wizard:  \"Run sassy_setup_wizard to set up my profile\"", flush=True)
+        print("   ** FIRST RUN: After connecting, ask the AI to run the setup", flush=True)
+        print("      wizard:  \"Run sassy_setup_wizard to set up my profile\"", flush=True)
         print(flush=True)
     print("  ==============================================================", flush=True)
     print(flush=True)
@@ -565,6 +623,14 @@ def main():
     tool_count = len(mcp._tool_manager._tools) if hasattr(mcp, "_tool_manager") else "?"
     logger.info(f"SassyMCP v{__version__} started | {tool_count} tools | groups: {list(TOOL_GROUPS.keys())}")
 
+    # Startup update check (opt-out: SASSYMCP_NO_UPDATE_CHECK=1).
+    # Logged in both modes; printed in HTTP banner only — stdio uses stdout
+    # for the JSON-RPC stream so the banner cannot print to it.
+    update_info = _check_for_updates_at_startup()
+    update_line = _format_update_line(update_info)
+    if update_line:
+        logger.info(update_line)
+
     if args.stdio:
         logger.info("Starting SassyMCP (stdio — MCP client detected)")
         mcp.run()
@@ -594,7 +660,7 @@ def main():
             logger.info(f"SSL enabled: cert={ssl_cert}")
 
         # Print human-readable banner with connection instructions
-        _print_banner(tool_count, args.host, args.port, first_run or args.setup)
+        _print_banner(tool_count, args.host, args.port, first_run or args.setup, update_info=update_info)
 
         uvicorn.run(app, **uvicorn_kwargs)
 

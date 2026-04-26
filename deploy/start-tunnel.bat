@@ -1,81 +1,65 @@
 @echo off
-setlocal enabledelayedexpansion
-REM ══════════════════════════════════════════════════════════════
-REM  SassyMCP — Cloudflare Tunnel Mode
-REM  HTTP server on localhost + cloudflared tunnel for remote access
-REM ══════════════════════════════════════════════════════════════
+REM =============================================================
+REM  SassyMCP - Cloudflare Tunnel Mode (production, non-interactive)
+REM =============================================================
+REM  Prereqs (all one-time):
+REM    1. cloudflared installed as Windows service pointing at
+REM       C:\Users\Admin\.cloudflared\config.yml
+REM    2. Named tunnel 'sassymcp' (2b14170b-ea06-4c42-aa11-97bb1e26aea7)
+REM       ingress: mcp.sassyconsultingllc.com -> http://127.0.0.1:21001
+REM    3. DNS A/AAAA for mcp.sassyconsultingllc.com proxied to tunnel
+REM    4. SASSYMCP_AUTH_TOKEN set at User scope (persistent)
+REM    5. V: drive mounted (VeraCrypt) before this runs
+REM
+REM  This script only starts the HTTP bridge. Cloudflared runs as
+REM  a service already - do not launch a second instance.
+REM =============================================================
 
-set SASSYMCP_LOAD_ALL=1
+setlocal
+
 set PORT=21001
+set HOST=127.0.0.1
+set SASSYMCP_LOAD_ALL=1
 
-echo ═══════════════════════════════════════════
-echo  SassyMCP — Cloudflare Tunnel Mode
-echo ═══════════════════════════════════════════
-echo.
-
-REM ── Check cloudflared ───────────────────────────────────────
-where cloudflared >nul 2>&1
-if %ERRORLEVEL% neq 0 (
-    echo [ERROR] cloudflared not found in PATH.
-    echo         Install: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
-    echo         Or: winget install Cloudflare.cloudflared
-    pause
-    exit /b 1
-)
-
-REM ── Auth Token ──────────────────────────────────────────────
+REM --- Preflight ----------------------------------------------
 if not defined SASSYMCP_AUTH_TOKEN (
-    echo  Tunnel mode requires an auth token.
-    echo  Enter a token or press Enter to auto-generate:
-    set /p USER_TOKEN="  Token: "
-    if "!USER_TOKEN!"=="" (
-        for /f "delims=" %%T in ('powershell -NoProfile -Command "[Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)).Replace('+','-').Replace('/','_').TrimEnd('=')"') do set SASSYMCP_AUTH_TOKEN=%%T
-    ) else (
-        set SASSYMCP_AUTH_TOKEN=!USER_TOKEN!
-    )
-    echo  [OK] Auth token: !SASSYMCP_AUTH_TOKEN!
-    echo       Clients must send: Authorization: Bearer !SASSYMCP_AUTH_TOKEN!
-)
-echo.
-
-REM ── Tunnel Name ─────────────────────────────────────────────
-set /p TUNNEL_NAME="  Cloudflare tunnel name [sassymcp]: "
-if "!TUNNEL_NAME!"=="" set TUNNEL_NAME=sassymcp
-
-REM ── Check for existing instance ─────────────────────────────
-tasklist /FI "IMAGENAME eq sassymcp.exe" 2>nul | find "sassymcp.exe" >nul
-if %ERRORLEVEL%==0 (
-    echo [WARN] sassymcp.exe already running. Kill it first:
-    echo        taskkill /f /im sassymcp.exe
-    pause
+    echo [ERROR] SASSYMCP_AUTH_TOKEN not set in environment.
+    echo         Set it at User scope, then relaunch.
+    echo.
+    echo         [Environment]::SetEnvironmentVariable(
+    echo           "SASSYMCP_AUTH_TOKEN", "your-token", "User")
     exit /b 1
 )
 
-REM ── Launch Server ───────────────────────────────────────────
-echo [1/2] Starting HTTP server on 127.0.0.1:%PORT%...
-if exist "%~dp0dist\sassymcp.exe" (
-    start "SassyMCP HTTP" /MIN "%~dp0dist\sassymcp.exe" --http --host 127.0.0.1 --port %PORT%
-) else if exist "%~dp0.venv\Scripts\python.exe" (
-    start "SassyMCP HTTP" /MIN "%~dp0.venv\Scripts\python.exe" -m sassymcp.server --http --host 127.0.0.1 --port %PORT%
-) else (
-    echo [ERROR] No sassymcp.exe or .venv found. Run build.bat first.
-    pause
+if not exist "V:\Projects\SassyMCP\.venv\Scripts\python.exe" (
+    echo [ERROR] V:\Projects\SassyMCP\.venv missing.
+    echo         Is V: mounted? VeraCrypt must unlock before this runs.
     exit /b 1
 )
 
-REM Wait for server to bind
-timeout /t 3 /nobreak >nul
+REM --- Kill any stale bridge on :21001 ------------------------
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:"LISTENING.*:%PORT% "') do (
+    echo [INFO] Killing stale process on :%PORT% (PID %%P)
+    taskkill /f /pid %%P >nul 2>&1
+)
 
-REM ── Launch Tunnel ───────────────────────────────────────────
-echo [2/2] Starting Cloudflare Tunnel '%TUNNEL_NAME%'...
-start "Cloudflared Tunnel" /MIN cloudflared tunnel run %TUNNEL_NAME%
+REM --- Cloudflared service health -----------------------------
+sc query Cloudflared | findstr /C:"RUNNING" >nul
+if %ERRORLEVEL% neq 0 (
+    echo [WARN] Cloudflared service is not RUNNING.
+    echo        Start it with: sc start Cloudflared
+    echo        Continuing anyway - bridge will bind locally.
+)
 
+REM --- Launch bridge ------------------------------------------
+echo ==============================================================
+echo  SassyMCP HTTP Bridge
+echo   Bind:   %HOST%:%PORT%
+echo   Tunnel: mcp.sassyconsultingllc.com
+echo   Auth:   Bearer token (from SASSYMCP_AUTH_TOKEN)
+echo ==============================================================
 echo.
-echo ═══════════════════════════════════════════
-echo  Server:  http://127.0.0.1:%PORT%
-echo  Tunnel:  %TUNNEL_NAME% (check CF dashboard for URL)
-echo  Auth:    Bearer token required
-echo.
-echo  To stop: taskkill /f /im sassymcp.exe ^& taskkill /f /im cloudflared.exe
-echo ═══════════════════════════════════════════
-pause
+
+"V:\Projects\SassyMCP\.venv\Scripts\python.exe" -m sassymcp.server --http --host %HOST% --port %PORT%
+
+endlocal

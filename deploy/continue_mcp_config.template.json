@@ -1,0 +1,14 @@
+{
+  "_comment": "Continue.dev MCP config — merge into ~/.continue/config.json under experimental.modelContextProtocolServers. Replace REPLACE_WITH_PATH with the absolute path to your sassymcp.exe.",
+  "experimental": {
+    "modelContextProtocolServers": [
+      {
+        "transport": {
+          "type": "stdio",
+          "command": "REPLACE_WITH_PATH\\sassymcp.exe",
+          "args": []
+        }
+      }
+    ]
+  }
+}

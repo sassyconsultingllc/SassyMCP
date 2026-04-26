@@ -52,6 +52,10 @@ echo   }
 echo }
 ) > "%DEPLOY_DIR%\grok_desktop_config.template.json"
 
+REM Cursor / Windsurf / Continue templates — generated as source files in
+REM deploy/ already (so they ship in the portable zip without per-build
+REM regeneration). deploy.bat does not overwrite them.
+
 REM Create README
 (
 echo ═══════════════════════════════════════════════════════════
@@ -66,12 +70,15 @@ echo     The first AI session will guide you through configuration.
 echo.
 echo  TRANSPORT MODES:
 echo.
-echo  Local ^(stdio — Claude Desktop pipe^):
+echo  Local ^(stdio — Claude Desktop / Cursor / Windsurf / Cline pipe^):
 echo    Run: start-local.bat
 echo    Or:  sassymcp.exe
-echo    Config: Copy claude_desktop_config.template.json to
-echo            %%APPDATA%%\Claude\claude_desktop_config.json
-echo            Edit the path to match your install location.
+echo    Config: copy the template that matches your client and edit the path:
+echo      Claude Desktop  -^> %%APPDATA%%\Claude\claude_desktop_config.json
+echo      Cursor          -^> ^~\.cursor\mcp.json
+echo      Windsurf        -^> ^~\.codeium\windsurf\mcp_config.json
+echo      Continue.dev    -^> ^~\.continue\config.json ^(merge under experimental^)
+echo      Grok Desktop    -^> uses HTTP, see grok_desktop_config.template.json
 echo.
 echo  HTTP ^(localhost or LAN^):
 echo    Run: start-lan.bat

@@ -528,8 +528,10 @@ def register(server):
     async def sassy_selfmod_restart(delay_seconds: float = 1.0) -> str:
         """Graceful self-restart: spawn new SassyMCP process, then exit.
 
-        The MCP client (Claude Desktop, Grok, etc.) reconnects automatically.
-        All pending core changes take effect after restart.
+        Most MCP clients (Claude Desktop, Cursor, Windsurf, Cline, Grok)
+        reconnect automatically over stdio; HTTP-mode clients reconnect
+        on next tool call. All pending core changes take effect after
+        restart.
 
         delay_seconds: wait before killing old process (lets response reach client)
         """
