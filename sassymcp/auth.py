@@ -168,6 +168,23 @@ def get_auth_config(server_url: str = "http://localhost:21001") -> Optional[dict
 
     Returns None if auth is not configured (no token env var, no tokens file).
     Raises on auth misconfiguration — fail closed, never degrade to open.
+
+    OAuth discovery URLs (advertised in WWW-Authenticate / protected-resource
+    metadata) are env-driven so a public deployment behind a Cloudflare tunnel
+    or OAuth-proxy worker doesn't leak `localhost` to remote clients:
+
+      SASSYMCP_RESOURCE_URL — public URL of the resource server (used as
+        `resource_server_url`; drives WWW-Authenticate `resource_metadata`).
+        Set this to the URL clients actually reach (e.g. the OAuth proxy's
+        /mcp URL) so 401 responses redirect them somewhere reachable.
+
+      SASSYMCP_OAUTH_ISSUER — URL of the OAuth authorization server (used as
+        `issuer_url`; populates `authorization_servers` in PRM). Set this to
+        the OAuth proxy host that actually serves /.well-known/oauth-authorization-server,
+        /authorize, /token, /register.
+
+    If unset, both fall back to `server_url` (legacy behaviour — fine for
+    pure-localhost dev, broken for any public deployment).
     """
     has_env_token = bool(os.environ.get("SASSYMCP_AUTH_TOKEN"))
     has_tokens_file = _TOKENS_FILE.exists()
@@ -179,10 +196,18 @@ def get_auth_config(server_url: str = "http://localhost:21001") -> Optional[dict
     # Caller must NOT catch this — auth misconfiguration is fatal.
     verifier = SassyTokenVerifier()
 
+    resource_server_url = os.environ.get("SASSYMCP_RESOURCE_URL", server_url)
+    issuer_url = os.environ.get("SASSYMCP_OAUTH_ISSUER", server_url)
+
+    if resource_server_url != server_url or issuer_url != server_url:
+        logger.info(
+            f"OAuth discovery: resource={resource_server_url} issuer={issuer_url}"
+        )
+
     return {
         "token_verifier": verifier,
         "auth": AuthSettings(
-            issuer_url=server_url,
-            resource_server_url=server_url,
+            issuer_url=issuer_url,
+            resource_server_url=resource_server_url,
         ),
     }

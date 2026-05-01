@@ -75,23 +75,57 @@ _HARDCODED_BLOCKS = {
 def validate_command(command: str) -> tuple[bool, Optional[str]]:
     """Check if a shell command is blocked.
 
-    Checks against both the hardcoded block list and the user-configurable
-    blockedCommands list from runtime config.
+    Matches against the hardcoded block list and the user-configurable
+    blockedCommands list, scanning a quoted-string-stripped view of the
+    command so words inside string literals do not trip the block. The
+    `interceptor.scanStringLiterals` config key (default false) opts back
+    in to the strict raw-text scan when callers need it.
     """
-    cmd_lower = command.strip().lower()
+    ok, _tier, err = validate_command_tiered(command)
+    return ok, err
 
-    # Hardcoded blocks
+
+def validate_command_tiered(command: str) -> tuple[bool, str, Optional[str]]:
+    """Block-list scan that distinguishes real matches from string-literal hits.
+
+    Returns (ok, tier, error_message).
+      - ok=True, tier="" — command passes
+      - ok=False, tier="high" — match against the live (string-stripped) form;
+        the keyword is actually being executed.
+      - ok=False, tier="low" — match only appears inside a quoted string
+        literal; a literal `format` inside `"format the disk"` is data, not
+        an execution. Callers (e.g. sassy_shell) may downgrade to log+allow.
+
+    The strict raw-text scan can be re-enabled via the
+    `interceptor.scanStringLiterals` config key — when true, a "low" hit
+    is reported as "high" so existing strict callers see no behavior change.
+    """
+    cmd_raw = command.strip().lower()
+    cmd_stripped = _strip_quoted_strings(cmd_raw)
+
+    scan_literals = bool(_get_config_value("interceptor.scanStringLiterals", False))
+
+    def _classify(needle: str, label: str) -> tuple[bool, str, Optional[str]]:
+        if needle in cmd_stripped:
+            return False, "high", f"Command blocked ({label}): contains '{needle}'"
+        if needle in cmd_raw:
+            tier = "high" if scan_literals else "low"
+            suffix = "" if scan_literals else " inside a string literal"
+            return False, tier, f"Command contains '{needle}'{suffix}"
+        return True, "", None
+
     for blocked in _HARDCODED_BLOCKS:
-        if blocked in cmd_lower:
-            return False, f"Command blocked (safety): contains '{blocked}'"
+        ok, tier, err = _classify(blocked, "safety")
+        if not ok:
+            return ok, tier, err
 
-    # User-configured blocks
     blocked_commands = _get_config_value("blockedCommands", [])
     for blocked in blocked_commands:
-        if blocked.lower() in cmd_lower:
-            return False, f"Command blocked (config): contains '{blocked}'"
+        ok, tier, err = _classify(blocked.lower(), "config")
+        if not ok:
+            return ok, tier, err
 
-    return True, None
+    return True, "", None
 
 
 # ── ADB Input Validation ─────────────────────────────────────────────
@@ -271,6 +305,36 @@ _DESTRUCTIVE_PATTERNS = [
     (re.compile(r"\bmove-item\b[^|;&\n]*\s+\$null\b"),                                                    "move-item to $null"),
     (re.compile(r"\bout-null\b[^|;&\n]*>\s*\$null"),                                                      "redirect to $null"),
 ]
+
+# Risk tier per destructive pattern label. Used by sassy_shell to decide:
+#   low    -> log and run (no prompt)
+#   medium -> confirm-token round-trip (interceptor.destructiveAction=confirm)
+#             or block (default)
+#   high   -> confirm-token + typed-phrase requirement, or block
+# Labels not listed here default to "medium".
+_PATTERN_TIERS: dict[str, str] = {
+    "clear-content":         "medium",
+    "set-content empty":     "medium",
+    ".net file.delete":      "medium",
+    ".net directory.delete": "high",
+    "out-file -force":       "medium",
+    "out-file -overwrite":   "medium",
+    "new-item -force":       "low",
+    "copy /y":               "low",
+    "xcopy /y":              "low",
+    "robocopy /mir":         "high",
+    "robocopy /purge":       "high",
+    "truncate-by-redirect":  "low",
+    "move-item to $null":    "medium",
+    "redirect to $null":     "low",
+}
+
+
+def pattern_tier(label: str) -> str:
+    """Return the risk tier ('low'|'medium'|'high') for a pattern label."""
+    base = label.split(":", 1)[-1]  # strips wrapper prefix like 'encodedcommand:'
+    return _PATTERN_TIERS.get(base, "medium")
+
 
 # Assignment prefixes in PowerShell that would otherwise make the wrapped
 # delete keyword invisible to first-word matching.

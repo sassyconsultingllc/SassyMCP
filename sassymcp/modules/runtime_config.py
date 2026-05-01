@@ -24,6 +24,14 @@ _DEFAULTS = {
     "fileWriteLineLimit": 500,
     "allowedDirectories": [],
     "blockedCommands": [],
+    # interceptor.destructiveAction: "block" (default — return error string)
+    #                                "confirm" (return confirm-token JSON;
+    #                                client calls sassy_shell_confirm to run)
+    "interceptor.destructiveAction": "block",
+    # interceptor.scanStringLiterals: when False (default), block-list words
+    # found ONLY inside quoted strings are reported as low-tier and allowed
+    # by sassy_shell after a log entry. Set True to restore strict scanning.
+    "interceptor.scanStringLiterals": False,
 }
 
 _config: dict = {}

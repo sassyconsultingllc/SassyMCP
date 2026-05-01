@@ -492,38 +492,48 @@ sassy_shell = _fake.tools["sassy_shell"]
 async def test_allow_pattern():
     with tempfile.TemporaryDirectory(prefix="sassy_ap_") as td:
         td_path = Path(td)
-        # Pattern-only command (no delete keyword): truncate-by-redirect.
-        # Without allow_pattern -> blocked.
+
+        # truncate-by-redirect is now LOW tier — runs by default after a log entry.
         target = (td_path / "out.log").as_posix()
         cmd_redirect = f'echo hi > {target}'
         r = await sassy_shell(cmd_redirect, "powershell", 10)
-        check("allow_pattern: redirect blocked by default",
-              "blocked" in r.lower() and "truncate-by-redirect" in r,
+        check("allow_pattern: low-tier redirect runs by default",
+              "[exit:" in r and "blocked" not in r.lower(),
               f"r={r[:200]}")
-        check("allow_pattern: file NOT created when blocked",
-              not Path(target).exists())
-
-        # With allow_pattern matching the label -> bypassed and runs.
-        r = await sassy_shell(cmd_redirect, "powershell", 10, allow_pattern="truncate-by-redirect")
-        check("allow_pattern: bypass executes the command",
-              "[exit:" in r,
-              f"r={r[:200]}")
-        check("allow_pattern: file WAS created via bypass",
+        check("allow_pattern: low-tier file IS created (no block)",
               Path(target).exists())
 
-        # Wrong allow_pattern label still blocks.
-        target2 = (td_path / "out2.log").as_posix()
-        cmd2 = f'echo hi > {target2}'
-        r = await sassy_shell(cmd2, "powershell", 10, allow_pattern="copy /y")
-        check("allow_pattern: wrong label still blocks",
+        # MEDIUM-tier pattern (out-file -force) is blocked by default.
+        target_m = (td_path / "med.log").as_posix()
+        cmd_med = f'"hi" | Out-File -Force {target_m}'
+        r = await sassy_shell(cmd_med, "powershell", 10)
+        check("allow_pattern: medium-tier blocked by default",
+              "blocked" in r.lower() and "out-file -force" in r,
+              f"r={r[:200]}")
+        check("allow_pattern: medium-tier file NOT created when blocked",
+              not Path(target_m).exists())
+
+        # MEDIUM-tier with matching allow_pattern -> bypassed and runs.
+        r = await sassy_shell(cmd_med, "powershell", 10, allow_pattern="out-file -force")
+        check("allow_pattern: medium-tier bypass executes",
+              "[exit:" in r,
+              f"r={r[:200]}")
+        check("allow_pattern: medium-tier file WAS created via bypass",
+              Path(target_m).exists())
+
+        # Wrong allow_pattern label on a MEDIUM hit still blocks.
+        target_m2 = (td_path / "med2.log").as_posix()
+        cmd_med2 = f'"hi" | Out-File -Force {target_m2}'
+        r = await sassy_shell(cmd_med2, "powershell", 10, allow_pattern="copy /y")
+        check("allow_pattern: wrong label still blocks medium",
               "blocked" in r.lower(),
               f"r={r[:200]}")
         check("allow_pattern: wrong-label file NOT created",
-              not Path(target2).exists())
+              not Path(target_m2).exists())
 
         # Wildcard '*' bypasses any pattern.
         target3 = (td_path / "out3.log").as_posix()
-        cmd3 = f'echo hi > {target3}'
+        cmd3 = f'"hi" | Out-File -Force {target3}'
         r = await sassy_shell(cmd3, "powershell", 10, allow_pattern="*")
         check("allow_pattern: wildcard executes",
               "[exit:" in r,
@@ -552,12 +562,13 @@ audit_mod.register(_fake)
 sassy_audit_false_positives = _fake.tools["sassy_audit_false_positives"]
 
 async def test_audit_fp():
-    # Run two pattern-only commands so audit.jsonl picks up entries.
+    # Run two MEDIUM-tier commands so audit.jsonl picks up a fresh
+    # block + bypass pair (low-tier wouldn't generate a pattern_block).
     with tempfile.TemporaryDirectory(prefix="sassy_fp_") as td:
         target = (Path(td) / "x.log").as_posix()
-        await sassy_shell(f'echo a > {target}', "powershell", 10)            # block
-        await sassy_shell(f'echo b > {target}', "powershell", 10,
-                          allow_pattern="truncate-by-redirect")              # bypass
+        await sassy_shell(f'"a" | Out-File -Force {target}', "powershell", 10)             # block
+        await sassy_shell(f'"b" | Out-File -Force {target}', "powershell", 10,
+                          allow_pattern="out-file -force")                                  # bypass
 
     out = await sassy_audit_false_positives(count=10, include_bypasses=True)
     check("audit_false_positives: shows pattern_block",
@@ -571,6 +582,186 @@ async def test_audit_fp():
           f"out={out[:300]}")
 
 asyncio.run(test_audit_fp())
+
+
+# ── v1.4.0: validate_command_tiered — string-literal allow path ─────
+print("\n[15] validate_command_tiered — block-list words inside string literals")
+from sassymcp.modules._security import validate_command, validate_command_tiered
+
+tiered_cases = [
+    # (cmd, expected_ok, expected_tier, hint)
+    # Real execution of a hardcoded block — high tier, blocked.
+    ("format c:",                                      False, "high"),
+    ("diskpart /s script.txt",                         False, "high"),
+    # Block-list word inside a string literal — low tier (allowed by default).
+    ('echo "format the disk later"',                    False, "low"),
+    ("Set-Content readme.txt 'see also: diskpart'",     False, "low"),
+    # Clean commands.
+    ("Get-ChildItem foo",                              True,  ""),
+    ("echo hello",                                     True,  ""),
+]
+for cmd, exp_ok, exp_tier in tiered_cases:
+    ok, tier, _err = validate_command_tiered(cmd)
+    check(
+        f"tiered ok={exp_ok}/tier={exp_tier!r} <- {cmd!r}",
+        ok == exp_ok and tier == exp_tier,
+        f"got=({ok},{tier!r})",
+    )
+
+# Backwards-compat: validate_command still returns (ok, err) and now passes
+# string-literal hits because they're low-tier.
+ok, _err = validate_command('echo "format the disk later"')
+check("validate_command: string-literal hit treated as low (returns False)", ok is False)
+
+
+print("\n[16] sassy_shell — string-literal hardcoded block runs by default")
+async def test_blocklist_literal():
+    with tempfile.TemporaryDirectory(prefix="sassy_lit_") as td:
+        target = (Path(td) / "note.txt").as_posix()
+        # 'format' inside a string literal — used to be a hard block.
+        # Now classified as low-tier and falls through to execution.
+        cmd = f'"see format step later" | Out-File {target}'
+        r = await sassy_shell(cmd, "powershell", 10)
+        check("blocklist-literal: runs by default (Out-File without -Force)",
+              "[exit:" in r and "blocked" not in r.lower(),
+              f"r={r[:200]}")
+        check("blocklist-literal: file written",
+              Path(target).exists())
+
+asyncio.run(test_blocklist_literal())
+
+
+# ── v1.4.0: confirm-token round-trip ────────────────────────────────
+print("\n[17] sassy_shell + sassy_shell_confirm — confirm flow")
+sassy_shell_confirm = _fake.tools.get("sassy_shell_confirm")
+# _fake from [14] only has audit tools registered. Re-grab from shell registration.
+_fake_shell = _FakeServer()
+shell_mod.register(_fake_shell)
+sassy_shell = _fake_shell.tools["sassy_shell"]
+sassy_shell_confirm = _fake_shell.tools["sassy_shell_confirm"]
+
+from sassymcp.modules import runtime_config as _rc
+
+async def test_confirm_flow():
+    # Flip config to confirm mode.
+    _rc.set_val("interceptor.destructiveAction", "confirm")
+    try:
+        with tempfile.TemporaryDirectory(prefix="sassy_cf_") as td:
+            target = (Path(td) / "doc.txt").as_posix()
+            cmd_med = f'"hello" | Out-File -Force {target}'
+
+            # Medium-tier under confirm mode -> JSON token response.
+            r = await sassy_shell(cmd_med, "powershell", 10)
+            check("confirm: medium returns confirmation_required",
+                  '"status": "confirmation_required"' in r and '"tier": "medium"' in r,
+                  f"r={r[:300]}")
+            check("confirm: file NOT created at issue time",
+                  not Path(target).exists())
+
+            entry = _json.loads(r)
+            tok = entry["token"]
+
+            # Replay the token -> executes.
+            r = await sassy_shell_confirm(tok)
+            check("confirm: redemption executes the command",
+                  "[exit:" in r,
+                  f"r={r[:200]}")
+            check("confirm: file IS created after confirm",
+                  Path(target).exists())
+
+            # Token is single-use.
+            r = await sassy_shell_confirm(tok)
+            check("confirm: token is single-use",
+                  "Error" in r and "not found" in r,
+                  f"r={r[:200]}")
+
+            # HIGH tier requires the typed phrase.
+            target_h = (Path(td) / "h.log").as_posix()
+            cmd_high = f'"hi" | Out-File -Overwrite {target_h}'  # medium, but use a high
+            # Use a real HIGH pattern — robocopy /MIR.
+            src = Path(td) / "src"; src.mkdir()
+            dst = Path(td) / "dst"; dst.mkdir()
+            (src / "a.txt").write_text("a")
+            cmd_high = f"robocopy {src} {dst} /MIR"
+            r = await sassy_shell(cmd_high, "powershell", 30)
+            check("confirm: high returns confirmation_required + phrase",
+                  '"tier": "high"' in r and '"phrase_required"' in r,
+                  f"r={r[:300]}")
+            entry = _json.loads(r)
+            tok = entry["token"]
+            phrase = entry["phrase_required"]
+
+            # Wrong phrase -> reject, token still valid.
+            r = await sassy_shell_confirm(tok, "wrong words")
+            check("confirm: high rejects wrong phrase",
+                  "phrase mismatch" in r,
+                  f"r={r[:200]}")
+
+            # Right phrase -> executes.
+            r = await sassy_shell_confirm(tok, phrase)
+            check("confirm: high executes with correct phrase",
+                  "[exit:" in r,
+                  f"r={r[:200]}")
+    finally:
+        _rc.set_val("interceptor.destructiveAction", "block")
+
+asyncio.run(test_confirm_flow())
+
+
+# ── v1.4.0: sassy_write_file — encoding + line_endings ───────────────
+print("\n[18] sassy_write_file — encoding and line_endings")
+from sassymcp.modules import fileops as fo
+_fake = _FakeServer()
+fo.register(_fake)
+sassy_write_file = _fake.tools["sassy_write_file"]
+
+async def test_write_file_options():
+    with tempfile.TemporaryDirectory(prefix="sassy_wf_") as td:
+        td_path = Path(td)
+
+        # line_endings=lf normalizes mixed input to LF.
+        p = td_path / "lf.txt"
+        msg = await sassy_write_file(str(p), "a\r\nb\rc\n", "rewrite",
+                                     "utf-8", "lf")
+        check("write_file: lf normalization", "Written" in msg)
+        check("write_file: lf bytes", p.read_bytes() == b"a\nb\nc\n",
+              f"got={p.read_bytes()!r}")
+
+        # line_endings=crlf normalizes everything to CRLF.
+        p = td_path / "crlf.txt"
+        msg = await sassy_write_file(str(p), "a\nb\nc", "rewrite",
+                                     "utf-8", "crlf")
+        check("write_file: crlf normalization", "Written" in msg)
+        check("write_file: crlf bytes", p.read_bytes() == b"a\r\nb\r\nc",
+              f"got={p.read_bytes()!r}")
+
+        # encoding=utf-16 produces a UTF-16 file.
+        p = td_path / "u16.txt"
+        msg = await sassy_write_file(str(p), "hello", "rewrite", "utf-16")
+        data = p.read_bytes()
+        check("write_file: utf-16 encoding (BOM)",
+              data[:2] in (b"\xff\xfe", b"\xfe\xff"),
+              f"got={data[:8]!r}")
+
+        # Bad encoding errors clearly.
+        p = td_path / "bad.txt"
+        msg = await sassy_write_file(str(p), "x", "rewrite", "not-a-codec")
+        check("write_file: unknown encoding errors", "Error" in msg, f"msg={msg}")
+
+        # Bad line_endings errors clearly.
+        p = td_path / "bad2.txt"
+        msg = await sassy_write_file(str(p), "x", "rewrite", "utf-8", "weird")
+        check("write_file: unknown line_endings errors", "Error" in msg, f"msg={msg}")
+
+        # Content can include destructive-looking words — write_file does
+        # NOT scan content, only the path.
+        p = td_path / "script.ps1"
+        risky = "# Note: do not run 'format c:' or 'rm -rf /'\nWrite-Host done"
+        msg = await sassy_write_file(str(p), risky, "rewrite")
+        check("write_file: destructive words in content are fine",
+              "Written" in msg and p.read_text(encoding="utf-8") == risky)
+
+asyncio.run(test_write_file_options())
 
 
 print("\n==================")

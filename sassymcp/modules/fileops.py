@@ -136,13 +136,29 @@ def register(server):
         return "\n\n".join(results)
 
     @server.tool()
-    async def sassy_write_file(path: str, content: str, mode: str = "rewrite") -> str:
-        """Write or append to a file. mode: rewrite | append
+    async def sassy_write_file(
+        path: str,
+        content: str,
+        mode: str = "rewrite",
+        encoding: str = "utf-8",
+        line_endings: str = "preserve",
+    ) -> str:
+        """Write or append to a file. mode: rewrite | append.
+
+        encoding: any Python codec name (utf-8, utf-16, ascii, latin-1, ...).
+        line_endings: 'preserve' (default — write content verbatim),
+                      'lf' (normalize all CRLF/CR to LF before writing),
+                      'crlf' (normalize all to CRLF — useful for Windows
+                      .bat / .ps1 files generated from a model that emits LF).
 
         Rewrite mode on an existing file first snapshots the prior contents
         into the adjacent _DELETE_/ staging folder so destructive overwrites
         can always be undone. Protected paths (SassyMCP source tree,
         ~/.sassymcp) are refused.
+
+        Bypasses the shell-keyword interceptor entirely — content with
+        words like 'format' or 'rm -rf' as data inside scripts is fine.
+        Only the path is validated (allowedDirectories + protected roots).
         """
         err = _check_path(path)
         if err:
@@ -179,14 +195,32 @@ def register(server):
                 except OSError as e:
                     return f"Error snapshotting {p} before overwrite: {e}"
 
+        # Normalize line endings BEFORE encoding so the byte count below
+        # reflects what actually hits disk.
+        le = (line_endings or "preserve").lower()
+        if le == "lf":
+            content = content.replace("\r\n", "\n").replace("\r", "\n")
+        elif le == "crlf":
+            content = content.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r\n")
+        elif le != "preserve":
+            return f"Error: unknown line_endings={le!r}. Use: preserve | lf | crlf"
+
+        try:
+            data = content.encode(encoding)
+        except (LookupError, UnicodeEncodeError) as e:
+            return f"Error encoding to {encoding!r}: {e}"
+
         p.parent.mkdir(parents=True, exist_ok=True)
-        if mode == "append":
-            with open(p, "a", encoding="utf-8") as f:
-                f.write(content)
-        else:
-            p.write_text(content, encoding="utf-8")
-        lines = content.count("\n") + 1
-        return f"Written {lines} lines to {path} ({mode})"
+        try:
+            if mode == "append":
+                with open(p, "ab") as f:
+                    f.write(data)
+            else:
+                p.write_bytes(data)
+        except OSError as e:
+            return f"Error writing {p}: {e}"
+        lines = content.count("\n") + (0 if content.endswith("\n") else 1)
+        return f"Written {lines} lines, {len(data)} bytes to {path} ({mode}, {encoding}, {le})"
 
     @server.tool()
     async def sassy_list_dir(path: str, depth: int = 2) -> str:
