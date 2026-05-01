@@ -603,6 +603,18 @@ def main():
         else:
             args.http = True
 
+    # Bootstrap external tools into PATH before any module loads
+    try:
+        from sassymcp.modules.tools_manager import bootstrap as _tools_bootstrap
+        _tools_info = _tools_bootstrap()
+        if _tools_info.get("missing_required"):
+            logger.warning(
+                f"Startup: required tools missing: {_tools_info['missing_required']} "
+                "-- run sassy_setup_tools(action='install_required')"
+            )
+    except Exception as _e:
+        logger.debug(f"Tools bootstrap skipped: {_e}")
+
     # Load everything
     _load_modules()
     _register_shutdown_handlers()

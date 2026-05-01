@@ -41,30 +41,37 @@ Guide new users through setup in THIS order. Each step can be skipped.
 
 ### Step 1: Persona (sassy_setup_wizard)
 Ask about: role, expertise level, languages, frameworks, communication style.
+Also ask two device questions:
+- "Do you have an Android phone you want to control?" → has_android=True
+- "Do you have a Linux server or WSL you work with?" → has_linux=True
 Keep it conversational — don't dump all parameters at once.
-"What do you do? What languages do you work with? Prefer terse or detailed responses?"
 
-### Step 2: GitHub (sassy_setup_github)
+### Step 2: Tools (sassy_setup_tools)
+Run action="check" first. ALWAYS install tesseract if missing — it is required
+for OCR/vision regardless of other choices:
+  sassy_setup_tools(action="install_required")
+If has_android is True: also install adb and scrcpy.
+If has_linux is True: also install plink.
+Present install results clearly.
+
+### Step 3: GitHub (sassy_setup_github)
 1. action="check" — is a token already set?
 2. If not: action="open_browser" — opens the token creation page
 3. Walk them through scope selection (Contents, Issues, PRs, Metadata)
 4. action="save_token" with their token — validates and saves
 5. If they don't use GitHub: action="skip"
 
-### Step 3: SSH / Linux (sassy_setup_ssh)
+### Step 4: SSH / Linux (sassy_setup_ssh)
+Only if has_linux is True (or user expressed interest).
 1. action="check" — plink installed? Credentials set?
 2. If they have a Linux server: collect host, user, password
 3. action="save" then action="test" to verify
 4. If no Linux: action="skip"
 
-### Step 4: Optional Tools (sassy_setup_check_tools)
-Run and present results. For missing tools, provide install URLs.
-Don't push — just inform what's available and what it enables.
-
 ### Tone:
 - First-time users: patient, explain what each thing does
 - Returning users: fast, just confirm what changed
-- Call sassy_setup_status to check what's already configured
+- Call sassy_setup_status to check what already configured
 """,
     )
 
@@ -210,6 +217,8 @@ def register(server):
         communication_style: str = "terse",
         security_posture: str = "standard",
         mcp_clients: str = "",
+        has_android: bool = False,
+        has_linux: bool = False,
         notes: str = "",
     ) -> str:
         """First-run setup wizard. Generates ~/.sassymcp/persona.md from your answers.
@@ -226,6 +235,8 @@ def register(server):
         communication_style: terse | balanced | verbose
         security_posture: standard | hardened | paranoid
         mcp_clients: Which AI tools connect (e.g. "Claude Desktop, Cursor, Grok Desktop")
+        has_android: True if the user has an Android phone to control (installs adb + scrcpy)
+        has_linux: True if the user works with a Linux server or WSL (installs plink)
         notes: Anything else the AI should know about how you work
         """
         answers = {
@@ -239,6 +250,8 @@ def register(server):
             "communication_style": communication_style,
             "security_posture": security_posture,
             "mcp_clients": mcp_clients,
+            "has_android": has_android,
+            "has_linux": has_linux,
             "notes": notes,
         }
 
@@ -252,6 +265,8 @@ def register(server):
         config["setup_complete"] = True
         config["setup_timestamp"] = time.time()
         config["setup_version"] = "1.0.0"
+        config["has_android"] = has_android
+        config["has_linux"] = has_linux
         _save_config(config)
 
         # Reload persona module so it picks up the new file
@@ -266,16 +281,32 @@ def register(server):
         except Exception as e:
             logger.warning(f"Persona reload failed (non-fatal): {e}")
 
+        next_steps = [
+            "Your profile is now active. The persona module will use it automatically.",
+            "Call sassy_persona_context to verify your profile.",
+            "Call sassy_persona_full to see complete operating parameters.",
+            "Re-run sassy_setup_wizard anytime to update your profile.",
+            "Run sassy_setup_tools(action='check') to see tool status.",
+        ]
+
+        # Identify tools to install based on user answers
+        tools_to_install = ["tesseract"]  # always required
+        if has_android:
+            tools_to_install.extend(["adb", "scrcpy"])
+        if has_linux:
+            tools_to_install.append("plink")
+
         return json.dumps({
             "status": "setup_complete",
             "persona_file": str(_PERSONA_FILE),
             "profile": answers,
-            "next_steps": [
-                "Your profile is now active. The persona module will use it automatically.",
-                "Call sassy_persona_context to verify your profile.",
-                "Call sassy_persona_full to see complete operating parameters.",
-                "Re-run sassy_setup_wizard anytime to update your profile.",
-            ],
+            "tools_to_install": tools_to_install,
+            "next_steps": next_steps,
+            "tool_install_hint": (
+                f"Call sassy_setup_tools(action='install_required') to install tesseract (required). "
+                + (f"Also run sassy_setup_tools(action='install', tool_name='adb') and tool_name='scrcpy' for Android. " if has_android else "")
+                + (f"Also run sassy_setup_tools(action='install', tool_name='plink') for Linux/SSH." if has_linux else "")
+            ),
         }, indent=2)
 
     @server.tool()
@@ -579,10 +610,11 @@ def register(server):
 
     @server.tool()
     async def sassy_setup_check_tools() -> str:
-        """Scan for optional tools and report availability with install URLs.
+        """Scan for external tools and report availability. Tesseract is required.
 
-        Checks: nmap, Tesseract OCR, adb, scrcpy, plink (PuTTY), Chrome/Chromium.
+        Checks: nmap, Tesseract OCR (REQUIRED), adb, scrcpy, plink (PuTTY), Chrome/Chromium.
         Also checks Python packages: pytesseract, playwright.
+        Use sassy_setup_tools for winget-based auto-install.
         """
         import shutil
 
@@ -603,6 +635,7 @@ def register(server):
                 ],
                 "url": "https://github.com/tesseract-ocr/tesseract",
                 "used_by": "sassy_screen_ocr, sassy_find_text_on_screen",
+                "required": True,
             },
             "adb": {
                 "search": ["adb"],
@@ -657,6 +690,7 @@ def register(server):
             tools[name] = {
                 "installed": found is not None,
                 "path": found,
+                "required": info.get("required", False),
                 "install_url": info["url"] if not found else None,
                 "used_by": info["used_by"],
             }
@@ -673,13 +707,20 @@ def register(server):
                     pip_cmd += " && playwright install chromium"
                 packages[pkg] = {"installed": False, "install": pip_cmd}
 
+        missing_required = [k for k, v in tools.items() if not v["installed"] and v.get("required")]
         return json.dumps({
             "system_tools": tools,
             "python_packages": packages,
             "summary": {
                 "installed": [k for k, v in tools.items() if v["installed"]],
-                "missing": [k for k, v in tools.items() if not v["installed"]],
+                "missing_required": missing_required,
+                "missing_optional": [k for k, v in tools.items() if not v["installed"] and not v.get("required")],
             },
+            "hint": (
+                "Run sassy_setup_tools(action='install_required') to auto-install missing required tools (tesseract)."
+                if missing_required else
+                "All required tools present."
+            ),
         }, indent=2)
 
     # ── License Management ───────────────────────────────────────

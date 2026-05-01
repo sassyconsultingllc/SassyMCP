@@ -53,6 +53,7 @@ a = Analysis(
         'sassymcp.modules.utility',
         'sassymcp.modules.selfmod',
         'sassymcp.modules.setup_wizard',
+        'sassymcp.modules.tools_manager',
         'sassymcp.modules.memory',
         'sassymcp.modules.updater',
         'sassymcp.modules._hooks',

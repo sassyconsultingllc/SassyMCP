@@ -248,8 +248,8 @@ TOOL_GROUPS = {
         "calls_per_minute": 30,
     },
     "setup": {
-        "modules": ["setup_wizard"],
-        "description": "First-run setup wizard, auth token generation, config status",
+        "modules": ["setup_wizard", "tools_manager"],
+        "description": "First-run setup wizard, external tool bootstrap, auth token generation",
         "always_load": True,
         "max_concurrent": 3,
         "calls_per_minute": 30,
