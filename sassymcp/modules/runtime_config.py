@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 from sassymcp import __version__
+from sassymcp._atomic import atomic_write_json
 from sassymcp._paths import HOME as CONFIG_DIR, CONFIG_FILE
 
 logger = logging.getLogger("sassymcp.config")
@@ -52,8 +53,7 @@ def _load():
 
 def _save():
     try:
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        CONFIG_FILE.write_text(json.dumps(_config, indent=2))
+        atomic_write_json(CONFIG_FILE, _config)
     except Exception as e:
         logger.warning(f"Failed to save config: {e}")
 

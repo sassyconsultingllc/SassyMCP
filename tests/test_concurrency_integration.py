@@ -193,3 +193,42 @@ def test_audit_log_no_interleaving_under_concurrent_load(tmp_path: Path):
             json.loads(raw)
         except json.JSONDecodeError as e:
             raise AssertionError(f"line {ln} is not valid JSON ({e}): {raw!r}") from e
+
+
+def test_runtime_config_atomic_writes_no_corruption(tmp_path: Path):
+    sassy_home = tmp_path / "sassy_home"
+    sassy_home.mkdir()
+
+    worker_script = tmp_path / "config_worker.py"
+    worker_script.write_text(
+        "import os, sys\n"
+        "import sassymcp.modules.runtime_config as rc\n"
+        "worker_id = int(sys.argv[1])\n"
+        "iterations = int(sys.argv[2])\n"
+        "for i in range(iterations):\n"
+        "    rc.set_val(f'writer_{worker_id}_setting', f'value_{i}')\n",
+        encoding="utf-8",
+    )
+
+    workers = 8
+    per_worker = 30
+    env = {**os.environ, "SASSYMCP_HOME": str(sassy_home)}
+    # Add project root to PYTHONPATH for subprocess imports
+    if "PYTHONPATH" in env:
+        env["PYTHONPATH"] = str(Path(__file__).parent.parent) + os.pathsep + env["PYTHONPATH"]
+    else:
+        env["PYTHONPATH"] = str(Path(__file__).parent.parent)
+    procs = [
+        subprocess.Popen(
+            [sys.executable, str(worker_script), str(w), str(per_worker)], env=env
+        )
+        for w in range(workers)
+    ]
+    for p in procs:
+        p.wait(timeout=120)
+        assert p.returncode == 0
+
+    cfg = sassy_home / "config.json"
+    assert cfg.exists()
+    parsed = json.loads(cfg.read_text())
+    assert isinstance(parsed, dict)
