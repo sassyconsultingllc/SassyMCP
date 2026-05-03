@@ -232,3 +232,101 @@ def test_runtime_config_atomic_writes_no_corruption(tmp_path: Path):
     assert cfg.exists()
     parsed = json.loads(cfg.read_text())
     assert isinstance(parsed, dict)
+
+
+def test_license_secret_first_run_race(tmp_path: Path):
+    """8 subprocesses start with empty SASSYMCP_HOME and all import license.py
+    simultaneously. They must all end up with the SAME signing secret."""
+    sassy_home = tmp_path / "sassy_home"
+    sassy_home.mkdir()
+
+    worker_script = tmp_path / "secret_worker.py"
+    worker_script.write_text(
+        "import os, sys\n"
+        "import sassymcp.license as lic\n"
+        "out = sys.argv[1]\n"
+        "with open(out, 'w', encoding='utf-8') as f:\n"
+        "    f.write(lic._SIGNING_SECRET)\n",
+        encoding="utf-8",
+    )
+
+    workers = 8
+    out_files = [tmp_path / f"secret_{w}.txt" for w in range(workers)]
+    env = {**os.environ, "SASSYMCP_HOME": str(sassy_home)}
+    # Add project root to PYTHONPATH for subprocess imports
+    if "PYTHONPATH" in env:
+        env["PYTHONPATH"] = str(Path(__file__).parent.parent) + os.pathsep + env["PYTHONPATH"]
+    else:
+        env["PYTHONPATH"] = str(Path(__file__).parent.parent)
+    # Clear SASSYMCP_LICENSE_SECRET if set in parent env — we want the
+    # workers to race on file creation, not pull from env.
+    env.pop("SASSYMCP_LICENSE_SECRET", None)
+
+    procs = [
+        subprocess.Popen(
+            [sys.executable, str(worker_script), str(out_files[w])], env=env
+        )
+        for w in range(workers)
+    ]
+    for p in procs:
+        p.wait(timeout=120)
+        assert p.returncode == 0
+
+    secrets_seen = {f.read_text(encoding="utf-8") for f in out_files}
+    assert len(secrets_seen) == 1, (
+        f"expected 1 shared secret, got {len(secrets_seen)} distinct"
+    )
+
+
+def test_license_file_atomic_writes_no_corruption(tmp_path: Path):
+    sassy_home = tmp_path / "sassy_home"
+    sassy_home.mkdir()
+
+    setup_env = {**os.environ, "SASSYMCP_HOME": str(sassy_home),
+                 "SASSYMCP_LICENSE_SECRET": "test-secret-shared-across-workers"}
+
+    gen_script = tmp_path / "gen.py"
+    gen_script.write_text(
+        "import sassymcp.license as lic\n"
+        "import sys\n"
+        "k = lic.generate_license_key('test@example.com', 'pro', days_valid=30)\n"
+        "sys.stdout.write(k['key'])\n",
+        encoding="utf-8",
+    )
+    # Add project root to PYTHONPATH for subprocess imports
+    if "PYTHONPATH" in setup_env:
+        setup_env["PYTHONPATH"] = str(Path(__file__).parent.parent) + os.pathsep + setup_env["PYTHONPATH"]
+    else:
+        setup_env["PYTHONPATH"] = str(Path(__file__).parent.parent)
+    res = subprocess.run(
+        [sys.executable, str(gen_script)], env=setup_env,
+        capture_output=True, text=True, check=True, timeout=30,
+    )
+    key_string = res.stdout.strip()
+    assert key_string
+
+    save_script = tmp_path / "save.py"
+    save_script.write_text(
+        "import sys\n"
+        "import sassymcp.license as lic\n"
+        "key = sys.argv[1]\n"
+        "for _ in range(20):\n"
+        "    lic.save_license(key)\n",
+        encoding="utf-8",
+    )
+
+    workers = 8
+    procs = [
+        subprocess.Popen(
+            [sys.executable, str(save_script), key_string], env=setup_env
+        )
+        for _ in range(workers)
+    ]
+    for p in procs:
+        p.wait(timeout=120)
+        assert p.returncode == 0
+
+    lf = sassy_home / "license.json"
+    assert lf.exists()
+    parsed = json.loads(lf.read_text())
+    assert parsed.get("tier") == "pro"

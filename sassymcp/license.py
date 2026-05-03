@@ -19,6 +19,8 @@ import secrets
 import time
 from pathlib import Path
 
+from sassymcp._atomic import atomic_write_json
+
 from sassymcp._paths import LICENSE_FILE  # re-exported for back-compat
 
 logger = logging.getLogger("sassymcp.license")
@@ -28,7 +30,15 @@ _SECRET_FILE = LICENSE_FILE.parent / ".license_secret"
 
 
 def _load_signing_secret() -> str:
-    """Load or generate a persistent per-installation signing secret."""
+    """Load or generate a persistent per-installation signing secret.
+
+    Multi-process safe: O_CREAT|O_EXCL on first creation so that when
+    multiple sassymcp.exe processes start simultaneously and all find no
+    .license_secret, exactly one wins the create race; the others get
+    FileExistsError and read the winner's value. Without this, every
+    process would generate its own divergent secret and license validation
+    would not agree across MCP clients on the same machine.
+    """
     if os.environ.get("SASSYMCP_LICENSE_SECRET"):
         return os.environ["SASSYMCP_LICENSE_SECRET"]
     if _SECRET_FILE.exists():
@@ -36,15 +46,29 @@ def _load_signing_secret() -> str:
             return _SECRET_FILE.read_text().strip()
         except Exception:
             pass
-    # First run: generate a cryptographically random secret and persist it.
     new_secret = secrets.token_hex(32)
     try:
         _SECRET_FILE.parent.mkdir(parents=True, exist_ok=True)
-        _SECRET_FILE.write_text(new_secret)
-        _SECRET_FILE.chmod(0o600)
+        fd = os.open(str(_SECRET_FILE), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            os.write(fd, new_secret.encode())
+        finally:
+            os.close(fd)
+        try:
+            _SECRET_FILE.chmod(0o600)
+        except OSError:
+            pass
+        return new_secret
+    except FileExistsError:
+        # Another process won the create race. Read theirs.
+        try:
+            return _SECRET_FILE.read_text().strip()
+        except Exception as e:
+            logger.warning(f"Could not read license secret after race: {e}")
+            return new_secret
     except Exception as e:
         logger.warning(f"Could not persist license secret: {e}")
-    return new_secret
+        return new_secret
 
 
 _SIGNING_SECRET = _load_signing_secret()
@@ -145,14 +169,13 @@ def save_license(key_string: str) -> dict:
     if not result["valid"]:
         return result
 
-    LICENSE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    LICENSE_FILE.write_text(json.dumps({
+    atomic_write_json(LICENSE_FILE, {
         "key": key_string,
         "email": result.get("email", ""),
         "tier": result["tier"],
         "expires": result["expires"],
         "activated_at": time.time(),
-    }, indent=2))
+    })
 
     logger.info(f"License activated: tier={result['tier']}, email={result.get('email')}")
     return result
@@ -197,7 +220,7 @@ async def weekly_validation_check():
                     logger.warning("License revoked by server — downgraded to free tier")
 
         data["last_online_check"] = time.time()
-        LICENSE_FILE.write_text(json.dumps(data, indent=2))
+        atomic_write_json(LICENSE_FILE, data)
 
     except Exception as e:
         logger.debug(f"Weekly license check failed (non-fatal): {e}")
