@@ -17,8 +17,15 @@ single OS-level write that is guaranteed atomic w.r.t. other processes.
          every write() to an O_APPEND fd does the seek-to-end + the
          actual write atomically against other O_APPEND writers.
 
-  Windows: msvcrt.locking acquires a byte-range lock on the file. We
-           hold it for the duration of the write+flush+fsync.
+  Windows: msvcrt.locking acquires a byte-range lock on a fixed byte
+           (position 0) so every concurrent writer contends on the same
+           lock. Locking at "current EOF" after an "ab" open does NOT
+           serialize across processes: each process has its own view of
+           EOF when opened, so the locks land on different bytes and
+           never collide. Position 0 is fixed across processes — the
+           lock IS the serialization point. The seek-to-end and write
+           happen inside the critical section. msvcrt allows locking
+           ranges beyond EOF, so this works on empty files.
 """
 from __future__ import annotations
 
@@ -37,12 +44,20 @@ def append_audit(path: Path, entry: dict[str, Any]) -> None:
         import msvcrt
 
         with open(path, "ab") as f:
-            # Lock at position 0 for the entire file to serialize all appends
+            # Lock a single byte at a FIXED position (0) so every concurrent
+            # writer contends on the same lock. Locking at the current EOF
+            # would NOT serialize correctly: each process's "ab" open positions
+            # the cursor at its own view of EOF, which can drift between
+            # processes when writes are mid-flight, so locks at "EOF" can land
+            # on different bytes and never collide. Position 0 is fixed across
+            # processes — the lock IS the serialization point.
+            #
+            # msvcrt.locking can lock ranges beyond EOF as virtual byte-range
+            # locks, so this works on a brand-new empty file.
             locked = False
             try:
                 f.seek(0)
-                # Lock a reasonably large range (1GB fits in signed 32-bit)
-                msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, (1 << 30) - 1)
+                msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
                 locked = True
             except OSError:
                 # Lock acquisition failed under heavy contention. Proceed
@@ -51,7 +66,7 @@ def append_audit(path: Path, entry: dict[str, Any]) -> None:
                 pass
 
             try:
-                f.seek(0, 2)  # Seek to end after locking
+                f.seek(0, 2)  # seek to end inside the critical section
                 f.write(blob)
                 f.flush()
                 os.fsync(f.fileno())
@@ -59,7 +74,7 @@ def append_audit(path: Path, entry: dict[str, Any]) -> None:
                 if locked:
                     try:
                         f.seek(0)
-                        msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, (1 << 30) - 1)
+                        msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
                     except OSError:
                         pass
     else:
