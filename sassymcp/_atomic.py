@@ -13,6 +13,13 @@ otherwise os.replace falls back to copy+unlink which is not atomic.
 Last-write-wins semantics still apply — concurrent writes will land one
 full payload, the others are lost. That's fine for these files; truly
 simultaneous writes are vanishingly rare.
+
+On Windows, os.replace() can race against any process that briefly opens
+the destination file (AV scanners, search indexers, another concurrent
+sassymcp atomic_write call) and raise PermissionError [WinError 5]. The
+_atomic_replace() helper retries up to 50 times at 10ms intervals (500ms
+budget total) to ride that out. POSIX is unaffected — its os.replace
+is genuinely atomic w.r.t. concurrent writers.
 """
 from __future__ import annotations
 
@@ -22,6 +29,36 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any
+
+
+# Windows-only retry budget. On POSIX os.replace is genuinely atomic w.r.t.
+# concurrent writers and never raises EACCES; on Windows it can race against
+# any process that briefly opens dst (AV scanners, file indexers, another
+# sassymcp.exe doing its own atomic_write at the same instant), surfacing as
+# PermissionError [WinError 5]. Empirically this race triggers on every run
+# of the 8-subprocess concurrent stress test without a retry. 50×10ms = 500ms
+# is enough budget to ride out an AV scan tick or a competing writer; longer
+# budgets just hide deadlocks behind silent waits.
+_REPLACE_MAX_RETRIES = 50
+_REPLACE_RETRY_DELAY = 0.01
+
+
+def _atomic_replace(src: str, dst: Path) -> None:
+    """os.replace(src, dst) with Windows-only PermissionError retry.
+
+    See module-level comment above for justification of the retry budget.
+    Catches ONLY PermissionError, not every OSError — a real ENOENT or
+    cross-device-link failure should surface immediately, not be retried.
+    """
+    for attempt in range(_REPLACE_MAX_RETRIES):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if attempt < _REPLACE_MAX_RETRIES - 1:
+                time.sleep(_REPLACE_RETRY_DELAY)
+                continue
+            raise
 
 
 def atomic_write_json(path: Path, data: Any, *, indent: int = 2) -> None:
@@ -54,16 +91,3 @@ def atomic_write_text(path: Path, content: str) -> None:
         except OSError:
             pass
         raise
-
-
-def _atomic_replace(src: str, dst: Path, max_retries: int = 200, retry_delay: float = 0.01) -> None:
-    """Replace dst with src, retrying on Windows lock contention."""
-    for attempt in range(max_retries):
-        try:
-            os.replace(src, dst)
-            return
-        except (PermissionError, OSError) as e:
-            if attempt < max_retries - 1:
-                time.sleep(retry_delay)
-            else:
-                raise
