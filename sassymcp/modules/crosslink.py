@@ -27,6 +27,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
+from sassymcp._db import open_db
 from sassymcp._paths import CROSSLINK_DB as DB_PATH
 DEFAULT_PORT = 9377
 _server_thread = None
@@ -36,7 +37,7 @@ _auth_token = None  # Set when server starts
 
 def _ensure_db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+    conn = open_db(DB_PATH)
     conn.execute("CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, channel TEXT DEFAULT 'default', payload TEXT NOT NULL, created_at TEXT NOT NULL, read_by TEXT DEFAULT '', ttl_seconds INTEGER DEFAULT 0)")
     conn.execute("CREATE TABLE IF NOT EXISTS sessions (session_id TEXT PRIMARY KEY, name TEXT, platform TEXT, last_seen TEXT, created_at TEXT)")
     # Expire old messages with TTL > 0
@@ -49,7 +50,7 @@ def _ensure_db():
 def _post_message(sid, channel, payload, ttl_seconds=0):
     _ensure_db()
     now = datetime.now(timezone.utc).isoformat()
-    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+    conn = open_db(DB_PATH)
     cur = conn.execute("INSERT INTO messages (session_id,channel,payload,created_at,ttl_seconds) VALUES (?,?,?,?,?)", (sid, channel, payload, now, ttl_seconds))
     mid = cur.lastrowid; conn.commit(); conn.close()
     return {"id": mid, "session_id": sid, "channel": channel, "created_at": now, "ttl_seconds": ttl_seconds}
@@ -57,7 +58,7 @@ def _post_message(sid, channel, payload, ttl_seconds=0):
 
 def _read_messages(sid, channel="default", limit=20, unread_only=True, since=""):
     _ensure_db()
-    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False); conn.row_factory = sqlite3.Row
+    conn = open_db(DB_PATH); conn.row_factory = sqlite3.Row
     q, p = "SELECT * FROM messages WHERE channel=?", [channel]
     if unread_only:
         # Escape SQL LIKE wildcards in session_id
@@ -78,7 +79,7 @@ def _read_messages(sid, channel="default", limit=20, unread_only=True, since="")
 def _register_session(sid, name="", platform=""):
     _ensure_db()
     now = datetime.now(timezone.utc).isoformat()
-    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+    conn = open_db(DB_PATH)
     conn.execute("INSERT INTO sessions (session_id,name,platform,last_seen,created_at) VALUES (?,?,?,?,?) ON CONFLICT(session_id) DO UPDATE SET last_seen=?,name=COALESCE(?,name)", (sid, name, platform, now, now, now, name or None))
     conn.commit(); conn.close()
     return {"session_id": sid, "name": name, "platform": platform, "last_seen": now}
@@ -86,7 +87,7 @@ def _register_session(sid, name="", platform=""):
 
 def _list_sessions():
     _ensure_db()
-    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False); conn.row_factory = sqlite3.Row
+    conn = open_db(DB_PATH); conn.row_factory = sqlite3.Row
     rows = conn.execute("SELECT * FROM sessions ORDER BY last_seen DESC").fetchall()
     conn.close(); return [dict(r) for r in rows]
 
@@ -232,7 +233,7 @@ def register(server):
     async def sassy_crosslink_status() -> str:
         """Check crosslink status: server running, sessions, message counts, channels."""
         _ensure_db()
-        conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+        conn = open_db(DB_PATH)
         total = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
         channels = [r[0] for r in conn.execute("SELECT DISTINCT channel FROM messages").fetchall()]
         conn.close()
@@ -248,7 +249,7 @@ def register(server):
     async def sassy_crosslink_broadcast(payload: str, session_id: str = "sassymcp") -> str:
         """Broadcast a message to ALL known channels."""
         _ensure_db()
-        conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+        conn = open_db(DB_PATH)
         channels = [r[0] for r in conn.execute("SELECT DISTINCT channel FROM messages").fetchall()]
         conn.close()
         if not channels: channels = ["default"]

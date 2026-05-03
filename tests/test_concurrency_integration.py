@@ -102,3 +102,46 @@ def test_state_manager_concurrent_writes_no_locked_errors(tmp_path: Path):
     assert count == workers * per_worker, (
         f"expected {workers * per_worker} states, got {count}"
     )
+
+
+def test_crosslink_concurrent_send_no_locked_errors(tmp_path: Path):
+    sassy_home = tmp_path / "sassy_home"
+    sassy_home.mkdir()
+
+    worker_script = tmp_path / "crosslink_worker.py"
+    worker_script.write_text(
+        "import os, sys\n"
+        "import sassymcp.modules.crosslink as cl\n"
+        "sender_id = int(sys.argv[1])\n"
+        "count = int(sys.argv[2])\n"
+        "for i in range(count):\n"
+        "    cl._post_message(f'sender_{sender_id}', 'default', f'msg_{sender_id}_{i}')\n",
+        encoding="utf-8",
+    )
+
+    senders = 8
+    per_sender = 50
+    env = {**os.environ, "SASSYMCP_HOME": str(sassy_home)}
+    # Add project root to PYTHONPATH for subprocess imports
+    if "PYTHONPATH" in env:
+        env["PYTHONPATH"] = str(Path(__file__).parent.parent) + os.pathsep + env["PYTHONPATH"]
+    else:
+        env["PYTHONPATH"] = str(Path(__file__).parent.parent)
+    procs = [
+        subprocess.Popen(
+            [sys.executable, str(worker_script), str(s), str(per_sender)], env=env
+        )
+        for s in range(senders)
+    ]
+    for p in procs:
+        p.wait(timeout=120)
+        assert p.returncode == 0
+
+    db = sassy_home / "crosslink.db"
+    assert db.exists()
+    conn = sqlite3.connect(str(db))
+    try:
+        count = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+    finally:
+        conn.close()
+    assert count == senders * per_sender
