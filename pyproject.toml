@@ -49,3 +49,8 @@ packages = ["sassymcp"]
 
 [tool.uv]
 # python managed by .python-version file
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: long-running stress tests (use -m slow to run, deselected by default)"
+]
