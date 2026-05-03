@@ -10,6 +10,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Optional
 
+from sassymcp._db import open_db
 from sassymcp._paths import HOME as _SASSY_HOME
 
 logger = logging.getLogger("sassymcp.state")
@@ -18,8 +19,7 @@ STATE_DB = _SASSY_HOME / "tool_state.db"
 
 class ToolStateManager:
     def __init__(self):
-        STATE_DB.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(STATE_DB)
+        self.conn = open_db(STATE_DB)
         self.conn.execute("CREATE TABLE IF NOT EXISTS state (tool TEXT, key TEXT, value TEXT, PRIMARY KEY(tool, key))")
 
     def set(self, tool: str, key: str, value: Any):
