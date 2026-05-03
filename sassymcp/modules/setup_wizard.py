@@ -16,6 +16,8 @@ import secrets
 import time
 from pathlib import Path
 
+from sassymcp._atomic import atomic_write_json, atomic_write_text
+
 logger = logging.getLogger("sassymcp.setup")
 
 
@@ -105,8 +107,7 @@ def _load_config() -> dict:
 
 def _save_config(config: dict):
     """Save persistent config."""
-    _SASSYMCP_DIR.mkdir(parents=True, exist_ok=True)
-    _CONFIG_FILE.write_text(json.dumps(config, indent=2))
+    atomic_write_json(_CONFIG_FILE, config)
 
 
 def _generate_persona_md(answers: dict) -> str:
@@ -257,8 +258,7 @@ def register(server):
 
         # Generate persona.md
         content = _generate_persona_md(answers)
-        _SASSYMCP_DIR.mkdir(parents=True, exist_ok=True)
-        _PERSONA_FILE.write_text(content, encoding="utf-8")
+        atomic_write_text(_PERSONA_FILE, content)
 
         # Update config
         config = _load_config()
@@ -384,8 +384,7 @@ def register(server):
             "scopes": scope_list,
         })
 
-        _SASSYMCP_DIR.mkdir(parents=True, exist_ok=True)
-        _TOKENS_FILE.write_text(json.dumps(tokens_data, indent=2))
+        atomic_write_json(_TOKENS_FILE, tokens_data)
 
         # Set restrictive permissions on Unix
         if os.name != "nt":
