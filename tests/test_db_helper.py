@@ -61,3 +61,30 @@ def test_open_db_check_same_thread_default_false(tmp_path: Path):
         assert result == [1]
     finally:
         conn.close()
+
+
+def test_open_db_switches_existing_delete_db_to_wal(tmp_path: Path):
+    """Real-world migration path: a user's existing memory.db was created with
+    the default journal_mode=DELETE. After upgrade, open_db must flip it to
+    WAL on first reopen.
+    """
+    db = tmp_path / "legacy.db"
+    # Seed the file with default (DELETE) journal mode and a real schema.
+    seed = sqlite3.connect(str(db))
+    try:
+        seed.execute("CREATE TABLE t (x INT)")
+        seed.commit()
+        mode = seed.execute("PRAGMA journal_mode").fetchone()[0]
+        assert mode.lower() == "delete", f"seed sanity check: expected delete, got {mode}"
+    finally:
+        seed.close()
+
+    # open_db should switch to WAL.
+    conn = open_db(db)
+    try:
+        mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        assert mode.lower() == "wal", f"expected wal after upgrade, got {mode}"
+        # And the existing schema is still present.
+        assert conn.execute("SELECT name FROM sqlite_master WHERE name='t'").fetchone() is not None
+    finally:
+        conn.close()
