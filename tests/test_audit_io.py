@@ -63,7 +63,10 @@ def test_append_audit_no_interleaving_under_concurrent_load(tmp_path: Path):
 
     seen = {(w, i): False for w in range(workers) for i in range(per_worker)}
     for ln, raw in enumerate(lines):
-        entry = json.loads(raw)
+        try:
+            entry = json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise AssertionError(f"line {ln} is not valid JSON ({e}): {raw!r}") from e
         assert "worker" in entry and "i" in entry, f"line {ln}: missing keys: {raw!r}"
         seen[(entry["worker"], entry["i"])] = True
 
