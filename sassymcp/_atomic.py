@@ -17,7 +17,7 @@ simultaneous writes are vanishingly rare.
 On Windows, os.replace() can race against any process that briefly opens
 the destination file (AV scanners, search indexers, another concurrent
 sassymcp atomic_write call) and raise PermissionError [WinError 5]. The
-_atomic_replace() helper retries up to 50 times at 10ms intervals (500ms
+_replace_with_retry() helper retries up to 50 times at 10ms intervals (500ms
 budget total) to ride that out. POSIX is unaffected — its os.replace
 is genuinely atomic w.r.t. concurrent writers.
 """
@@ -43,8 +43,8 @@ _REPLACE_MAX_RETRIES = 50
 _REPLACE_RETRY_DELAY = 0.01
 
 
-def _atomic_replace(src: str, dst: Path) -> None:
-    """os.replace(src, dst) with Windows-only PermissionError retry.
+def _replace_with_retry(src: str, dst: Path) -> None:
+    """Retry-aware wrapper around os.replace(src, dst).
 
     See module-level comment above for justification of the retry budget.
     Catches ONLY PermissionError, not every OSError — a real ENOENT or
@@ -68,7 +68,7 @@ def atomic_write_json(path: Path, data: Any, *, indent: int = 2) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=indent)
-        _atomic_replace(tmp, path)
+        _replace_with_retry(tmp, path)
     except Exception:
         try:
             os.unlink(tmp)
@@ -84,7 +84,7 @@ def atomic_write_text(path: Path, content: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
-        _atomic_replace(tmp, path)
+        _replace_with_retry(tmp, path)
     except Exception:
         try:
             os.unlink(tmp)

@@ -96,3 +96,14 @@ def test_atomic_write_json_cleans_up_tmp_on_exception(tmp_path: Path):
 
     leftovers = list(tmp_path.iterdir())
     assert leftovers == [], f"tmp file leaked on exception: {leftovers}"
+
+
+def test_atomic_write_text_cleans_up_tmp_on_exception(tmp_path: Path):
+    """If f.write raises, the temp file must be unlinked, not left behind."""
+    p = tmp_path / "out.txt"
+
+    with pytest.raises(TypeError):
+        atomic_write_text(p, 12345)  # type: ignore[arg-type]
+
+    leftovers = list(tmp_path.iterdir())
+    assert leftovers == [], f"tmp file leaked on exception: {leftovers}"
