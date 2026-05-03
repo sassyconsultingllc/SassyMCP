@@ -22,6 +22,7 @@ import logging
 import sqlite3
 import time
 
+from sassymcp._db import open_db
 from sassymcp._paths import HOME as _SASSY_HOME
 
 logger = logging.getLogger("sassymcp.memory")
@@ -31,8 +32,7 @@ MEMORY_DB = _SASSY_HOME / "memory.db"
 
 class MemoryStore:
     def __init__(self):
-        MEMORY_DB.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(MEMORY_DB))
+        self.conn = open_db(MEMORY_DB)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("""CREATE TABLE IF NOT EXISTS memories (
             key TEXT PRIMARY KEY,
