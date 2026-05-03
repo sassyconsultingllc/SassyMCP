@@ -15,6 +15,7 @@ import hmac
 import json
 import logging
 import os
+import secrets
 import time
 from pathlib import Path
 
@@ -23,7 +24,30 @@ from sassymcp._paths import LICENSE_FILE  # re-exported for back-compat
 logger = logging.getLogger("sassymcp.license")
 VALIDATE_URL = "https://sassyconsultingllc.com/api/license/validate"
 
-_SIGNING_SECRET = os.environ.get("SASSYMCP_LICENSE_SECRET", "sassy-mcp-v1-signing-key-change-me")
+_SECRET_FILE = LICENSE_FILE.parent / ".license_secret"
+
+
+def _load_signing_secret() -> str:
+    """Load or generate a persistent per-installation signing secret."""
+    if os.environ.get("SASSYMCP_LICENSE_SECRET"):
+        return os.environ["SASSYMCP_LICENSE_SECRET"]
+    if _SECRET_FILE.exists():
+        try:
+            return _SECRET_FILE.read_text().strip()
+        except Exception:
+            pass
+    # First run: generate a cryptographically random secret and persist it.
+    new_secret = secrets.token_hex(32)
+    try:
+        _SECRET_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _SECRET_FILE.write_text(new_secret)
+        _SECRET_FILE.chmod(0o600)
+    except Exception as e:
+        logger.warning(f"Could not persist license secret: {e}")
+    return new_secret
+
+
+_SIGNING_SECRET = _load_signing_secret()
 
 TIER_GROUPS = {
     "free": [

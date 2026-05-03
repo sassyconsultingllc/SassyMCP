@@ -113,7 +113,7 @@ def _build_server() -> FastMCP:
     """Construct FastMCP with optional auth."""
     kwargs = {
         "name": "sassymcp",
-        "transport_security": TransportSecuritySettings(enable_dns_rebinding_protection=False),
+        "transport_security": TransportSecuritySettings(enable_dns_rebinding_protection=True),
     }
 
     # Opt-in auth: only if SASSYMCP_AUTH_TOKEN or ~/.sassymcp/tokens.json exists

@@ -106,17 +106,23 @@ class _Handler(BaseHTTPRequestHandler):
         return False
 
     def _json(self, data, status=200):
+        origin = self.headers.get("Origin", "")
+        allowed_origins = {"http://localhost:9377", "http://127.0.0.1:9377"}
+        cors_origin = origin if origin in allowed_origins else "null"
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
-        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Origin", cors_origin)
         self.end_headers(); self.wfile.write(json.dumps(data).encode())
 
     def _unauthorized(self):
         self._json({"error": "Unauthorized. Use Authorization: Bearer <token> header or ?token= query param."}, 401)
 
     def do_OPTIONS(self):
+        origin = self.headers.get("Origin", "")
+        allowed_origins = {"http://localhost:9377", "http://127.0.0.1:9377"}
+        cors_origin = origin if origin in allowed_origins else "null"
         self.send_response(200)
-        for h, v in [("Access-Control-Allow-Origin","*"),("Access-Control-Allow-Methods","GET,POST,OPTIONS"),("Access-Control-Allow-Headers","Content-Type,Authorization")]: self.send_header(h, v)
+        for h, v in [("Access-Control-Allow-Origin", cors_origin), ("Access-Control-Allow-Methods","GET,POST,OPTIONS"),("Access-Control-Allow-Headers","Content-Type,Authorization")]: self.send_header(h, v)
         self.end_headers()
 
     def do_GET(self):

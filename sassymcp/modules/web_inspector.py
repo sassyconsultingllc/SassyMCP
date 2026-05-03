@@ -12,6 +12,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from sassymcp.modules._security import validate_url as _validate_url, validate_path as _validate_path, is_protected_path as _is_protected_path
+
 
 def _register_hooks():
     from sassymcp.modules._hooks import register_hook
@@ -104,6 +106,9 @@ def register(server):
         Referrer-Policy, Permissions-Policy, COOP, CORP, X-XSS-Protection.
         Returns a security grade (A+ to F) and recommendations.
         """
+        ok, err = _validate_url(url)
+        if not ok:
+            return json.dumps({"error": err})
         try:
             import httpx
         except ImportError:
@@ -179,6 +184,16 @@ def register(server):
     async def sassy_url_screenshot(url: str, width: int = 1280, height: int = 720, full_page: bool = False, save_path: str = "") -> str:
         """Screenshot a URL via headless Chrome or Playwright. Returns base64 JPEG."""
         import base64, io
+        ok_url, err_url = _validate_url(url)
+        if not ok_url:
+            return json.dumps({"error": err_url})
+        if save_path:
+            ok_p, err_p = _validate_path(save_path)
+            if not ok_p:
+                return json.dumps({"error": err_p})
+            prot, reason = _is_protected_path(Path(save_path).absolute())
+            if prot:
+                return json.dumps({"error": f"Refused: save_path is protected ({reason})"})
         save = save_path or str(Path(tempfile.gettempdir()) / "sassymcp_url_screenshot.png")
 
         try:
@@ -227,6 +242,9 @@ def register(server):
     @server.tool()
     async def sassy_url_tech_stack(url: str) -> str:
         """Detect technology stack from HTTP headers and HTML (CDN, CMS, framework, analytics)."""
+        ok, err = _validate_url(url)
+        if not ok:
+            return json.dumps({"error": err})
         try:
             import httpx
             async with httpx.AsyncClient(follow_redirects=True, timeout=15) as client:
@@ -265,6 +283,9 @@ def register(server):
         """Extract all links from a URL. Useful for site auditing and SEO."""
         from urllib.parse import urlparse, urljoin
         import re
+        ok, err = _validate_url(url)
+        if not ok:
+            return json.dumps({"error": err})
         try:
             import httpx
             async with httpx.AsyncClient(follow_redirects=True, timeout=15) as client:
@@ -296,6 +317,9 @@ def register(server):
     async def sassy_url_performance(url: str) -> str:
         """Quick performance check: response time, page size, compression, caching."""
         import time as t, re
+        ok, err = _validate_url(url)
+        if not ok:
+            return json.dumps({"error": err})
         try:
             import httpx
             async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:

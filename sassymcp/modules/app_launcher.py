@@ -10,6 +10,8 @@ import json
 import subprocess
 import time
 
+from sassymcp.modules._security import validate_path as _validate_path
+
 
 def register(server):
 
@@ -62,6 +64,9 @@ def register(server):
         """
         import shlex
         from pathlib import Path as P
+        ok, err = _validate_path(path)
+        if not ok:
+            return json.dumps({"error": err})
         p = P(path)
         if not p.is_file():
             return json.dumps({"error": f"File not found: {path}"})

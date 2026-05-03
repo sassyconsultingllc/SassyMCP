@@ -61,6 +61,9 @@ async def _ssh_exec_stream(cmd: str, timeout: int = 60):
         yield f"Searched: PLINK_PATH env, PATH, {', '.join(str(p) for p in _PLINK_SEARCH_PATHS)}\n"
         return
 
+    # WARNING: -pw passes the password as a CLI argument, visible in process listings
+    # (e.g., Task Manager, ps, ETW traces). Use key-based auth (PLINK_KEY_FILE) for
+    # sensitive environments; this fallback is provided only for convenience.
     full_cmd = [PLINK_PATH, "-ssh", "-pw", SSH_PASS, "-batch", f"{SSH_USER}@{SSH_HOST}", cmd]
 
     try:

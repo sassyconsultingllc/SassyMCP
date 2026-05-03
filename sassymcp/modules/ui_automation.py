@@ -9,6 +9,8 @@ with resolution, position, scaling, and primary status.
 
 import json
 
+from sassymcp.modules._security import validate_path as _validate_path, is_protected_path as _is_protected_path
+
 
 def _get_monitors():
     """Get all monitors with position, size, DPI scaling via ctypes.
@@ -142,6 +144,12 @@ def register(server):
         from pathlib import Path
         if not path:
             path = str(Path.home() / "sassymcp_screenshot.png")
+        ok, err = _validate_path(path)
+        if not ok:
+            return f"Error: {err}"
+        prot, reason = _is_protected_path(Path(path).absolute())
+        if prot:
+            return f"Refused: path is protected ({reason})"
         kwargs = {}
         if region:
             parts = [int(x) for x in region.split(",")]

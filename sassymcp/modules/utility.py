@@ -12,6 +12,8 @@ import shutil
 import zipfile
 from pathlib import Path
 
+from sassymcp.modules._security import validate_url as _validate_url
+
 
 def register(server):
 
@@ -20,19 +22,7 @@ def register(server):
     @server.tool()
     async def sassy_env_get(name: str) -> str:
         """Get an environment variable value. Returns error if not set."""
-        val = os.environ.get(name) or os.getenv(name)
-        if val is None:
-            # Fallback: try reading from shell (catches inherited vars not in os.environ)
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    "cmd.exe", "/c", f"echo %{name}%",
-                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
-                shell_val = stdout.decode("utf-8", errors="replace").strip()
-                if shell_val and shell_val != f"%{name}%":
-                    val = shell_val
-            except Exception:
-                pass
+        val = os.environ.get(name)
         if val is None:
             return json.dumps({"error": f"'{name}' not set"})
         # Mask anything that looks like a token/key (show first 4 + last 4 chars)
@@ -78,6 +68,8 @@ def register(server):
         Useful for alerting when a long-running task completes.
         Falls back to a BurntToast PowerShell module, then to msg.exe.
         """
+        if duration not in ("short", "long"):
+            duration = "short"
         # Sanitize inputs for XML/PowerShell safety
         import xml.sax.saxutils
         safe_title = title.replace(chr(39), chr(39)+chr(39))  # PS single-quote escape
@@ -400,6 +392,10 @@ def register(server):
             import httpx
             async with httpx.AsyncClient(timeout=5, follow_redirects=True) as client:
                 for url in url_list:
+                    ok, err = _validate_url(url)
+                    if not ok:
+                        results.append({"url": url, "status": "blocked", "error": err})
+                        continue
                     try:
                         start = _time.monotonic()
                         resp = await client.head(url)
@@ -410,6 +406,10 @@ def register(server):
         except ImportError:
             import urllib.request
             for url in url_list:
+                ok, err = _validate_url(url)
+                if not ok:
+                    results.append({"url": url, "status": "blocked", "error": err})
+                    continue
                 try:
                     start = _time.monotonic()
                     req = urllib.request.Request(url, method="HEAD")

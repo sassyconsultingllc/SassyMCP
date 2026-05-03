@@ -2,6 +2,8 @@
 
 import asyncio
 
+from sassymcp.modules._security import validate_path as _validate_path, is_protected_path as _is_protected_path
+from pathlib import Path
 
 async def _reg(*args, timeout=15):
     """Run reg.exe with explicit args (no shell interpolation)."""
@@ -41,6 +43,12 @@ def register(server):
     @server.tool()
     async def sassy_reg_export(key_path: str, output_file: str) -> str:
         """Export registry key to .reg file."""
+        ok, err = _validate_path(output_file)
+        if not ok:
+            return f"Error: {err}"
+        prot, reason = _is_protected_path(Path(output_file).absolute())
+        if prot:
+            return f"Refused: output_file is protected ({reason})"
         result = await _reg("export", key_path, output_file, "/y", timeout=30)
         if "ERROR" in result.upper() or "unable to find" in result.lower():
             return f"Error: Registry key '{key_path}' not found or access denied."

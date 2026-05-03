@@ -15,6 +15,8 @@ import json
 import time
 from pathlib import Path
 
+from sassymcp.modules._security import validate_path as _validate_path, is_protected_path as _is_protected_path
+
 
 def _find_window_rect(title_substring: str):
     """Find a window by title substring, return (x, y, w, h) or None."""
@@ -145,6 +147,12 @@ def register(server):
             b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
             if save_path:
+                ok, err = _validate_path(save_path)
+                if not ok:
+                    return json.dumps({"error": err})
+                prot, reason = _is_protected_path(Path(save_path).absolute())
+                if prot:
+                    return json.dumps({"error": f"Refused: save_path is protected ({reason})"})
                 img.save(save_path)
 
             return json.dumps({
