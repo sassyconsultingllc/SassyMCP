@@ -1,0 +1,215 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write   # needed for gh release create
+
+jobs:
+  build-exe:
+    name: Build sassymcp.exe (Windows)
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Read version from sassymcp/__init__.py
+        id: version
+        shell: pwsh
+        run: |
+          $content = Get-Content sassymcp/__init__.py -Raw
+          if ($content -match '__version__\s*=\s*"([^"]+)"') {
+            $v = $Matches[1]
+            "value=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            Write-Host "Version: $v"
+          } else {
+            Write-Error "Could not parse __version__"
+            exit 1
+          }
+
+      - name: Verify tag matches __version__
+        shell: pwsh
+        run: |
+          $tagVersion = "${{ github.ref_name }}".TrimStart("v")
+          $sourceVersion = "${{ steps.version.outputs.value }}"
+          if ($tagVersion -ne $sourceVersion) {
+            Write-Error "Tag $tagVersion does not match __version__ $sourceVersion. Bump sassymcp/__init__.py before tagging."
+            exit 1
+          }
+
+      - name: Install dependencies + PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller
+          python -m pip install -e .[all]
+
+      - name: Build sassymcp.exe via PyInstaller
+        run: |
+          pyinstaller --clean --noconfirm sassymcp.spec
+
+      - name: Verify exe exists
+        shell: pwsh
+        run: |
+          if (-not (Test-Path dist\sassymcp.exe)) {
+            Write-Error "PyInstaller did not produce dist\sassymcp.exe"
+            exit 1
+          }
+          $size = (Get-Item dist\sassymcp.exe).Length / 1MB
+          Write-Host "Built dist\sassymcp.exe ($([math]::Round($size, 1)) MB)"
+
+      - name: Smoke-test exe
+        shell: pwsh
+        run: |
+          $output = & .\dist\sassymcp.exe --help 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "sassymcp.exe --help exited $LASTEXITCODE; output: $output"
+            exit 1
+          }
+
+      - name: Upload exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sassymcp-exe
+          path: dist/sassymcp.exe
+          if-no-files-found: error
+
+  build-dxt:
+    name: Build sassymcp.dxt
+    runs-on: windows-latest
+    needs: build-exe
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download exe artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sassymcp-exe
+          path: .
+
+      - name: Build DXT
+        shell: pwsh
+        run: |
+          pwsh -File scripts/build-dxt.ps1
+
+      - name: Verify DXT exists
+        shell: pwsh
+        run: |
+          $dxt = Get-ChildItem dist\sassymcp-v*.dxt | Select-Object -First 1
+          if (-not $dxt) {
+            Write-Error "build-dxt.ps1 did not produce a DXT file"
+            exit 1
+          }
+          Write-Host "Built $($dxt.Name) ($([math]::Round($dxt.Length / 1MB, 1)) MB)"
+
+      - name: Upload DXT artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sassymcp-dxt
+          path: dist/sassymcp-v*.dxt
+          if-no-files-found: error
+
+  build-vsix:
+    name: Build sassymcp-vscode-*.vsix
+    runs-on: ubuntu-latest
+    needs: build-exe
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: sassymcp-vscode/package-lock.json
+
+      - name: Install extension dependencies
+        working-directory: sassymcp-vscode
+        run: npm ci || npm install
+
+      - name: Compile TypeScript
+        working-directory: sassymcp-vscode
+        run: npm run compile
+
+      - name: Package VSIX
+        working-directory: sassymcp-vscode
+        run: npx --yes @vscode/vsce package --out ../dist/
+
+      - name: Verify VSIX exists
+        run: |
+          ls -la dist/
+          if ! ls dist/sassymcp-*.vsix 1> /dev/null 2>&1; then
+            echo "vsce did not produce a VSIX"
+            exit 1
+          fi
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sassymcp-vsix
+          path: dist/sassymcp-*.vsix
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-exe, build-dxt, build-vsix]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: List downloaded artifacts
+        run: find release-artifacts -type f
+
+      - name: Create GitHub Release with all artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            release-artifacts/sassymcp-exe/sassymcp.exe \
+            release-artifacts/sassymcp-dxt/*.dxt \
+            release-artifacts/sassymcp-vsix/*.vsix \
+            --title "${{ github.ref_name }}" \
+            --notes "Auto-generated release for ${{ github.ref_name }}. See CHANGELOG.md and commit log for details."
+
+  publish-vsix:
+    name: Publish VSIX to VS Code Marketplace
+    runs-on: ubuntu-latest
+    needs: build-vsix
+    # GitHub Actions does not allow `secrets.*` in job-level `if`. Gate this
+    # job on a repository VARIABLE (Settings -> Variables) instead. Set
+    # PUBLISH_VSIX=true once VSCE_PAT is configured in repo secrets.
+    if: ${{ vars.PUBLISH_VSIX == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Download VSIX
+        uses: actions/download-artifact@v4
+        with:
+          name: sassymcp-vsix
+          path: dist
+
+      - name: Publish to Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          if [ -z "$VSCE_PAT" ]; then
+            echo "VSCE_PAT secret is empty; cannot publish."
+            exit 1
+          fi
+          npx --yes @vscode/vsce publish --packagePath dist/sassymcp-*.vsix
