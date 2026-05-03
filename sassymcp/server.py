@@ -571,6 +571,50 @@ def _print_banner(tool_count, host, port, first_run, update_info=None):
     print(flush=True)
 
 
+def _maybe_run_first_run_install():
+    """If running under a DXT install (or any first-run scenario), patch
+    every OTHER detected MCP client's config so the user's Cursor / VS Code /
+    Windsurf etc. all see sassymcp without manual JSON editing.
+
+    Idempotent: a marker file at ~/.sassymcp/.installed-other-clients
+    prevents re-runs. The subprocess is detached; if it fails or hangs we
+    do not block server startup.
+    """
+    from sassymcp._paths import HOME as _SASSY_HOME
+    marker = _SASSY_HOME / ".installed-other-clients"
+    if marker.exists():
+        return
+    try:
+        _SASSY_HOME.mkdir(parents=True, exist_ok=True)
+        marker.touch()
+    except OSError:
+        return  # filesystem hostile, skip silently
+
+    import subprocess
+    try:
+        if os.name == "nt":
+            DETACHED_PROCESS = 0x00000008
+            subprocess.Popen(
+                [sys.executable, "-m", "sassymcp.install", "--auto-other"],
+                creationflags=DETACHED_PROCESS,
+                close_fds=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        else:
+            subprocess.Popen(
+                [sys.executable, "-m", "sassymcp.install", "--auto-other"],
+                start_new_session=True,
+                close_fds=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+    except Exception:
+        pass  # never block startup on auto-install
+
+
 def main():
     import argparse
 
@@ -594,6 +638,8 @@ def main():
     parser.add_argument("--ssl-key", default="",
                         help="Path to SSL key file (default: $SASSYMCP_HOME/server.key)")
     args = parser.parse_args()
+
+    _maybe_run_first_run_install()
 
     # Auto-detect transport: if stdin is a pipe, an MCP client is calling us.
     # If stdin is a terminal (human double-clicked or ran from cmd), use HTTP.

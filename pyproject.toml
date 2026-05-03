@@ -31,6 +31,7 @@ all = [
 
 [project.scripts]
 sassymcp = "sassymcp.server:main"
+sassymcp-install = "sassymcp.install:main"
 
 [tool.ruff]
 target-version = "py311"
