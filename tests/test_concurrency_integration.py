@@ -145,3 +145,51 @@ def test_crosslink_concurrent_send_no_locked_errors(tmp_path: Path):
     finally:
         conn.close()
     assert count == senders * per_sender
+
+
+def test_audit_log_no_interleaving_under_concurrent_load(tmp_path: Path):
+    sassy_home = tmp_path / "sassy_home"
+    sassy_home.mkdir()
+
+    worker_script = tmp_path / "audit_worker.py"
+    worker_script.write_text(
+        "import os, sys\n"
+        "import sassymcp.modules.audit as audit\n"
+        "worker_id = int(sys.argv[1])\n"
+        "count = int(sys.argv[2])\n"
+        "big_arg = 'X' * 5000\n"
+        "for i in range(count):\n"
+        "    audit.log_tool_call(f'tool_{worker_id}', {'i': i, 'big': big_arg}, elapsed_ms=i)\n",
+        encoding="utf-8",
+    )
+
+    workers = 8
+    per_worker = 100
+    env = {**os.environ, "SASSYMCP_HOME": str(sassy_home)}
+    # Add project root to PYTHONPATH for subprocess imports
+    if "PYTHONPATH" in env:
+        env["PYTHONPATH"] = str(Path(__file__).parent.parent) + os.pathsep + env["PYTHONPATH"]
+    else:
+        env["PYTHONPATH"] = str(Path(__file__).parent.parent)
+    procs = [
+        subprocess.Popen(
+            [sys.executable, str(worker_script), str(w), str(per_worker)], env=env
+        )
+        for w in range(workers)
+    ]
+    for p in procs:
+        p.wait(timeout=180)
+        assert p.returncode == 0
+
+    log = sassy_home / "audit.log"
+    assert log.exists()
+    lines = log.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == workers * per_worker, (
+        f"expected {workers * per_worker} lines, got {len(lines)}"
+    )
+
+    for ln, raw in enumerate(lines):
+        try:
+            json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise AssertionError(f"line {ln} is not valid JSON ({e}): {raw!r}") from e

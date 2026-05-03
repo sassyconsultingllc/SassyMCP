@@ -8,6 +8,7 @@ arguments. Logs are stored in $SASSYMCP_HOME/audit.log (default
 import json
 import time
 
+from sassymcp._audit_io import append_audit
 from sassymcp._paths import HOME as _LOG_DIR
 
 _LOG_FILE = _LOG_DIR / "audit.log"
@@ -114,11 +115,9 @@ def log_pattern_event(event: str, tool_name: str, pattern: str, command: str, ex
         }
         if extra:
             entry.update({k: (str(v)[:300] if not isinstance(v, (int, float, bool)) else v) for k, v in extra.items()})
-        with _LOG_FILE.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry) + "\n")
+        append_audit(_LOG_FILE, entry)
         _rotate_jsonl_if_needed()
-        with _JSONL_FILE.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry) + "\n")
+        append_audit(_JSONL_FILE, entry)
     except OSError:
         pass
 
@@ -142,11 +141,9 @@ def log_intercept(tool_name: str, keyword: str, command: str, targets: list, res
             "targets": [str(t)[:300] for t in targets],
             "results": [str(r)[:300] for r in results],
         }
-        with _LOG_FILE.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry) + "\n")
+        append_audit(_LOG_FILE, entry)
         _rotate_jsonl_if_needed()
-        with _JSONL_FILE.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry) + "\n")
+        append_audit(_JSONL_FILE, entry)
     except OSError:
         pass
 
@@ -190,13 +187,11 @@ def log_tool_call(tool_name: str, args: dict, elapsed_ms: int = 0, error: str = 
             _stats["successful_calls"] += 1
         _stats["tool_counts"][tool_name] = _stats["tool_counts"].get(tool_name, 0) + 1
 
-        with _LOG_FILE.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry) + "\n")
+        append_audit(_LOG_FILE, entry)
 
         # Also write JSONL for structured queries (rotate same as log)
         _rotate_jsonl_if_needed()
-        with _JSONL_FILE.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry) + "\n")
+        append_audit(_JSONL_FILE, entry)
     except OSError:
         pass  # Don't let logging failures break tools
 
