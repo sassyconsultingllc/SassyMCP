@@ -333,6 +333,110 @@ def _remove_server_entry(cfg: dict, client: ClientInfo) -> bool:
     return False
 
 
+# --- Cross-client skill deployment ----------------------------------------
+#
+# Anthropic Skills, Cursor's `.cursor/rules`, Windsurf's global_rules, Continue's
+# system message, and Zed's settings.json `system_prompt` all serve the same
+# role: persistent instructions the model reads every turn. We ship one
+# canonical playbook (sassymcp/skills/sassymcp-tools.md) and write a
+# client-specific rendering of it to each detected client. That way the
+# user's Claude Desktop, Cursor, AND Windsurf all benefit from the same
+# tool-use guidance — without per-client manual setup.
+
+_SKILL_SOURCE = Path(__file__).resolve().parent / "skills" / "sassymcp-tools.md"
+
+
+def _skill_target_for(client: ClientInfo) -> Path | None:
+    """Return where this client's rules / skill / system-message file lives,
+    or None if the client doesn't support file-based persistent guidance."""
+    home = Path.home()
+    if client.short_name == "claude":
+        # Claude Desktop reads ~/.claude/skills/<name>/SKILL.md
+        return home / ".claude" / "skills" / "sassymcp-tools" / "SKILL.md"
+    if client.short_name == "vscode":
+        # VS Code MCP doesn't have a stable rules file format. Skip.
+        return None
+    if client.short_name == "cursor":
+        return home / ".cursor" / "rules" / "sassymcp.md"
+    if client.short_name == "windsurf":
+        # Global rules apply to every Windsurf session
+        return home / ".codeium" / "windsurf" / "memories" / "sassymcp_global_rules.md"
+    if client.short_name == "continue":
+        # Continue reads systemMessage from config.json — we patch it inline
+        # in patch_client; no separate file needed here.
+        return None
+    if client.short_name == "cline":
+        return home / ".clinerules"  # workspace-local, but global fallback works
+    if client.short_name == "zed":
+        # Zed reads system_prompt from settings.json — patched inline; no file
+        return None
+    if client.short_name == "grok":
+        # Grok Desktop has no rules-file concept yet
+        return None
+    return None
+
+
+def _render_skill_for(client: ClientInfo, source_text: str) -> str:
+    """Render the canonical playbook for a specific client. Most clients want
+    plain markdown; Claude Skills want a YAML frontmatter block. The source
+    file already has frontmatter, so for non-Skill targets we strip it.
+    """
+    if client.short_name == "claude":
+        # Claude Skills format expects the YAML frontmatter as-is.
+        return source_text
+    # Strip frontmatter for non-Skills clients (rules files don't use it)
+    lines = source_text.splitlines()
+    if lines and lines[0].strip() == "---":
+        # Find the closing frontmatter marker
+        try:
+            close_idx = lines.index("---", 1)
+            return "\n".join(lines[close_idx + 1:]).lstrip("\n")
+        except ValueError:
+            pass
+    return source_text
+
+
+def deploy_skill(client: ClientInfo, *, dry_run: bool = False) -> dict:
+    """Write the canonical playbook to this client's rules/skill location.
+
+    Returns a small dict describing what happened. Idempotent: if the target
+    file is already in sync with the source, returns action='noop'.
+    """
+    if not _SKILL_SOURCE.exists():
+        return {"client": client.name, "skill_target": None, "action": "skipped",
+                "detail": f"canonical skill source missing: {_SKILL_SOURCE}"}
+
+    target = _skill_target_for(client)
+    if target is None:
+        return {"client": client.name, "skill_target": None, "action": "skipped",
+                "detail": "client does not support file-based rules"}
+
+    source_text = _SKILL_SOURCE.read_text(encoding="utf-8")
+    rendered = _render_skill_for(client, source_text)
+
+    if target.exists():
+        try:
+            if target.read_text(encoding="utf-8") == rendered:
+                return {"client": client.name, "skill_target": str(target),
+                        "action": "noop", "detail": "already up to date"}
+        except OSError:
+            pass
+
+    if dry_run:
+        return {"client": client.name, "skill_target": str(target),
+                "action": "would-write", "detail": f"{len(rendered)} chars"}
+
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(rendered, encoding="utf-8")
+    except OSError as e:
+        return {"client": client.name, "skill_target": str(target),
+                "action": "error", "detail": str(e)}
+
+    return {"client": client.name, "skill_target": str(target),
+            "action": "deployed", "detail": f"{len(rendered)} chars"}
+
+
 # --- CLI ------------------------------------------------------------------
 
 def _print_table(results: list[PatchResult]) -> None:
@@ -361,6 +465,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     p.add_argument("--auto-other", action="store_true",
                    help="internal: skip Claude Desktop (used by DXT first-run hook)")
+    p.add_argument("--no-skills", action="store_true",
+                   help="skip deploying the cross-client tool playbook (Claude Skill, Cursor rules, etc.)")
 
     args = p.parse_args(argv)
 
@@ -387,15 +493,34 @@ def main(argv: list[str] | None = None) -> int:
         else:
             results.append(patch_client(c, exe_path, dry_run=args.dry_run))
 
+    # Deploy the canonical tool playbook to each client's rules location.
+    # Skipped on --uninstall (we leave the skill files in place — they're
+    # harmless even without sassymcp registered) and on --no-skills.
+    skill_results: list[dict] = []
+    if not args.uninstall and not args.no_skills:
+        for c in clients:
+            if not c.detected:
+                continue
+            skill_results.append(deploy_skill(c, dry_run=args.dry_run))
+
     if args.json:
-        out = [{
-            "client": r.client, "config_path": str(r.config_path),
-            "action": r.action, "backup": str(r.backup_path) if r.backup_path else None,
-            "detail": r.detail,
-        } for r in results]
+        out = {
+            "config_patches": [{
+                "client": r.client, "config_path": str(r.config_path),
+                "action": r.action, "backup": str(r.backup_path) if r.backup_path else None,
+                "detail": r.detail,
+            } for r in results],
+            "skill_deployments": skill_results,
+        }
         print(json.dumps(out, indent=2))
     else:
         _print_table(results)
+        if skill_results:
+            print()
+            print("Tool-playbook deployments (cross-client tool-use guidance):")
+            for sr in skill_results:
+                target = sr.get("skill_target") or "(none — client does not support file-based rules)"
+                print(f"  {sr['client']:20} | {sr['action']:12} | {target}")
 
     return 0 if all(r.action != "error" for r in results) else 1
 

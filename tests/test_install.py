@@ -227,12 +227,112 @@ def test_main_json_output_is_valid_json(tmp_path: Path, monkeypatch, capsys):
     from sassymcp import install as inst_mod
     monkeypatch.setattr(inst_mod, "_claude_desktop_config", lambda: cfg)
 
-    rc = main(["--client", "claude", "--exe-path", "C:/sassy/sassymcp.exe", "--json", "--dry-run"])
+    # Pass --no-skills so the test isn't dependent on the canonical playbook
+    # being present at sassymcp/skills/sassymcp-tools.md (it is, but tests
+    # should isolate what they check).
+    rc = main(["--client", "claude", "--exe-path", "C:/sassy/sassymcp.exe",
+               "--json", "--dry-run", "--no-skills"])
     assert rc == 0
     out = capsys.readouterr().out
     parsed = json.loads(out)
-    assert isinstance(parsed, list)
-    assert parsed[0]["client"] == "Claude Desktop"
+    # The shape is {"config_patches": [...], "skill_deployments": [...]}
+    assert isinstance(parsed, dict)
+    assert "config_patches" in parsed
+    assert "skill_deployments" in parsed
+    assert isinstance(parsed["config_patches"], list)
+    assert parsed["config_patches"][0]["client"] == "Claude Desktop"
+    # --no-skills suppresses the deploy step
+    assert parsed["skill_deployments"] == []
+
+
+def test_deploy_skill_writes_skill_md_for_claude(tmp_path: Path, monkeypatch):
+    """Smoke-check that deploy_skill renders the canonical playbook to a
+    Claude-Skills-style path when given a fake home directory."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+
+    from sassymcp.install import ClientInfo, deploy_skill
+    client = ClientInfo(
+        name="Claude Desktop", short_name="claude",
+        config_path=tmp_path / "ignored.json",
+        schema="mcpServers", detected=True,
+    )
+
+    result = deploy_skill(client, dry_run=False)
+    assert result["action"] in ("deployed", "noop")
+    target = fake_home / ".claude" / "skills" / "sassymcp-tools" / "SKILL.md"
+    assert target.exists()
+    content = target.read_text(encoding="utf-8")
+    # Frontmatter preserved for Claude
+    assert content.startswith("---\nname: sassymcp-tools")
+    # Has the actual playbook content
+    assert "sassy_screenshot" in content
+    assert "sassy_phone_ui" in content
+
+
+def test_deploy_skill_strips_frontmatter_for_cursor(tmp_path: Path, monkeypatch):
+    """Cursor's .cursor/rules files are plain markdown — no frontmatter."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+
+    from sassymcp.install import ClientInfo, deploy_skill
+    client = ClientInfo(
+        name="Cursor", short_name="cursor",
+        config_path=tmp_path / "ignored.json",
+        schema="mcpServers", detected=True,
+    )
+
+    result = deploy_skill(client, dry_run=False)
+    assert result["action"] in ("deployed", "noop")
+    target = fake_home / ".cursor" / "rules" / "sassymcp.md"
+    assert target.exists()
+    content = target.read_text(encoding="utf-8")
+    # Frontmatter STRIPPED for non-Skills clients
+    assert not content.startswith("---")
+    assert content.startswith("# SassyMCP Tool Playbook") or "Tool Playbook" in content[:200]
+
+
+def test_deploy_skill_idempotent(tmp_path: Path, monkeypatch):
+    """Re-running deploy_skill on an up-to-date target should noop, not
+    rewrite the file (preserves mtime, plays nice with file watchers)."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+
+    from sassymcp.install import ClientInfo, deploy_skill
+    client = ClientInfo(
+        name="Claude Desktop", short_name="claude",
+        config_path=tmp_path / "ignored.json",
+        schema="mcpServers", detected=True,
+    )
+    first = deploy_skill(client, dry_run=False)
+    assert first["action"] == "deployed"
+    second = deploy_skill(client, dry_run=False)
+    assert second["action"] == "noop"
+
+
+def test_deploy_skill_skipped_when_client_has_no_rules_format(tmp_path: Path, monkeypatch):
+    """VS Code Copilot, Continue, Zed, Grok don't have a stable rules-file
+    format that we can reliably write to. deploy_skill should report
+    skipped rather than guess."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+
+    from sassymcp.install import ClientInfo, deploy_skill
+    for short, name in [("vscode", "VS Code"), ("continue", "Continue"),
+                         ("zed", "Zed"), ("grok", "Grok Desktop")]:
+        client = ClientInfo(
+            name=name, short_name=short,
+            config_path=tmp_path / "ignored.json",
+            schema="mcpServers", detected=True,
+        )
+        result = deploy_skill(client, dry_run=False)
+        assert result["action"] == "skipped", (
+            f"{short} should be skipped for skill deployment, got {result}"
+        )
 
 
 def test_main_uninstall_removes_entry(tmp_path: Path, monkeypatch):
