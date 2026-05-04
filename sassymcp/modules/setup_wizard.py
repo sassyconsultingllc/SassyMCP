@@ -195,6 +195,36 @@ def _generate_persona_md(answers: dict) -> str:
         sections.append(notes)
         sections.append("")
 
+    # Tool Playbook — always appended. Persona is in an always_load=True group,
+    # so this section is visible to the AI on every session, regardless of
+    # which client is talking to SassyMCP. It maps common user requests to
+    # the right tool sequences so the model picks the efficient path instead
+    # of improvising via shell/web fetches.
+    sections.append("## Tool Playbook")
+    sections.append("")
+    sections.append("When the user asks for... use these tools (in order):")
+    sections.append("")
+    sections.append("| User says... | Tool sequence |")
+    sections.append("|---|---|")
+    sections.append("| \"screenshot\" / \"what's on screen\" | `sassy_screenshot` (full color) OR `sassy_screen_glance` (3-6KB grayscale) |")
+    sections.append("| \"watch the screen for changes\" | `sassy_screen_watch` — returns only changed frames |")
+    sections.append("| \"phone status\" | `sassy_phone_state` then `sassy_phone_glance` |")
+    sections.append("| \"phone UI\" / \"tap that button\" | `sassy_phone_ui` FIRST (read coords) then `sassy_phone_tap` |")
+    sections.append("| \"check the audit\" / \"what got blocked\" | `sassy_audit_search pattern_event=\"pattern_block\"` |")
+    sections.append("| \"review the PR\" | `sassy_github_quick_pr action=\"show\"` then `action=\"diff\"` |")
+    sections.append("| \"remember this for next session\" | `sassy_memory_remember` with key prefix `task_<concept>_<project>_state` |")
+    sections.append("| \"what was I working on\" | `sassy_memory_context` FIRST, then `sassy_crosslink_recv channel=\"task-handoff\"` |")
+    sections.append("| \"build / compile / dev server\" | `sassy_session_start` (NOT `sassy_shell` — sessions persist past a single call) |")
+    sections.append("| \"scan my network\" | `sassy_netstat` + `sassy_arp` for local; `sassy_port_scan` for remote |")
+    sections.append("| \"what's running on this machine\" / \"autoruns\" | `sassy_reg_autoruns` (Windows forensics) |")
+    sections.append("| \"hand off to my [other client]\" | `sassy_crosslink_send channel=\"task-handoff\"` |")
+    sections.append("| \"add a tool that...\" | Activate `self_modify` hook; use `sassy_selfmod_*` workflow (read → edit → hot-reload) |")
+    sections.append("")
+    sections.append("Discover more playbooks any time: `sassy_hooks_list` shows registered operational hooks; `sassy_hooks_activate name=\"<x>\"` loads a hook's full playbook into context.")
+    sections.append("")
+    sections.append("Smart loading: SassyMCP auto-loads tool groups whose top tools have a usage score >= 0.5 in your `~/.sassymcp/tool_usage.json` history. Override with `SASSYMCP_GROUPS=core,android,system` env var, or `SASSYMCP_LOAD_ALL=1` for all 257.")
+    sections.append("")
+
     return "\n".join(sections)
 
 
