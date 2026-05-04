@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
+    # Allow manual builds against any branch without tagging. The build jobs
+    # produce artifacts; the release/publish jobs only fire on real tag pushes.
 
 permissions:
   contents: write   # needed for gh release create
@@ -12,6 +15,9 @@ jobs:
   build-exe:
     name: Build sassymcp.exe (Windows)
     runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh   # windows-latest defaults to pwsh; making it explicit
     outputs:
       version: ${{ steps.version.outputs.value }}
     steps:
@@ -24,7 +30,6 @@ jobs:
 
       - name: Read version from sassymcp/__init__.py
         id: version
-        shell: pwsh
         run: |
           $content = Get-Content sassymcp/__init__.py -Raw
           if ($content -match '__version__\s*=\s*"([^"]+)"') {
@@ -37,7 +42,7 @@ jobs:
           }
 
       - name: Verify tag matches __version__
-        shell: pwsh
+        if: startsWith(github.ref, 'refs/tags/')
         run: |
           $tagVersion = "${{ github.ref_name }}".TrimStart("v")
           $sourceVersion = "${{ steps.version.outputs.value }}"
@@ -47,17 +52,18 @@ jobs:
           }
 
       - name: Install dependencies + PyInstaller
+        # The dot-bracket form '.[all]' is parsed by pwsh as a member-access
+        # expression. Quote it so pip sees the literal extras-spec.
         run: |
           python -m pip install --upgrade pip
           python -m pip install pyinstaller
-          python -m pip install -e .[all]
+          python -m pip install -e ".[all]"
 
       - name: Build sassymcp.exe via PyInstaller
         run: |
           pyinstaller --clean --noconfirm sassymcp.spec
 
       - name: Verify exe exists
-        shell: pwsh
         run: |
           if (-not (Test-Path dist\sassymcp.exe)) {
             Write-Error "PyInstaller did not produce dist\sassymcp.exe"
@@ -67,8 +73,8 @@ jobs:
           Write-Host "Built dist\sassymcp.exe ($([math]::Round($size, 1)) MB)"
 
       - name: Smoke-test exe
-        shell: pwsh
         run: |
+          # argparse exits 0 after printing --help, which is the success signal.
           $output = & .\dist\sassymcp.exe --help 2>&1
           if ($LASTEXITCODE -ne 0) {
             Write-Error "sassymcp.exe --help exited $LASTEXITCODE; output: $output"
@@ -86,6 +92,9 @@ jobs:
     name: Build sassymcp.dxt
     runs-on: windows-latest
     needs: build-exe
+    defaults:
+      run:
+        shell: pwsh
     steps:
       - uses: actions/checkout@v4
 
@@ -96,12 +105,13 @@ jobs:
           path: .
 
       - name: Build DXT
-        shell: pwsh
+        # We're already in pwsh from defaults.run.shell, so just invoke the
+        # script directly instead of nesting another pwsh process. The script
+        # auto-syncs dxt/manifest.json's version to sassymcp/__init__.py's.
         run: |
-          pwsh -File scripts/build-dxt.ps1
+          & scripts/build-dxt.ps1
 
       - name: Verify DXT exists
-        shell: pwsh
         run: |
           $dxt = Get-ChildItem dist\sassymcp-v*.dxt | Select-Object -First 1
           if (-not $dxt) {
@@ -120,7 +130,8 @@ jobs:
   build-vsix:
     name: Build sassymcp-vscode-*.vsix
     runs-on: ubuntu-latest
-    needs: build-exe
+    # No `needs:` — the VSIX doesn't depend on the .exe artifact. Build in
+    # parallel with build-exe to shave a few minutes off the pipeline.
     steps:
       - uses: actions/checkout@v4
 
@@ -130,13 +141,35 @@ jobs:
           cache: npm
           cache-dependency-path: sassymcp-vscode/package-lock.json
 
+      - name: Sync sassymcp-vscode/package.json version with __init__.py
+        # The package.json version drives the produced .vsix filename. Keep
+        # it locked to the canonical __version__ so the VSIX, the DXT, and
+        # the GitHub release tag all carry the same string.
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import re,sys; m=re.search(r"__version__\s*=\s*\"([^\"]+)\"", open("sassymcp/__init__.py").read()); print(m.group(1)) if m else sys.exit("could not parse __version__")')
+          echo "Syncing sassymcp-vscode/package.json to version $version"
+          # Update only the top-level "version" field. jq preserves formatting
+          # well enough for our purposes; install jq if not present (it is on
+          # ubuntu-latest by default but be explicit).
+          which jq >/dev/null || sudo apt-get update && sudo apt-get install -y jq
+          tmp=$(mktemp)
+          jq --arg v "$version" '.version = $v' sassymcp-vscode/package.json > "$tmp"
+          mv "$tmp" sassymcp-vscode/package.json
+          # Show the change for the run log
+          grep '"version"' sassymcp-vscode/package.json | head -1
+
       - name: Install extension dependencies
         working-directory: sassymcp-vscode
-        run: npm ci || npm install
+        run: npm ci
 
       - name: Compile TypeScript
         working-directory: sassymcp-vscode
         run: npm run compile
+
+      - name: Ensure dist/ exists
+        # vsce --out path must be a real directory or vsce errors. Repo root.
+        run: mkdir -p dist
 
       - name: Package VSIX
         working-directory: sassymcp-vscode
@@ -161,6 +194,9 @@ jobs:
     name: GitHub Release
     runs-on: ubuntu-latest
     needs: [build-exe, build-dxt, build-vsix]
+    # Only fire on real tag pushes; workflow_dispatch builds the artifacts
+    # for verification but never publishes a release.
+    if: startsWith(github.ref, 'refs/tags/')
     steps:
       - uses: actions/checkout@v4
 
@@ -172,16 +208,40 @@ jobs:
       - name: List downloaded artifacts
         run: find release-artifacts -type f
 
+      - name: Look up release notes for this version
+        id: notes
+        run: |
+          set -euo pipefail
+          version="${{ github.ref_name }}"
+          notes_file="docs/releases/${version}.md"
+          if [ -f "$notes_file" ]; then
+            echo "notes_file=$notes_file" >> "$GITHUB_OUTPUT"
+            echo "Using $notes_file"
+          else
+            echo "notes_file=" >> "$GITHUB_OUTPUT"
+            echo "No docs/releases/${version}.md — falling back to auto-generated notes"
+          fi
+
       - name: Create GitHub Release with all artifacts
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${{ github.ref_name }}" \
-            release-artifacts/sassymcp-exe/sassymcp.exe \
-            release-artifacts/sassymcp-dxt/*.dxt \
-            release-artifacts/sassymcp-vsix/*.vsix \
-            --title "${{ github.ref_name }}" \
-            --notes "Auto-generated release for ${{ github.ref_name }}. See CHANGELOG.md and commit log for details."
+          set -euo pipefail
+          if [ -n "${{ steps.notes.outputs.notes_file }}" ]; then
+            gh release create "${{ github.ref_name }}" \
+              release-artifacts/sassymcp-exe/sassymcp.exe \
+              release-artifacts/sassymcp-dxt/*.dxt \
+              release-artifacts/sassymcp-vsix/*.vsix \
+              --title "${{ github.ref_name }}" \
+              --notes-file "${{ steps.notes.outputs.notes_file }}"
+          else
+            gh release create "${{ github.ref_name }}" \
+              release-artifacts/sassymcp-exe/sassymcp.exe \
+              release-artifacts/sassymcp-dxt/*.dxt \
+              release-artifacts/sassymcp-vsix/*.vsix \
+              --title "${{ github.ref_name }}" \
+              --generate-notes
+          fi
 
   publish-vsix:
     name: Publish VSIX to VS Code Marketplace
@@ -189,8 +249,9 @@ jobs:
     needs: build-vsix
     # GitHub Actions does not allow `secrets.*` in job-level `if`. Gate this
     # job on a repository VARIABLE (Settings -> Variables) instead. Set
-    # PUBLISH_VSIX=true once VSCE_PAT is configured in repo secrets.
-    if: ${{ vars.PUBLISH_VSIX == 'true' }}
+    # PUBLISH_VSIX=true once VSCE_PAT is configured in repo secrets. Also
+    # require a real tag — workflow_dispatch builds shouldn't auto-publish.
+    if: ${{ startsWith(github.ref, 'refs/tags/') && vars.PUBLISH_VSIX == 'true' }}
     steps:
       - uses: actions/checkout@v4
 
