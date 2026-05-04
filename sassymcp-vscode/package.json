@@ -7,6 +7,7 @@
   "engines": { "vscode": "^1.85.0" },
   "categories": ["AI", "Other"],
   "keywords": ["mcp", "ai", "claude", "copilot", "agent"],
+  "icon": "resources/icon.png",
   "main": "./out/extension.js",
   "activationEvents": [
     "onStartupFinished",

@@ -268,9 +268,29 @@ SASSYMCP_GROUPS=core,github_quick,android,v020 uv run sassymcp
 
 ## Install
 
-**No installer.** SassyMCP is portable — extract a zip, run a `.bat`. Nothing touches the registry, nothing needs admin, deleting the folder removes everything.
+Pick whichever entry point matches how you already work. All four converge on the same shared brain at `~/.sassymcp/` — your persona, memory, license, and audit log are visible to every connected MCP client.
 
-### Portable bundle (recommended)
+### One-click via DXT (Claude Desktop)
+
+Download `sassymcp.dxt` from the [latest release](https://github.com/sassyconsultingllc/SassyMCP/releases/latest), double-click — Claude Desktop installs it. On first launch, sassymcp auto-detects every other MCP client on your machine (Cursor, VS Code Copilot, Windsurf, Continue, Cline, Zed, Grok Desktop) and patches each one's config so they all see SassyMCP without you editing any JSON.
+
+### VS Code extension
+
+Install **[SassyMCP](https://marketplace.visualstudio.com/items?itemName=sassyconsultingllc.sassymcp)** from the VS Code marketplace. The extension locates `sassymcp.exe` (PATH or the `sassymcp.exePath` setting), runs the same auto-config CLI, and adds a status bar item showing your license tier and brain health. Five commands cover Setup Wizard, Reinstall Configs, Open Audit Log, Open `_DELETE_` Folder, Show Brain Status.
+
+### Manual auto-config CLI
+
+If you have `sassymcp.exe` already (from the portable zip or pip install) and want to register it with every MCP client without per-client JSON editing:
+
+```
+sassymcp-install
+```
+
+That detects Claude Desktop, VS Code Copilot, Cursor, Windsurf, Continue, Cline, Zed, and Grok Desktop and patches each one's config atomically. Re-running is a noop. Take a look first with `sassymcp-install --dry-run`. Remove with `sassymcp-install --uninstall`. The CLI takes a timestamped backup of any existing config before its first edit.
+
+### Portable bundle (manual config — older path)
+
+**No installer required**, but you'll edit each client's JSON yourself unless you also run `sassymcp-install` after.
 
 1. Download `sassymcp-v1.3.1-portable.zip` from the [latest release](https://github.com/sassyconsultingllc/SassyMCP/releases/latest) (~123 MB — includes `sassymcp.exe`, `adb`, `nmap`, `plink`, `scrcpy`, `tesseract`, `cloudflared`, and the `start-*.bat` launchers).
 2. Extract anywhere — `D:\Tools\SassyMCP`, a thumb drive, your home folder, whatever.
