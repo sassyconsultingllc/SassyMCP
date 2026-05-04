@@ -326,12 +326,118 @@ def resolve_dependencies(modules: list[str]) -> list[str]:
     return list(resolved)
 
 
+# Threshold: any tool with score >= this value force-loads its containing
+# group, regardless of always_load. The README's "your most-used tools load
+# first" promise actually depends on this — without it, a user whose top-5
+# scorer is sassy_adb_shell never sees the android group auto-loaded.
+USAGE_BOOST_THRESHOLD = 0.5
+
+# Tools with score < this are dropped from the default load entirely (Pro
+# tier still loads everything via SASSYMCP_LOAD_ALL=1 or per-group toggle).
+# Saves context on the long tail of "registered but never used" tools.
+USAGE_PRUNE_THRESHOLD = 0.05
+
+
+def get_score_boosted_modules() -> list[str]:
+    """Return modules whose tools have usage scores >= USAGE_BOOST_THRESHOLD.
+
+    The user has demonstrably used these tools enough that the model should
+    see them every session. Without this hook, a user's actual workflow can
+    diverge wildly from the static `always_load` defaults — e.g., a user
+    who lives in `sassy_adb_shell` (android group, always_load=False) would
+    have to manually toggle the group on every session to see their #1
+    most-used tool.
+    """
+    try:
+        tracker = get_tracker()
+    except Exception as e:
+        logger.warning(f"Could not load usage tracker for boost: {e}")
+        return []
+
+    boosted_modules: set[str] = set()
+    for tool_name, score in tracker.top_tools(50):
+        if score < USAGE_BOOST_THRESHOLD:
+            break  # tracker.top_tools is sorted desc; nothing below qualifies
+        # Map tool -> module via the explicit registry (best effort).
+        # During first-import the registry may be empty; in that case we
+        # fall back to a name-prefix heuristic that catches the common
+        # sassy_<verb>_<noun> pattern (e.g. sassy_adb_shell -> adb).
+        group = _TOOL_TO_GROUP.get(tool_name)
+        if group:
+            boosted_modules.update(TOOL_GROUPS[group]["modules"])
+            continue
+        # Heuristic fallback for cold-start: split on underscores after the
+        # `sassy_` prefix and try each segment as a module name. When a
+        # match is found, boost the WHOLE GROUP's modules (not just the one
+        # matched module) — that way a single high-score tool like
+        # sassy_adb_shell pulls in BOTH `adb` and `phone_screen` (both
+        # in the `android` group), not just `adb` alone.
+        if tool_name.startswith("sassy_"):
+            parts = tool_name[len("sassy_"):].split("_")
+            for module_name in parts:
+                module_group = _MODULE_TO_GROUP.get(module_name)
+                if module_group:
+                    boosted_modules.update(TOOL_GROUPS[module_group]["modules"])
+                    break
+
+    return sorted(boosted_modules)
+
+
+def get_pruned_tools() -> set[str]:
+    """Return the set of tool names that should be HIDDEN at registration time
+    because their score is below the prune threshold AND they're not in an
+    always_load group.
+
+    A tool in an always_load group stays — pruning is opt-in for the
+    on-demand groups so users keep their core toolkit visible regardless
+    of usage history.
+    """
+    try:
+        tracker = get_tracker()
+    except Exception:
+        return set()
+
+    pruned: set[str] = set()
+    # Only inspect tools we have data for; never-used tools get to stay
+    # because they may simply be new (not unwanted).
+    for tool_name, score in tracker.top_tools(500):
+        if score >= USAGE_PRUNE_THRESHOLD:
+            continue
+        group = _TOOL_TO_GROUP.get(tool_name)
+        if not group:
+            continue
+        if TOOL_GROUPS[group].get("always_load"):
+            # Don't prune from always-loaded groups; users expect their
+            # toolkit to stay coherent there.
+            continue
+        pruned.add(tool_name)
+    return pruned
+
+
 def get_default_modules() -> list[str]:
-    """Return modules that should load by default (always_load=True)."""
-    modules = []
+    """Return modules that should load by default.
+
+    Combines two sources:
+      1. Static `always_load=True` groups (the floor)
+      2. Usage-score-boosted modules (whose top tools cross USAGE_BOOST_THRESHOLD)
+
+    Without #2, the static defaults stayed frozen across releases regardless
+    of actual user behaviour — making the README's "smart loading" claim a
+    lie. With #2, a user who actually uses Android tools has them there
+    automatically; a user who only ever uses core stays minimal.
+    """
+    modules: list[str] = []
     for group in TOOL_GROUPS.values():
         if group["always_load"]:
             modules.extend(group["modules"])
+    boosted = get_score_boosted_modules()
+    if boosted:
+        new = [m for m in boosted if m not in modules]
+        if new:
+            logger.info(
+                f"usage-boost: adding {new} based on score >= {USAGE_BOOST_THRESHOLD}"
+            )
+            modules.extend(new)
     return resolve_dependencies(modules)
 
 
