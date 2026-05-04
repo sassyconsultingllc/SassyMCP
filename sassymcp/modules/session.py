@@ -14,6 +14,70 @@ from typing import Optional
 from sassymcp.modules._security import detect_delete_intent, validate_command
 from sassymcp.modules import audit as _audit
 
+
+def _register_hooks():
+    from sassymcp.modules._hooks import register_hook
+    register_hook(
+        name="long_running_process",
+        module="session",
+        description="Use persistent sessions for builds, dev servers, watchers — anything that runs longer than a single sassy_shell call.",
+        triggers=[
+            "build", "compile", "cargo", "wrangler", "npm start", "npm run",
+            "vite", "webpack", "tsc --watch", "watch", "dev server",
+            "long-running", "tail -f", "follow log", "background process",
+            "make", "ninja", "go run", "go build", "python -m http.server",
+        ],
+        instructions="""
+## Long-Running Process Playbook
+
+`sassy_shell` runs a command and returns when it exits. For anything
+that doesn't exit on its own (dev servers, file watchers, log tails) or
+runs for more than ~30 seconds (compilers, test suites), use the session
+module instead so you can poll output without blocking.
+
+### Lifecycle
+1. `sassy_session_start name="<short>" command="<initial cmd>"` — spawns
+   a named terminal. Returns a session_id you'll use for all subsequent
+   ops. Pick a memorable `name` like "wrangler-dev" or "rustbuild".
+2. `sassy_session_send session_id="<id>" command="<followup>"` — sends
+   another line to the same terminal. Stays alive until stopped.
+3. `sassy_session_read session_id="<id>"` — returns NEW output since
+   the last read. Call this in a loop while waiting for a build/test
+   to finish; sleep ~2-5s between calls.
+4. `sassy_session_list` — shows all live sessions with their last-output
+   snippets. Use to check what's running before spawning duplicates.
+5. `sassy_session_stop session_id="<id>"` — graceful Ctrl-C, falls back
+   to terminate after 5s.
+
+### Patterns
+
+**Watching a build to completion**:
+```
+start session -> send build cmd -> loop {read; sleep 2} until exit code visible -> read once more for the tail
+```
+
+**Multiple parallel watchers** (frontend + backend dev servers):
+spawn two sessions with distinct names; call read on each as needed.
+
+### Don't
+- Spawn one-shot commands here. Use `sassy_shell` — sessions have spawn
+  overhead and you'd be cluttering the session list.
+- Forget to stop sessions when done — they accumulate. Run
+  `sassy_session_list` periodically and stop stale ones.
+
+### Safe-delete still applies
+Delete keywords (rm, del, Remove-Item) are intercepted in session input
+just like in sassy_shell. The interception happens BEFORE the command
+reaches the terminal, so a session can never run a destructive command
+without going through _DELETE_/ staging.
+""",
+    )
+
+try:
+    _register_hooks()
+except Exception:
+    pass
+
 logger = logging.getLogger("sassymcp.session")
 
 _sessions: dict[str, dict] = {}

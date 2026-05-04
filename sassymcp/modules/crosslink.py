@@ -30,6 +30,50 @@ from urllib.parse import urlparse, parse_qs
 from sassymcp._db import open_db
 from sassymcp._paths import CROSSLINK_DB as DB_PATH
 DEFAULT_PORT = 9377
+
+
+def _register_hooks():
+    from sassymcp.modules._hooks import register_hook
+    register_hook(
+        name="crosslink",
+        module="crosslink",
+        description="Cross-session/cross-client messaging — hand off work between Claude Desktop, Cursor, Windsurf, mobile, etc.",
+        triggers=[
+            "hand off", "handoff", "continue in", "switch to", "pick up where",
+            "send to my other", "tell my", "leave a message for", "task-handoff",
+            "from my desktop", "from my phone", "across sessions", "between clients",
+        ],
+        instructions="""
+## Crosslink Playbook — when to bridge sessions
+
+Use this when the user wants their work to follow them across MCP clients
+(Claude Desktop ↔ Cursor ↔ Windsurf ↔ Continue ↔ mobile) or when they
+explicitly say "continue this on my [other client]".
+
+### Send a handoff
+1. `sassy_crosslink_register session_id="<id>" name="claude-desktop" platform="windows"` — register the SOURCE session if not already registered.
+2. `sassy_crosslink_send payload="<json with task, status, next_steps>" channel="task-handoff"` — channel name is conventionally `task-handoff` for resume-on-other-client; use `default` for chat-style messages.
+
+### Pick up a handoff (THIS IS THE FIRST THING TO DO ON SESSION START if SaS workflow is loaded)
+1. `sassy_crosslink_recv channel="task-handoff" unread_only=True limit=5`
+2. If a handoff exists, parse the JSON payload and execute its `next_steps` immediately. Don't ask the user "what were we working on" — the handoff IS the answer.
+
+### Discover other live sessions
+`sassy_crosslink_status` — shows registered sessions, message counts per channel, server status.
+
+### When NOT to use
+- For state that only matters within ONE session — use sassy_state_set instead.
+- For long-term knowledge — use sassy_memory_remember (memory module).
+- For pure logging — use audit (sassy_audit_log).
+
+Crosslink is for inter-session SIGNALS, not bulk data transfer.
+""",
+    )
+
+try:
+    _register_hooks()
+except Exception:
+    pass
 _server_thread = None
 _server_instance = None
 _auth_token = None  # Set when server starts

@@ -441,6 +441,34 @@ def get_default_modules() -> list[str]:
     return resolve_dependencies(modules)
 
 
+def auto_activate_hooks_for_modules(module_names: list[str]) -> list[str]:
+    """Auto-activate hooks owned by the given modules.
+
+    Called at startup AFTER all modules have registered their hooks via
+    register_hook(). Activates every hook whose `module` field matches one
+    of the given modules — so a user who got `adb` boosted into their
+    default load also gets the `phone_autonomous`/`phone_observe` hooks
+    pre-loaded into the AI's context, without an explicit
+    `sassy_hooks_activate` call.
+
+    Returns the list of activated hook names (for logging).
+    """
+    try:
+        from sassymcp.modules._hooks import _HOOKS, activate_hook
+    except ImportError:
+        return []
+
+    target_modules = set(module_names)
+    activated: list[str] = []
+    for hook_name, hook_data in _HOOKS.items():
+        if hook_data.get("module") in target_modules:
+            if activate_hook(hook_name) is not None:
+                activated.append(hook_name)
+    if activated:
+        logger.info(f"auto-activated hooks for boosted modules: {activated}")
+    return activated
+
+
 def get_all_modules() -> list[str]:
     """Return all known module names."""
     modules = []

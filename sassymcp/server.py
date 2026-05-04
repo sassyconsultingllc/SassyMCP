@@ -446,6 +446,22 @@ def _load_modules():
 
     logger.info(f"SassyMCP ready: {loaded} modules loaded")
 
+    # Auto-activate hooks for any modules that boosted into the default
+    # load via usage scores. The hooks were registered during module
+    # import (via the `try: _register_hooks()` pattern at module top); we
+    # just need to flip their activation flag so the AI sees the playbook
+    # in its context without an explicit sassy_hooks_activate call.
+    try:
+        from sassymcp.modules._tool_loader import (
+            get_score_boosted_modules,
+            auto_activate_hooks_for_modules,
+        )
+        boosted = get_score_boosted_modules()
+        if boosted:
+            auto_activate_hooks_for_modules(boosted)
+    except Exception as e:
+        logger.warning(f"hook auto-activation failed (non-fatal): {e}")
+
     # Wire audit middleware after all tools are registered
     _wrap_all_tools()
 

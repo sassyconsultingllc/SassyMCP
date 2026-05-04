@@ -12,6 +12,83 @@ Two-tier architecture:
 Every edit auto-commits the pre-edit state for rollback safety.
 """
 
+
+def _register_hooks():
+    from sassymcp.modules._hooks import register_hook
+    register_hook(
+        name="self_modify",
+        module="selfmod",
+        description="Modify SassyMCP itself — add new tools, fix bugs, hot-reload modules without restart.",
+        triggers=[
+            "modify sassymcp", "add a tool", "add a new tool", "edit sassymcp",
+            "fix sassymcp", "patch sassymcp", "hot reload", "hot-reload",
+            "reload module", "live reload", "rebuild sassymcp",
+            "self-modify", "selfmod", "evolve sassymcp",
+        ],
+        instructions="""
+## Self-Modification Playbook
+
+SassyMCP can edit its own code while running. This is the workflow you
+use when SaS asks you to ADD A NEW TOOL, fix a bug in an existing module,
+or extend functionality.
+
+### Module-tier edit (modules/*.py — hot reloadable, zero downtime)
+
+1. `sassy_selfmod_status` — sanity check first. Confirms git is clean and
+   no restart is already pending.
+2. `sassy_selfmod_read path="sassymcp/modules/<mod>.py"` — read current.
+   ALWAYS read before editing; never write blind.
+3. Make your changes locally in your head, then either:
+   - `sassy_selfmod_edit path=... old_text=... new_text=...` for a surgical
+     find/replace (fails loud if old_text isn't unique), OR
+   - `sassy_selfmod_write path=... content=...` for a full rewrite (rare —
+     only when half the file changes).
+4. The edit auto-runs syntax-validation + hot-reload + re-registers tools
+   with the running server. If validation fails, the file is renamed with
+   a `.bad.<ts>` suffix and your old version is restored.
+5. Test the new behaviour by calling the tool you just added/changed.
+
+### Core-tier edit (sassymcp/server.py, license.py, _tool_loader.py, etc.)
+
+These can't hot-reload safely. After your edit:
+1. Same edit/write semantics as module-tier.
+2. `sassy_selfmod_restart confirm="YES"` — graceful self-restart. Returns
+   before exiting; the next session boots the new code.
+
+### Rollback if you broke something
+
+`sassy_selfmod_rollback confirm="YES" file=<path>` — git-checkout to the
+pre-edit version. Discards your changes; only use when you can't recover
+forward.
+
+### What NOT to do
+- Don't edit `_security.py` or `_db.py` or `_atomic.py` without
+  understanding the multi-process invariants documented in their module
+  docstrings. The safe-delete interception and concurrency-hardening
+  behaviour depends on them being exactly right.
+- Don't bypass safe-delete — `_DELETE_/` snapshots are taken automatically
+  on every selfmod_edit, and that's load-bearing for rollback.
+- Don't delete the audit log to "clean up" — `sassy_audit_clear` rotates
+  it instead of deleting; never use raw rm on it.
+
+### When the user says "add a tool that <X>"
+
+The pattern is:
+1. Pick the right module (or create a new one in `sassymcp/modules/`)
+2. Define an async function decorated with `@server.tool()`
+3. Type-hint every parameter (the loader's validate_tool() warns otherwise)
+4. Write a clear docstring — that becomes the tool's description in the AI's context
+5. Edit/write the module via selfmod, hot-reload happens automatically
+6. Smoke-test the new tool by calling it
+""",
+    )
+
+try:
+    _register_hooks()
+except Exception:
+    pass
+
+
 import asyncio
 import importlib
 import json
