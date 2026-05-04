@@ -4,16 +4,33 @@
 
  QUICK START:
 
- 1. Run sassymcp.exe --setup
-    This starts the server and flags the setup wizard.
-    The first AI session will guide you through configuration.
+ 1. Run sassymcp-install
+    Detects every installed MCP client (Claude Desktop, VS Code Copilot,
+    Cursor, Windsurf, Continue, Cline, Zed, Grok Desktop) and patches
+    each one's config to register sassymcp.exe. Idempotent. Take a peek
+    first with:  sassymcp-install --dry-run
+    Remove with: sassymcp-install --uninstall
+
+ 2. Run sassymcp.exe --setup
+    Starts the server and flags the setup wizard. The first AI session
+    will guide you through persona, GitHub token, and optional Linux/
+    Android configuration.
+
+ ALTERNATIVE INSTALL ENTRY POINTS:
+
+   - sassymcp.dxt  — double-click in Claude Desktop, auto-patches every
+                     other detected client on first launch
+   - VS Code marketplace — install "SassyMCP" extension; status bar
+                           shows tier + brain health, runs the install CLI
+   - Manual JSON editing — see the templates in this folder if you'd
+                           rather hand-edit each client's config
 
  TRANSPORT MODES:
 
  Local (stdio — Claude Desktop / Cursor / Windsurf / Cline pipe):
    Run: start-local.bat
    Or:  sassymcp.exe
-   Config: copy the template that matches your client and edit the path:
+   If you didn't run sassymcp-install, hand-edit each client at:
      Claude Desktop  -> %APPDATA%\Claude\claude_desktop_config.json
      Cursor          -> ~\.cursor\mcp.json
      Windsurf        -> ~\.codeium\windsurf\mcp_config.json
