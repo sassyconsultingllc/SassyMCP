@@ -275,6 +275,13 @@ TOOL_GROUPS = {
         "max_concurrent": 3,
         "calls_per_minute": 30,
     },
+    "prompts": {
+        "modules": ["prompts"],
+        "description": "MCP prompts — slash-menu shortcuts (pr-review, phone-status, resume, brain-status, setup-sassy)",
+        "always_load": True,  # cheap; just registers prompts, no tools
+        "max_concurrent": 10,
+        "calls_per_minute": 120,
+    },
 }
 
 
