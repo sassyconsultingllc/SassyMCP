@@ -268,6 +268,13 @@ TOOL_GROUPS = {
         "max_concurrent": 2,
         "calls_per_minute": 12,
     },
+    "combos": {
+        "modules": ["combos"],
+        "description": "Multi-step combo tools (pr_review, phone_observe, codebase_grep) — collapse N round-trips into one",
+        "always_load": False,  # opt-in via score boost when used
+        "max_concurrent": 3,
+        "calls_per_minute": 30,
+    },
 }
 
 
@@ -281,6 +288,10 @@ TOOL_DEPENDENCIES = {
     "github_quick": {"utility"},
     "app_launcher": {"ui_automation"},
     "phone_screen": {"adb"},
+    # Combos call into github_quick / phone_screen / fileops directly via
+    # internal Python imports. Resolving these keeps the model from seeing
+    # combos but having no underlying tools available.
+    "combos": {"github_quick", "phone_screen", "fileops"},
 }
 
 # Reverse lookup: module name → group name
