@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.1 — 2026-05-05
+
+Marketplace-readiness fixes:
+- Bundle the MIT LICENSE file inside the extension (was at repo root only — vsce required it inside `sassymcp-vscode/` for marketplace publish)
+- CI workflow opts into Node.js 24 for all JavaScript actions (silences the GitHub deprecation warnings; node20 sunset is Sept 2026)
+
 ## 1.4.0 — 2026-05-04
 
 Multi-client integration release.

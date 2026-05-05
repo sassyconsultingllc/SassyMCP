@@ -11,6 +11,12 @@ on:
 permissions:
   contents: write   # needed for gh release create
 
+env:
+  # Opt in to Node 24 for all JavaScript actions in this workflow. Github
+  # deprecated Node 20 in Sept 2025; node24 becomes the default June 2026.
+  # Setting this now silences the warnings and confirms forward-compat.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   build-exe:
     name: Build sassymcp.exe (Windows)
