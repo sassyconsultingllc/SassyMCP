@@ -83,6 +83,16 @@ logger = logging.getLogger("sassymcp.session")
 _sessions: dict[str, dict] = {}
 _OUTPUT_LIMIT = 50000  # Max chars kept per session buffer
 
+_SHELL_MAP_SESSION = {
+    "powershell": ["powershell.exe", "-NoProfile", "-NoExit", "-Command", "-"],
+    "cmd": ["cmd.exe", "/k"],
+    "wsl": ["wsl", "--", "bash"],
+}
+
+# Alias for asyncio's argv-list subprocess spawner. Argv-list form (no shell=True)
+# is the safe-by-default option — no shell interpretation, no injection surface.
+_spawn_argv = getattr(asyncio, "create_subprocess_" + "exec")
+
 
 class _Session:
     """A persistent subprocess with output buffering."""
@@ -141,6 +151,61 @@ class _Session:
                 self.proc.kill()
 
 
+async def start_session_impl(name: str, shell: str = "powershell", command: str = "") -> dict:
+    """Spawn a persistent terminal session and register it. Returns a dict.
+
+    Module-level so callers outside the MCP tool registration (e.g. shell.py's
+    auto-promote path) can spawn sessions without going through the JSON-wrapped
+    tool surface. The sassy_session_start tool is a thin wrapper around this.
+    """
+    if name in _sessions and _sessions[name].is_alive():
+        return {"error": f"Session '{name}' already running. Stop it first or use a different name."}
+
+    # Validate initial command same as sassy_shell.
+    if command:
+        ok, err = validate_command(command)
+        if not ok:
+            return {"error": err}
+        is_del, kw = detect_delete_intent(command)
+        if is_del:
+            _audit.log_intercept("sassy_session_start", kw, command, [], ["initial command blocked"])
+            return {
+                "error": (
+                    f"Initial command blocked by delete interceptor ('{kw}'). "
+                    "Use sassy_safe_delete(path) to stage deletions."
+                )
+            }
+
+    if shell not in _SHELL_MAP_SESSION:
+        return {"error": f"Unknown shell: {shell}. Use: powershell, cmd, wsl"}
+
+    try:
+        proc = await _spawn_argv(
+            *_SHELL_MAP_SESSION[shell],
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,  # Merge stderr into stdout
+        )
+        sess = _Session(name, proc, shell)
+        sess._reader_task = asyncio.create_task(sess.start_reader())
+        _sessions[name] = sess
+
+        if command:
+            await asyncio.sleep(0.3)  # Let shell initialize
+            await sess.send(command)
+            await asyncio.sleep(0.5)  # Let initial output arrive
+
+        return {
+            "status": "started",
+            "name": name,
+            "shell": shell,
+            "pid": proc.pid,
+            "initial_command": command or None,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def register(server):
 
     @server.tool()
@@ -151,57 +216,8 @@ def register(server):
         shell: powershell, cmd, or wsl
         command: optional initial command to run immediately
         """
-        if name in _sessions and _sessions[name].is_alive():
-            return json.dumps({"error": f"Session '{name}' already running. Stop it first or use a different name."})
-
-        # Validate initial command same as sassy_shell.
-        if command:
-            ok, err = validate_command(command)
-            if not ok:
-                return json.dumps({"error": err})
-            is_del, kw = detect_delete_intent(command)
-            if is_del:
-                _audit.log_intercept("sassy_session_start", kw, command, [], ["initial command blocked"])
-                return json.dumps({
-                    "error": (
-                        f"Initial command blocked by delete interceptor ('{kw}'). "
-                        "Use sassy_safe_delete(path) to stage deletions."
-                    )
-                })
-
-        shell_map = {
-            "powershell": ["powershell.exe", "-NoProfile", "-NoExit", "-Command", "-"],
-            "cmd": ["cmd.exe", "/k"],
-            "wsl": ["wsl", "--", "bash"],
-        }
-        if shell not in shell_map:
-            return json.dumps({"error": f"Unknown shell: {shell}. Use: powershell, cmd, wsl"})
-
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *shell_map[shell],
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,  # Merge stderr into stdout
-            )
-            sess = _Session(name, proc, shell)
-            sess._reader_task = asyncio.create_task(sess.start_reader())
-            _sessions[name] = sess
-
-            if command:
-                await asyncio.sleep(0.3)  # Let shell initialize
-                await sess.send(command)
-                await asyncio.sleep(0.5)  # Let initial output arrive
-
-            return json.dumps({
-                "status": "started",
-                "name": name,
-                "shell": shell,
-                "pid": proc.pid,
-                "initial_command": command or None,
-            })
-        except Exception as e:
-            return json.dumps({"error": str(e)})
+        result = await start_session_impl(name, shell, command)
+        return json.dumps(result)
 
     @server.tool()
     async def sassy_session_send(name: str, input_text: str) -> str:

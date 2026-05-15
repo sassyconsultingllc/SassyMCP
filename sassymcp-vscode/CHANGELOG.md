@@ -1,5 +1,12 @@
 # Changelog
 
+*Last updated: 2026-05-15*
+
+## 1.4.2 — 2026-05-15
+
+Bugfix:
+- `sassy_shell` now auto-promotes any call with `timeout_seconds > 120` to a background session and returns a poll-able session handle instead of blocking. Synchronous waits past the MCP client's ~240s response wall were wedging the JSON-RPC connection, leaving zombie subprocesses and blocking every subsequent tool call until the client was restarted.
+
 ## 1.4.1 — 2026-05-05
 
 Marketplace-readiness fixes:

@@ -9,7 +9,13 @@ Security:
 - Enforces blockedCommands from runtime config
 - Enforces hardcoded block list for destructive operations
 - Intercepts delete commands and moves targets to _DELETE_ staging folder
-- Clamps timeout to 300 seconds max
+
+Timeout handling:
+- Hard cap at _MAX_TIMEOUT (300s) for in-process subprocess wait.
+- Calls requesting more than _MCP_SAFE_TIMEOUT (120s) auto-promote to a
+  background session via session.start_session_impl, because synchronous
+  subprocess.communicate() past the MCP client's ~240s response wall
+  wedges the connection and silently drops the response.
 """
 
 import asyncio
@@ -20,6 +26,7 @@ import re
 import shlex
 import shutil
 import sys
+import uuid
 from pathlib import Path
 
 from sassymcp.modules._security import (
@@ -33,6 +40,11 @@ from sassymcp.modules import audit as _audit
 
 
 _MAX_TIMEOUT = 300
+# Below the MCP client-side response wall (~240s). Any sassy_shell call
+# requesting more than this gets auto-promoted to a background session,
+# because subprocess.communicate() blocking past the wall causes the JSON-RPC
+# response to land on a dead connection and wedges all subsequent tool calls.
+_MCP_SAFE_TIMEOUT = 120
 _STAGING_FOLDER = "_DELETE_"
 
 
@@ -198,13 +210,57 @@ def _normalize_for_powershell(command: str) -> str:
     return command
 
 
+async def _auto_promote_to_session(shell: str, command: str, requested_timeout: int) -> str:
+    """Spawn a background session for a long-running command and return a JSON handle.
+
+    Used when a sassy_shell timeout_seconds > _MCP_SAFE_TIMEOUT. Running a
+    synchronous subprocess.communicate() for longer than the MCP client's
+    response wall guarantees the response is dropped on the floor; promoting
+    to a session avoids the wedge and gives the caller a poll-able handle.
+    """
+    from sassymcp.modules.session import start_session_impl
+    session_name = f"shell_auto_{uuid.uuid4().hex[:8]}"
+    result = await start_session_impl(name=session_name, shell=shell, command=command)
+    if result.get("error"):
+        return json.dumps({
+            "auto_detached": False,
+            "error": "Auto-promote to session failed",
+            "detail": result["error"],
+            "requested_timeout_seconds": requested_timeout,
+        }, indent=2)
+    return json.dumps({
+        "auto_detached": True,
+        "session_name": session_name,
+        "reason": (
+            f"timeout_seconds={requested_timeout}s exceeds the MCP-safe ceiling "
+            f"({_MCP_SAFE_TIMEOUT}s). Blocking longer than the MCP client's "
+            f"~240s response wall wedges the connection; promoted to a "
+            f"background session instead."
+        ),
+        "hint": (
+            f"Poll output with sassy_session_read(name='{session_name}'). "
+            f"Send more input with sassy_session_send. "
+            f"Stop when done with sassy_session_stop(name='{session_name}')."
+        ),
+        "command": command,
+        "shell": shell,
+        "pid": result.get("pid"),
+    }, indent=2)
+
+
 async def _run_subprocess(shell: str, command: str, timeout_seconds: int) -> str:
     """Spawn the configured shell with argv-list form and capture output.
 
     Used by sassy_shell and by sassy_shell_confirm (which has already
     cleared the interceptor). The argv-list form avoids shell injection;
     the per-shell entry in _SHELL_MAP supplies the right command flag.
+
+    If `timeout_seconds` exceeds _MCP_SAFE_TIMEOUT, the call is auto-promoted
+    to a background session via _auto_promote_to_session — see that function
+    for the wedge-avoidance rationale.
     """
+    if timeout_seconds > _MCP_SAFE_TIMEOUT:
+        return await _auto_promote_to_session(shell, command, timeout_seconds)
     timeout_seconds = min(max(timeout_seconds, 1), _MAX_TIMEOUT)
     if shell == "powershell":
         command = _normalize_for_powershell(command)
@@ -277,6 +333,13 @@ def register(server):
     ) -> str:
         """Execute a shell command. shell: powershell, cmd, or wsl.
         Automatically normalizes syntax (e.g. && to ; for PowerShell).
+
+        timeout_seconds > 120: auto-promoted to a background session and
+        returns a JSON handle ({"auto_detached": true, "session_name": ...}).
+        Poll with sassy_session_read; stop with sassy_session_stop. This is
+        because synchronous waits past the MCP client's ~240s response wall
+        wedge the connection. For known long-running work, prefer calling
+        sassy_session_start directly with a memorable name.
 
         allow_pattern: opt-in escape hatch for power users. When set to a
         specific pattern label (e.g. 'truncate-by-redirect') OR to '*',
