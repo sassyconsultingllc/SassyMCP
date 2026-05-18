@@ -111,9 +111,22 @@ def _generate_self_signed_cert():
 
 def _build_server() -> FastMCP:
     """Construct FastMCP with optional auth."""
+    # DNS-rebinding protection requires an explicit Host allowlist; without
+    # one, every non-loopback Host (including a Cloudflare-tunnelled
+    # hostname like mcp.sassyconsultingllc.com) returns 421. Override via
+    # the SASSYMCP_ALLOWED_HOSTS env var (comma-separated).
+    default_hosts = "mcp.sassyconsultingllc.com,localhost,127.0.0.1"
+    allowed_hosts = [
+        h.strip()
+        for h in os.environ.get("SASSYMCP_ALLOWED_HOSTS", default_hosts).split(",")
+        if h.strip()
+    ]
     kwargs = {
         "name": "sassymcp",
-        "transport_security": TransportSecuritySettings(enable_dns_rebinding_protection=True),
+        "transport_security": TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=allowed_hosts,
+        ),
     }
 
     # Opt-in auth: only if SASSYMCP_AUTH_TOKEN or ~/.sassymcp/tokens.json exists
