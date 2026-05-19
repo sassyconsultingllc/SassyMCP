@@ -1,5 +1,7 @@
 # personal/
 
+*Last updated: 2026-05-15 — SassyMCP v1.4.1*
+
 Per-machine scripts that aren't safe to commit because they reference one
 developer's specific layout — drive letters, mount points, named tunnels,
 service names, etc.

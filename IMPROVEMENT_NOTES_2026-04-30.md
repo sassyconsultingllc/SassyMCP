@@ -1,5 +1,7 @@
 # SASSYMCP IMPROVEMENT NOTES (post 2026-04-30 partition session)
 
+*Last updated: 2026-05-15 — v1.4.1*
+
 ## Context
 During a multi-hour session involving disk partitioning, LUKS setup, and
 SSH-to-Linux work, the following friction patterns repeatedly blocked or
@@ -196,3 +198,17 @@ rather than retrying the same blocked command shape.
 
 Items 1, 2, and 4 alone would have made tonight session take 10 minutes
 instead of an hour.
+
+---
+
+## Resolution Status (as of v1.4.1, 2026-05-15)
+
+| # | Item | Status |
+|---|------|--------|
+| 1 | `sassy_write_file` | **RESOLVED** — implemented in `sassymcp/modules/fileops.py` |
+| 2 | Tokenize keyword scan | Open |
+| 3 | Confirm-do-not-block flow | **RESOLVED** — `sassy_shell_confirm` implemented in `sassymcp/modules/shell.py` via `_confirm.py` |
+| 4 | SSH/PowerShell wrapper braces | Open |
+| 5 | Risk-tier destructive patterns | Open |
+| 6 | Process output capture reliability | Open |
+| 7 | Audit counter in tool description | **PARTIAL** — `sassy_audit_false_positives` exists; inline counter not yet added |

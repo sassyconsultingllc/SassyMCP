@@ -1,5 +1,7 @@
 # Migrating to SassyMCP
 
+*Last updated: 2026-05-15 — v1.4.1*
+
 **Replace 3+ MCP servers with one.** This guide helps you switch from Windows-MCP, Desktop Commander, and/or Filesystem MCP to SassyMCP.
 
 ## Why Switch?
@@ -12,7 +14,7 @@
 | **~35K+ tokens overhead** | **~10K tokens overhead** |
 
 - **~25K fewer tokens** consumed by tool definitions
-- **183 tools** across 22 modules (more than the 3 servers combined)
+- **270 tools** across 35 modules in 17 groups (more than the 3 servers combined)
 - **Syntax normalization** — no more PowerShell `&&` crashes
 - **Android integration** — ADB, scrcpy, logcat built in
 - **Security tools** — hash, certs, firewall, Defender, APK analysis
@@ -37,7 +39,7 @@ nmap — for advanced port scanning
 ### 2. Clone
 
 ```bash
-git clone https://github.com/your-org/SassyMCP.git
+git clone https://github.com/sassyconsultingllc/SassyMCP.git
 cd SassyMCP
 uv sync
 ```
@@ -171,6 +173,13 @@ To add a new module:
 2. Implement `def register(server: Server):`
 3. Add `@server.tool()` decorated async functions
 4. Add your module to the appropriate group in `TOOL_GROUPS` in `sassymcp/modules/_tool_loader.py`
+
+### New Tools (since v1.3.x)
+- `sassy_memory_*` — 9 persistent cross-session memory tools (remember, recall, search, context, milestones, handoff)
+- `sassy_update_*` — 4 self-update tools (check, list, changelog, apply)
+- `sassy_combo_*` — 4 multi-step workflow tools (pr_review, phone_observe, codebase_grep)
+- `sassy_shell_confirm` — confirmation flow for intercepted destructive commands
+- MCP prompts — slash-menu shortcuts for common workflows
 
 ## License
 

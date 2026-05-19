@@ -1,5 +1,7 @@
 # SassyMCP for VS Code
 
+*Last updated: 2026-05-15 — extension v1.4.1, server v1.4.1*
+
 One MCP server replacing 75+. Auto-configures every detected MCP client on your machine — Claude Desktop, Cursor, Windsurf, Continue, Cline, Zed, Grok, and VS Code's Copilot agent — so all your AI tools share the same brain.
 
 ## What this extension does
@@ -34,5 +36,7 @@ You need `sassymcp.exe` on your PATH OR set `sassymcp.exePath` in VS Code settin
 - `sassymcp.installRunOnce` — only run install on first activation per workspace (default: true)
 
 ## Source
+
+The underlying SassyMCP server provides 270 tools across 35 modules in 17 groups (67 Python source files, 18,497 lines).
 
 github.com/sassyconsultingllc/SassyMCP — MIT licensed.

@@ -2,7 +2,9 @@
 
 **One MCP server to replace them all.**
 
-**257 tools | 31 modules | Replaces 75+ MCP servers | 34MB standalone exe**
+**270 tools | 35 modules | 17 tool groups | Replaces 75+ MCP servers | 34MB standalone exe**
+
+*Last updated: 2026-05-15 — v1.4.1 | 67 Python source files | 18,497 lines of Python*
 
 Compatible with Claude Desktop, Grok Desktop, Cursor, Windsurf, and any MCP client.
 
@@ -50,21 +52,24 @@ SassyMCP replaces **75+ individual MCP servers** — including [Desktop Commande
 
 | Module | Tools | Group | Description |
 |--------|-------|-------|-------------|
-| **Meta** | 5 | meta | Context estimation, tool usage analytics, group management |
+| **Meta** | 9 | meta | Context estimation, tool usage analytics, group management |
 | **FileOps** | 10 | core | Read, write, search, move, copy, edit, mkdir, file info, safe delete |
-| **Shell** | 1 | core | PowerShell, CMD, WSL execution with syntax normalization and delete interception |
+| **Shell** | 2 | core | PowerShell, CMD, WSL execution with syntax normalization and delete interception |
 | **UIAutomation** | 6 | core | Desktop state, click, type, hotkeys, screenshots, screen info |
 | **Editor** | 2 | core | Surgical find/replace, multi-edit |
-| **Audit** | 3 | core | Audit log read, search, clear |
+| **Audit** | 4 | core | Audit log read, search, clear, false-positive tracking |
 | **Session** | 6 | core | Persistent terminal sessions (start, read, send, stop) |
 | **GitHub Quick** | 6 | github_quick | Daily-driver: push_files, get_file, issue, PR, protect |
-| **Persona** | 6 | persona | Expert-mode directives, decision framework, engineering standards |
+| **Persona** | 7 | persona | Expert-mode directives, decision framework, engineering standards |
 | **Utility** | 11 | utility | Env vars, toast, zip/tar/unzip/untar, HTTP requests, file diff |
-| **SelfMod** | 7 | selfmod | Self-edit, hot-reload, restart, rollback, status |
-| **Setup** | 6 | setup | Setup wizard, GitHub token guide, SSH setup, tool checker |
+| **SelfMod** | 8 | selfmod | Self-edit, hot-reload, restart, rollback, status |
+| **Setup** | 8 | setup | Setup wizard, GitHub token guide, SSH setup, tool checker, license activation |
+| **ToolsManager** | 1 | setup | External tool bootstrap and detection |
 | **Observability** | 3 | infrastructure | Health, metrics, tool stats |
 | **StateManager** | 3 | infrastructure | Persistent key-value state across sessions |
 | **RuntimeConfig** | 3 | infrastructure | Runtime config, recent tool calls |
+| **Memory** | 9 | memory | Persistent cross-session memory, milestones, task handoffs, pattern learning |
+| **Updater** | 4 | updater | Version checks, changelog, self-update (Kali-style) |
 | **GitHub Full** | 80 | github_full | Complete GitHub API: repos, issues, PRs, actions, security, gists |
 | **ADB** | 10 | android | Android shell, packages, file transfer, logcat, screencap |
 | **PhoneScreen** | 14 | android | UI tree reader, phone glance/watch, tap/swipe/type/key, pause/resume, scrcpy |
@@ -80,6 +85,8 @@ SassyMCP replaces **75+ individual MCP servers** — including [Desktop Commande
 | **WebInspector** | 5 | v020 | Security headers, URL screenshots, tech stack detection |
 | **Crosslink** | 7 | v020 | Cross-session messaging via HTTP API + SQLite |
 | **Linux** | 1 | linux | Remote SSH execution via plink |
+| **Combos** | 4 | combos | Multi-step workflows in one call: PR review, phone observe, codebase grep |
+| **Prompts** | 0 | prompts | MCP slash-menu shortcuts (pr-review, phone-status, resume, brain-status, setup-sassy) |
 
 ## Dynamic Vision
 
@@ -241,7 +248,7 @@ By default, SassyMCP only loads frequently-used tool groups. This keeps tool def
 # Default: loads core, github_quick, persona, meta, utility, selfmod, setup, infrastructure
 uv run sassymcp
 
-# Load everything (257 tools, ~22K tokens of context)
+# Load everything (270 tools, ~22K tokens of context)
 SASSYMCP_LOAD_ALL=1 uv run sassymcp
 
 # Load specific groups
@@ -259,7 +266,11 @@ SASSYMCP_GROUPS=core,github_quick,android,v020 uv run sassymcp
 | `persona` | persona | Yes |
 | `utility` | utility | Yes |
 | `selfmod` | selfmod | Yes |
-| `setup` | setup_wizard | Yes |
+| `setup` | setup_wizard, tools_manager | Yes |
+| `memory` | memory | Yes |
+| `updater` | updater | Yes |
+| `combos` | combos (4 tools) | No |
+| `prompts` | prompts (slash-menu shortcuts) | Yes |
 | `github_full` | github_ops (80 tools) | No |
 | `android` | adb, phone_screen | No |
 | `system` | network_audit, process_manager, security_audit, registry, bluetooth, eventlog, clipboard | No |
@@ -517,7 +528,7 @@ The legacy `personal/autostart-bridge.bat` + `personal/register-autostart.ps1` t
 
 | Variable | Purpose |
 |----------|---------|
-| `SASSYMCP_LOAD_ALL=1` | Load all 257 tools |
+| `SASSYMCP_LOAD_ALL=1` | Load all 270 tools |
 | `SASSYMCP_GROUPS=core,android` | Load specific groups |
 | `SASSYMCP_AUTH_TOKEN=xxx` | Bearer token for HTTP auth |
 | `SASSYMCP_DEV=1` | Enable live reload (dev mode) |

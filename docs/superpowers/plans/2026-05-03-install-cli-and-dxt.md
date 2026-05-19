@@ -619,7 +619,7 @@ Short description of what users see in Claude Desktop's extension panel:
 One MCP server replacing 75+. After installing, sassymcp will automatically detect and patch every OTHER MCP client on your machine (Cursor, VS Code, Windsurf, Continue, Cline, Zed, Grok Desktop) so all your AI tools share the same brain.
 
 ## What you get
-- 257 tools across 31 modules — file ops, shell, GitHub, Android, vision, security audit, persona memory
+- 270 tools across 35 modules in 17 groups — file ops, shell, GitHub, Android, vision, security audit, persona, memory, self-update
 - Smart tool loading (only the groups you use; default ~5K tokens of context)
 - Cross-session memory and crosslink messaging (your Claude conversation can hand off to a Cursor session)
 - Safe delete (rm/del/Remove-Item are intercepted; targets staged to _DELETE_/ for review)

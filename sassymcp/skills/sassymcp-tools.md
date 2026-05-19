@@ -51,7 +51,7 @@ This is the canonical "when to use which tool" guide for SassyMCP. The
 
 3. **Sensitive contexts auto-block.** Phone interaction tools (tap, swipe, type) refuse on detected login/payment/2FA screens. Pass `confirmed=True` only after asking the user.
 
-4. **Smart loading is real.** SassyMCP loads only the tool groups whose top tools cross score >= 0.5 in the user's `~/.sassymcp/tool_usage.json` history, plus the always-on core. Override with `SASSYMCP_GROUPS=core,android,system` env var, or `SASSYMCP_LOAD_ALL=1` for all 257 tools.
+4. **Smart loading is real.** SassyMCP loads only the tool groups whose top tools cross score >= 0.5 in the user's `~/.sassymcp/tool_usage.json` history, plus the always-on core. Override with `SASSYMCP_GROUPS=core,android,system` env var, or `SASSYMCP_LOAD_ALL=1` for all 270 tools.
 
 5. **Cross-session memory is the source of truth.** Use `sassy_memory_*` (and the `madame_*` aliases) to persist learning across sessions. The convention is task-concept-based, not project-based — same concept across projects shares patterns automatically.
 
