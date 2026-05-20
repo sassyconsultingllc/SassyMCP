@@ -43,9 +43,15 @@
    For LAN access, an auth token is required.
 
  Cloudflare Tunnel (remote access):
-   Requires: cloudflared installed and configured
-   Run: start-tunnel.bat
-   Interactive: sets up auth token and tunnel name.
+   Requires: cloudflared installed and a named tunnel + DNS route.
+   Run: start-tunnel.bat <tunnel-name>
+        (or set SASSYMCP_TUNNEL_NAME and run with no args)
+   Bridge auto-launches on 127.0.0.1:21001; cloudflared runs in the
+   foreground and exits on Ctrl-C.
+   Before exposing a tunnel hostname, set SASSYMCP_ALLOWED_HOSTS to
+   include it (DNS-rebinding protection rejects unknown Host headers
+   with 421).
+   Full walkthrough: docs/TUNNEL.md in the source repo.
 
  AUTH TOKENS:
 

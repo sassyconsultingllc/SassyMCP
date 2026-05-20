@@ -25,6 +25,15 @@ set PORT=21001
 set HOST=127.0.0.1
 set SASSYMCP_LOAD_ALL=1
 
+REM --- Optional: OAuth discovery URLs (only relevant for public deployments) ---
+REM If you front this server with an OAuth-proxy (e.g. a Cloudflare Worker that
+REM handles DCR/PKCE/token issuance and proxies authenticated /mcp requests
+REM with a static upstream bearer), set these so the 401 WWW-Authenticate header
+REM and /.well-known/oauth-protected-resource metadata point clients at the proxy
+REM instead of leaking http://localhost:21001/. Leave unset for pure-LAN/local use.
+REM   set SASSYMCP_RESOURCE_URL=https://your-oauth-proxy.example.com/mcp
+REM   set SASSYMCP_OAUTH_ISSUER=https://your-oauth-proxy.example.com
+
 REM --- Resolve sassymcp.exe alongside this script ---------------
 set EXE=%~dp0sassymcp.exe
 if not exist "%EXE%" (

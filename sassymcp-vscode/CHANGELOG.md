@@ -1,6 +1,14 @@
 # Changelog
 
-*Last updated: 2026-05-15*
+*Last updated: 2026-05-20*
+
+## 1.5.0 — 2026-05-20
+
+MadameClaude memory + frozen-exe completeness:
+- PyInstaller spec now lists `combos`, `prompts`, and `_confirm` as hidden imports. Previous frozen exes silently dropped the combo tools (`sassy_combo_pr_review`, `sassy_combo_phone_observe`, `sassy_combo_codebase_grep`) and all six MCP slash-menu prompts (`pr-review`, `phone-status`, `resume`, `codebase-grep`, `brain-status`, `setup-sassy`). Re-run via `sassymcp.exe --help` shows them registered now.
+- Default DNS-rebinding allowlist is now loopback-only (`localhost,127.0.0.1`). To expose the server through a Cloudflare Tunnel or LAN, set `SASSYMCP_ALLOWED_HOSTS=mcp.<your-domain>.tld,localhost,127.0.0.1`. The shipped launchers (`start-lan.bat`, `start-tunnel.bat`) carry no vendor-specific hostname — see `docs/TUNNEL.md` for a step-by-step Cloudflare Tunnel walkthrough.
+- `sassymcp-oauth/wrangler.toml` is now an `.example` template; deployers copy it to `wrangler.toml` and substitute their own hostname + KV namespace id. The working file is gitignored so production identifiers no longer leak into forks.
+- DXT, VSIX, and EXE all version-stamped to 1.5.0 from the canonical `sassymcp/__init__.py`. CI release pipeline (`.github/workflows/release.yml`) refuses to build if the git tag and `__version__` disagree.
 
 ## 1.4.2 — 2026-05-15
 

@@ -6,10 +6,10 @@
 //
 // Secrets (set via `wrangler secret put`):
 //   PRE_AUTH_SECRET      — pasted by user on consent screen
-//   UPSTREAM_BEARER      — forwarded to mcp.sassyconsultingllc.com
+//   UPSTREAM_BEARER      — forwarded as the upstream Authorization header
 //
 // Vars (in wrangler.toml):
-//   UPSTREAM_URL         — https://mcp.sassyconsultingllc.com/mcp
+//   UPSTREAM_URL         — your SassyMCP bridge, e.g. https://mcp.<your-domain>.tld/mcp
 //
 // KV (binding OAUTH_KV):
 //   client:<client_id>   — {client_id, client_secret?, redirect_uris[]}

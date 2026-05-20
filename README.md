@@ -346,23 +346,29 @@ uv pip install pytesseract playwright
 playwright install chromium
 ```
 
-### Cloudflare Tunnel (remote access in 60 seconds)
+### Cloudflare Tunnel (remote access)
 
-Want to drive SassyMCP from a remote MCP client (Claude Web, another machine)? The portable bundle ships with a turnkey tunnel launcher.
+Want to drive SassyMCP from a remote MCP client (Claude Web, another machine)? The portable bundle ships a turnkey launcher. Full step-by-step is in [**docs/TUNNEL.md**](docs/TUNNEL.md); the short version:
 
 ```powershell
 winget install Cloudflare.cloudflared          # one-time
+cloudflared tunnel login                       # authenticate against your CF account
+cloudflared tunnel create sassymcp             # create a named tunnel
+cloudflared tunnel route dns sassymcp mcp.<your-domain>.tld
+# Write ~/.cloudflared/config.yml with the ingress block (see TUNNEL.md)
+
+[Environment]::SetEnvironmentVariable("SASSYMCP_AUTH_TOKEN", "<your token>", "User")
+[Environment]::SetEnvironmentVariable(
+    "SASSYMCP_ALLOWED_HOSTS",
+    "mcp.<your-domain>.tld,localhost,127.0.0.1", "User")
+
 cd D:\Tools\SassyMCP                           # wherever you extracted
-.\start-tunnel.bat                             # auto-generates auth token, prompts for tunnel name
+.\start-tunnel.bat sassymcp                    # tunnel name as arg, or set SASSYMCP_TUNNEL_NAME
 ```
 
-`start-tunnel.bat` will:
-1. Verify `cloudflared` is on `PATH` (and link to `winget install Cloudflare.cloudflared` if missing).
-2. Auto-generate a 32-byte URL-safe `SASSYMCP_AUTH_TOKEN` (or accept yours via stdin) and print it once for you to copy into your client.
-3. Prompt for a tunnel name (default `sassymcp`) and start `cloudflared tunnel run`.
-4. Boot the HTTP bridge on `127.0.0.1:21001` so the tunnel has something to forward to.
+`start-tunnel.bat` launches the HTTP bridge on `127.0.0.1:21001` and runs `cloudflared tunnel run <name>` in the foreground. Nothing in the script is vendor-specific — you supply the tunnel name and the hostname. Clients send `Authorization: Bearer <SASSYMCP_AUTH_TOKEN>` against `https://mcp.<your-domain>.tld/mcp`.
 
-Clients then send `Authorization: Bearer <token>` against `https://<your-tunnel>.trycloudflare.com/mcp` (or your own custom hostname if you've configured DNS).
+For hosted-Claude clients that require OAuth 2.1 DCR/PKCE instead of a static bearer, deploy the optional Worker under `sassymcp-oauth/` — copy `wrangler.toml.example` to `wrangler.toml`, fill in your hostname and KV id, and `wrangler deploy`. See `docs/TUNNEL.md` for the full OAuth section.
 
 ## MCP Client Config
 

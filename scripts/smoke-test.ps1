@@ -1,7 +1,11 @@
-# Pings local bridge and remote tunnel, prints HTTP status
+# Pings local bridge (and optionally a remote tunnel), prints HTTP status.
+#
+# Usage:
+#   .\smoke-test.ps1                                          # local only
+#   .\smoke-test.ps1 -RemoteUrl https://mcp.<your>.tld/mcp     # both
 param(
     [string]$LocalUrl  = "http://127.0.0.1:21001/mcp",
-    [string]$RemoteUrl = "https://mcp.sassyconsultingllc.com/mcp"
+    [string]$RemoteUrl = ""
 )
 
 $dir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -26,4 +30,8 @@ function Ping($label, $url, $timeout) {
 }
 
 Ping "local "  $LocalUrl  5
-Ping "remote" $RemoteUrl 10
+if ($RemoteUrl) {
+    Ping "remote" $RemoteUrl 10
+} else {
+    Write-Host "  [remote] (skipped — pass -RemoteUrl to test your tunnel)"
+}

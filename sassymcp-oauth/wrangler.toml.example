@@ -1,0 +1,37 @@
+# SassyMCP OAuth Proxy — Cloudflare Worker config template.
+#
+# Copy this to wrangler.toml and replace every <PLACEHOLDER> with your own
+# values. The working wrangler.toml is gitignored so your production
+# hostname, KV id, and account never leak into a public fork.
+#
+# Required steps before `wrangler deploy`:
+#   1. wrangler kv:namespace create OAUTH_KV   → copy the returned id below
+#   2. Set custom domain on the Worker in Cloudflare dashboard, or use
+#      workers.dev subdomain (set workers_dev = true and drop the route).
+#   3. wrangler secret put PRE_AUTH_SECRET     → the consent-screen password
+#   4. wrangler secret put UPSTREAM_BEARER     → the static token your
+#                                                 sassymcp.exe accepts
+#
+# Then deploy:  wrangler deploy
+
+name = "sassymcp-oauth"
+main = "src/index.js"
+compatibility_date = "2026-04-01"
+workers_dev = false
+
+[[routes]]
+# The public hostname clients (claude.ai, etc.) connect to for OAuth.
+pattern = "mcp-oauth.<your-domain>.tld"
+custom_domain = true
+
+[[kv_namespaces]]
+binding = "OAUTH_KV"
+# Replace with the id printed by `wrangler kv:namespace create OAUTH_KV`.
+id = "<YOUR_KV_NAMESPACE_ID>"
+
+[vars]
+# The URL of your actual SassyMCP HTTP bridge — typically a second
+# Cloudflare-tunnelled hostname pointing at sassymcp.exe on your machine
+# or homelab. The Worker injects UPSTREAM_BEARER as the Authorization
+# header when proxying /mcp calls here.
+UPSTREAM_URL = "https://mcp.<your-domain>.tld/mcp"

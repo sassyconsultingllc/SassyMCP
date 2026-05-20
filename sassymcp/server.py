@@ -113,9 +113,13 @@ def _build_server() -> FastMCP:
     """Construct FastMCP with optional auth."""
     # DNS-rebinding protection requires an explicit Host allowlist; without
     # one, every non-loopback Host (including a Cloudflare-tunnelled
-    # hostname like mcp.sassyconsultingllc.com) returns 421. Override via
-    # the SASSYMCP_ALLOWED_HOSTS env var (comma-separated).
-    default_hosts = "mcp.sassyconsultingllc.com,localhost,127.0.0.1"
+    # hostname like mcp.example.com) returns 421. The shipped default is
+    # loopback-only, since the product runs locally on first boot. To
+    # expose this server over a tunnel or LAN, add your hostname via the
+    # SASSYMCP_ALLOWED_HOSTS env var (comma-separated), e.g.:
+    #     setx SASSYMCP_ALLOWED_HOSTS "mcp.your-domain.tld,localhost,127.0.0.1"
+    # See docs/TUNNEL.md for the full Cloudflare Tunnel walk-through.
+    default_hosts = "localhost,127.0.0.1"
     allowed_hosts = [
         h.strip()
         for h in os.environ.get("SASSYMCP_ALLOWED_HOSTS", default_hosts).split(",")

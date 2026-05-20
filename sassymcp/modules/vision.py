@@ -182,6 +182,9 @@ def register(server):
         try:
             import pytesseract
         except ImportError:
+            import sys as _sys
+            if getattr(_sys, "frozen", False):
+                return json.dumps({"error": "OCR is not bundled in the shipped sassymcp.exe (keeps the binary lean). To enable OCR, run from source: `git clone https://github.com/sassyconsultingllc/SassyMCP && uv sync && uv pip install pytesseract && playwright install chromium`. The Tesseract OCR binary itself ships in deploy/tools/tesseract/."})
             return json.dumps({"error": "pytesseract not installed. Install: pip install pytesseract — also requires Tesseract binary: https://github.com/tesseract-ocr/tesseract"})
 
         try:
@@ -227,6 +230,9 @@ def register(server):
         try:
             import pytesseract
         except ImportError:
+            import sys as _sys
+            if getattr(_sys, "frozen", False):
+                return json.dumps({"error": "OCR is not bundled in the shipped sassymcp.exe (keeps the binary lean). To enable OCR, run from source: `git clone https://github.com/sassyconsultingllc/SassyMCP && uv sync && uv pip install pytesseract && playwright install chromium`. The Tesseract OCR binary itself ships in deploy/tools/tesseract/."})
             return json.dumps({"error": "pytesseract not installed. Install: pip install pytesseract — also requires Tesseract binary: https://github.com/tesseract-ocr/tesseract"})
 
         try:

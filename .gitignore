@@ -86,6 +86,9 @@ sassymcp-oauth/node_modules/
 sassymcp-oauth/.cache/
 sassymcp-oauth/.wrangler/
 sassymcp-oauth/.mf/
+# Working Cloudflare Worker config — contains your hostname, KV id, and
+# account-specific values. Ship sassymcp-oauth/wrangler.toml.example only.
+sassymcp-oauth/wrangler.toml
 **/node_modules/
 
 # Mercury audit bundles — these are full-source dumps sent to the audit API.

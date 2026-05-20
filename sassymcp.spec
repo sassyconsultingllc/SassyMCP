@@ -57,6 +57,12 @@ a = Analysis(
         'sassymcp.modules.memory',
         'sassymcp.modules.updater',
         'sassymcp.modules._hooks',
+        # Combos + prompts (loaded dynamically via __import__ in server._load_modules;
+        # PyInstaller can't see these, so they MUST be listed here or the frozen
+        # exe silently logs "Failed to register combos/prompts: No module named ...".
+        'sassymcp.modules.combos',
+        'sassymcp.modules.prompts',
+        'sassymcp.modules._confirm',
         # Infrastructure
         'sassymcp.modules.state_manager',
         'sassymcp.modules.observability',
@@ -112,7 +118,16 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['tkinter', 'matplotlib', 'scipy', 'numpy.testing'],
+    excludes=[
+        'tkinter', 'matplotlib', 'scipy', 'numpy.testing',
+        # Optional extras — lazy-imported by vision/web_inspector with
+        # graceful "install X to enable" fallback messages. Excluded from
+        # the shipped exe to keep it lean; users who need OCR or
+        # playwright screenshots install them into their own Python.
+        'playwright', 'playwright.sync_api', 'playwright.async_api',
+        'pytesseract',
+        'watchdog',          # SASSYMCP_DEV=1 live-reload only
+    ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,

@@ -211,7 +211,11 @@ def register(server):
             b64 = base64.b64encode(buf.getvalue()).decode("ascii")
             return json.dumps({"image_base64": b64, "format": "jpeg", "size": list(img.size), "bytes": len(buf.getvalue()), "saved_to": save, "method": "playwright"})
         except ImportError:
-            _pw_err = "playwright not installed"
+            import sys as _sys
+            if getattr(_sys, "frozen", False):
+                _pw_err = "playwright not bundled in sassymcp.exe (keeps the binary lean). Falling back to Chrome CLI. For full playwright support, run from source: uv sync && uv pip install playwright && playwright install chromium."
+            else:
+                _pw_err = "playwright not installed. Install: pip install playwright && playwright install chromium"
         except Exception as e:
             _pw_err = str(e)
 
