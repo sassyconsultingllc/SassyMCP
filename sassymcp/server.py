@@ -1008,6 +1008,17 @@ def _dispatch_subcommand() -> int | None:
     if sub == "install":
         from sassymcp.install import main as _install_main
         return _install_main(sys.argv[2:])
+    if sub in ("setup", "wizard"):
+        # Interactive menu. Returns "run_server" if the user picks the
+        # "Run as HTTP server" option, in which case we fall through to
+        # the server's normal argparse path with --http forced on.
+        from sassymcp._cli_wizard import run_wizard
+        result = run_wizard()
+        if result == "run_server":
+            # Re-enter main() with --http so the standard flow takes over.
+            sys.argv = [sys.argv[0], "--http"]
+            return None
+        return 0
     return None
 
 
@@ -1022,8 +1033,8 @@ def main():
 
     parser = argparse.ArgumentParser(
         description=f"SassyMCP Server v{__version__}",
-        epilog="Subcommands: install | generate-token | show-token  "
-               "(e.g. `sassymcp.exe generate-token --help`)",
+        epilog="Subcommands: setup | install | generate-token | show-token  "
+               "(e.g. `sassymcp.exe setup` opens the interactive wizard)",
     )
     parser.add_argument(
         "--http", "--serve", action="store_true",
@@ -1053,6 +1064,27 @@ def main():
     args = parser.parse_args()
 
     _maybe_run_first_run_install()
+
+    # First-run TTY: a human just double-clicked sassymcp.exe and we
+    # have nothing configured yet. Open the wizard instead of silently
+    # starting an HTTP server they can't see. Conditions:
+    #   - stdin AND stdout are both TTYs (so input() works)
+    #   - no explicit transport flag set
+    #   - no persona.md yet (first-ever launch on this machine)
+    # Existing users with a configured persona.md keep getting the
+    # auto-HTTP-server behavior they're used to.
+    if not args.stdio and not args.http and not _is_piped():
+        try:
+            from sassymcp._paths import PERSONA_FILE as _persona_check
+            first_ever = not _persona_check.exists()
+        except Exception:
+            first_ever = False
+        if first_ever and sys.stdin.isatty() and sys.stdout.isatty():
+            from sassymcp._cli_wizard import run_wizard
+            result = run_wizard()
+            if result != "run_server":
+                sys.exit(0)
+            args.http = True
 
     # Auto-detect transport: if stdin is a pipe, an MCP client is calling us.
     # If stdin is a terminal (human double-clicked or ran from cmd), use HTTP.

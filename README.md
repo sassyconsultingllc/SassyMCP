@@ -2,9 +2,9 @@
 
 **One MCP server to replace them all.**
 
-**270 tools | 35 modules | 17 tool groups | Replaces 75+ MCP servers | 34MB standalone exe**
+**270 tools | 35 modules | 18 tool groups | Replaces 75+ MCP servers | 34MB standalone exe**
 
-*Last updated: 2026-05-15 — v1.4.1 | 67 Python source files | 18,497 lines of Python*
+*Last updated: 2026-05-20 — v1.6.0 | LemonSqueezy tier licensing (free / pro / forensics)*
 
 Compatible with Claude Desktop, Grok Desktop, Cursor, Windsurf, and any MCP client.
 
@@ -48,6 +48,28 @@ SassyMCP replaces **75+ individual MCP servers** — including [Desktop Commande
 
 **Plus features with no MCP server equivalent:** phone pause/resume with sensitive context detection (auto-blocks on login/payment screens), operational hooks (14 expert playbooks), safe delete interception, Windows autorun forensics, Android+Windows clipboard sync, usage-weighted smart loading.
 
+## Licensing & Tiers
+
+SassyMCP is sold through [LemonSqueezy](https://sassyconsultingllc.com/sassymcp). Free tier runs out of the box with no key required — paid tiers unlock additional tool groups.
+
+| Tier | What unlocks | What you get |
+|---|---|---|
+| **Free** | core, meta, github_quick, persona, setup, infrastructure, utility, selfmod, memory, updater, prompts, combos | File ops, shell, desktop automation, daily-driver GitHub, persistent memory, surgical edit, audit log, multi-client install — enough to use SassyMCP as a daily driver, just without the heavy automation surfaces. |
+| **Pro** | Free + `github_full`, `android`, `v020`, `linux`, `system` | Full GitHub API (80 tools), Android phone control + dynamic vision, OCR, app launcher, web inspector, crosslink, remote Linux SSH, system monitoring, clipboard sync, event logs. |
+| **Forensics** *(add-on)* | `forensics` group: `security_audit`, `registry` | Stacks additively on top of Free or Pro. APK inspection, certificate validation, hash + permission audit, Defender / firewall status, registry read/write/export, autorun forensics. |
+
+**Activation flow:**
+1. Purchase at `https://sassyconsultingllc.com/sassymcp` — LemonSqueezy emails you a key (`XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX`).
+2. Activate from your AI agent: `sassy_setup_license action=activate key=...`
+3. Or from a terminal: `sassymcp.exe setup` opens the interactive menu.
+4. SassyMCP calls LS to register this machine as an instance, mints a local HMAC-signed payload, and unlocks the paid groups on the next server restart.
+
+**Offline operation:** Once activated, the local HMAC payload lets SassyMCP run fully offline. A weekly authoritative re-check against LS catches refunds and cancellations; a faster startup check against the SassyMCP billing oracle cuts refund-to-revocation latency to seconds.
+
+**Safe failure modes:** Missing, expired, tampered, or corrupt license files silently downgrade to free tier — the product never bricks. Network errors during activation or revalidation leave the local license intact.
+
+**Dev escape hatch:** Set `SASSYMCP_LICENSE_BYPASS=1` to unlock all groups regardless of license state. Intended for development on the upstream codebase, CI, and air-gapped support cases. Logged at WARNING level.
+
 ## Modules
 
 | Module | Tools | Group | Description |
@@ -75,8 +97,8 @@ SassyMCP replaces **75+ individual MCP servers** — including [Desktop Commande
 | **PhoneScreen** | 14 | android | UI tree reader, phone glance/watch, tap/swipe/type/key, pause/resume, scrcpy |
 | **NetworkAudit** | 7 | system | netstat, ARP, WiFi scan, port scan, DNS, traceroute |
 | **ProcessManager** | 5 | system | Windows + Android process list/kill, system info |
-| **SecurityAudit** | 7 | system | Hash, permissions, certs, APK, firewall, Defender |
-| **Registry** | 4 | system | Read, write, export, autorun forensics |
+| **SecurityAudit** | 7 | forensics | Hash, permissions, certs, APK, firewall, Defender — *requires Forensics add-on* |
+| **Registry** | 4 | forensics | Read, write, export, autorun forensics — *requires Forensics add-on* |
 | **Bluetooth** | 3 | system | Windows + Android BT enumeration |
 | **EventLog** | 3 | system | Windows Event Log + Android logcat |
 | **Clipboard** | 4 | system | Windows + Android clipboard sync |
@@ -312,6 +334,8 @@ To uninstall: delete the folder. To upgrade: extract the new zip over the old fo
 ### Standalone executable (no tools bundled)
 
 If you don't need the bundled `nmap` / `adb` / `cloudflared` (or you have them on PATH already), grab just `sassymcp.exe` (~35 MB) from the [latest release](https://github.com/sassyconsultingllc/SassyMCP/releases/latest). Drop it anywhere and point your MCP client at it.
+
+**First-run wizard:** Double-click `sassymcp.exe` (or run it from a terminal with no flags) on a fresh machine and you'll get an interactive menu — auto-detect AI agents and register SassyMCP, activate a LemonSqueezy license key, generate / list bearer tokens, or start the HTTP server. Run `sassymcp.exe setup` anytime to re-open the menu. Once a persona is configured, bare invocation falls back to starting the HTTP server (the v1.5 behavior) so existing setups are unchanged.
 
 ### One-line PowerShell (license-gated)
 
