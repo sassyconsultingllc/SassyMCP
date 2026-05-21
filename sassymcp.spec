@@ -14,8 +14,12 @@ a = Analysis(
     binaries=[],
     datas=[],
     hiddenimports=[
-        # License
+        # License + monetization (v1.6)
         'sassymcp.license',
+        'sassymcp._lemonsqueezy',
+        'sassymcp._cli_wizard',
+        'sassymcp._paths',
+        'sassymcp._atomic',
         # Core
         'sassymcp.modules.fileops',
         'sassymcp.modules.shell',
