@@ -3,6 +3,9 @@
 import asyncio
 import hashlib
 import json
+from pathlib import Path
+
+from sassymcp.modules._security import is_sensitive_read_path
 
 
 def _register_hooks():
@@ -93,9 +96,19 @@ except Exception:
 def register(server):
     @server.tool()
     async def sassy_hash_file(path: str, algorithm: str = "sha256") -> str:
-        """Compute file hash. algorithm: md5, sha1, sha256, sha512."""
+        """Compute file hash. algorithm: md5, sha1, sha256, sha512.
+
+        Refuses paths in the sensitive-read denylist (SSH keys, credential
+        stores, browser login DBs, Windows SAM/SECURITY hives, /etc/shadow,
+        SassyMCP's own tokens.json, etc.) so an attacker-controlled LLM
+        can't use the hash function for confirmation-of-existence or
+        partial-content exfiltration on credential files.
+        """
         algos = {"md5": hashlib.md5, "sha1": hashlib.sha1, "sha256": hashlib.sha256, "sha512": hashlib.sha512}
         if algorithm not in algos: return f"Error: use {', '.join(algos)}"
+        denied, reason = is_sensitive_read_path(path)
+        if denied:
+            return json.dumps({"error": "Refused: sensitive read path", "reason": reason})
         h = algos[algorithm]()
         with open(path, "rb") as f:
             for chunk in iter(lambda: f.read(8192), b""):
@@ -144,9 +157,23 @@ def register(server):
 
     @server.tool()
     async def sassy_apk_info(apk_path: str) -> str:
-        """Analyze APK: permissions, signatures, package info."""
+        """Analyze APK: permissions, signatures, package info.
+
+        Validates the target before opening: refuses sensitive-read paths
+        and requires a .apk extension so the tool can't be repurposed as
+        a "dump arbitrary file as zip" primitive against, say, an MSI or
+        an Outlook PST.
+        """
         import shutil
         import zipfile
+        denied, reason = is_sensitive_read_path(apk_path)
+        if denied:
+            return json.dumps({"error": "Refused: sensitive read path", "reason": reason})
+        if not str(apk_path).lower().endswith(".apk"):
+            return json.dumps({
+                "error": "sassy_apk_info refuses non-.apk inputs",
+                "hint": "Pass a path ending in .apk. For arbitrary zip inspection use sassy_unzip.",
+            })
         aapt = shutil.which("aapt") or shutil.which("aapt2")
         if aapt:
             proc = await asyncio.create_subprocess_exec(

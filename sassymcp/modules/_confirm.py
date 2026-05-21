@@ -18,11 +18,20 @@ from __future__ import annotations
 
 import os
 import secrets
+import threading
 import time
 from typing import Optional
 
 # token -> {command, shell, cwd, tier, pattern, phrase_required, expires}
 _PENDING: dict[str, dict] = {}
+
+# A threading.Lock (NOT asyncio.Lock) — sassy_shell may be called from
+# the audit wrapper on a worker thread, and FastMCP can dispatch tool
+# calls from multiple loops/threads in HTTP mode. A threading lock
+# protects all four call sites (make/consume/purge/count) regardless of
+# which executor the caller landed on. The lock is held for O(table-size)
+# work only, never across I/O, so contention is bounded.
+_LOCK = threading.Lock()
 
 # 60s default TTL — long enough for a one-click confirm, short enough that
 # stale tokens never accumulate in memory or get misused.
@@ -32,7 +41,8 @@ _DEFAULT_TTL = 60
 _MAX_PENDING = 64
 
 
-def _purge_expired() -> None:
+def _purge_expired_locked() -> None:
+    """Purge stale entries. CALLER MUST HOLD _LOCK."""
     now = time.time()
     stale = [t for t, e in _PENDING.items() if e["expires"] <= now]
     for t in stale:
@@ -49,17 +59,7 @@ def make_token(
     cwd: Optional[str] = None,
     ttl_seconds: int = _DEFAULT_TTL,
 ) -> tuple[str, dict]:
-    """Issue a fresh confirm token. Returns (token, entry_dict).
-
-    The entry_dict mirrors what consume_token will hand back, useful for
-    callers that want to embed the same context in their response.
-    """
-    _purge_expired()
-    if len(_PENDING) >= _MAX_PENDING:
-        # Drop the oldest to keep memory bounded.
-        oldest = min(_PENDING.items(), key=lambda kv: kv[1]["expires"])
-        _PENDING.pop(oldest[0], None)
-
+    """Issue a fresh confirm token. Returns (token, entry_dict)."""
     token = secrets.token_urlsafe(16)
     entry = {
         "command": command,
@@ -72,7 +72,12 @@ def make_token(
         "expires": time.time() + ttl_seconds,
         "issued": time.time(),
     }
-    _PENDING[token] = entry
+    with _LOCK:
+        _purge_expired_locked()
+        if len(_PENDING) >= _MAX_PENDING:
+            oldest = min(_PENDING.items(), key=lambda kv: kv[1]["expires"])
+            _PENDING.pop(oldest[0], None)
+        _PENDING[token] = entry
     return token, entry
 
 
@@ -91,35 +96,36 @@ def consume_token(
     On success the token is removed from the pending table — replay yields
     'token not found'.
     """
-    _purge_expired()
-    entry = _PENDING.pop(token, None)
-    if entry is None:
-        return False, None, "token not found or expired"
+    with _LOCK:
+        _purge_expired_locked()
+        entry = _PENDING.pop(token, None)
+        if entry is None:
+            return False, None, "token not found or expired"
 
-    if entry["expires"] <= time.time():
-        return False, None, "token expired"
+        if entry["expires"] <= time.time():
+            return False, None, "token expired"
 
-    phrase_required = entry.get("phrase_required")
-    if phrase_required and confirm_phrase.strip() != phrase_required:
-        # Re-insert so a typo doesn't burn the token. Caller can retry once.
-        # We DO bound retries by leaving expiry alone — a stale token still
-        # ages out at the original deadline.
-        _PENDING[token] = entry
-        return False, None, (
-            f"phrase mismatch — call again with confirm_phrase exactly "
-            f"matching: {phrase_required!r}"
-        )
+        phrase_required = entry.get("phrase_required")
+        if phrase_required and confirm_phrase.strip() != phrase_required:
+            # Re-insert so a typo doesn't burn the token. Caller can retry
+            # once. Replay is still bounded by the original expiry.
+            _PENDING[token] = entry
+            return False, None, (
+                f"phrase mismatch — call again with confirm_phrase exactly "
+                f"matching: {phrase_required!r}"
+            )
 
-    here = cwd or os.getcwd()
-    if entry.get("cwd") and entry["cwd"] != here:
-        return False, None, (
-            f"cwd mismatch: token issued from {entry['cwd']!r}, "
-            f"called from {here!r}"
-        )
+        here = cwd or os.getcwd()
+        if entry.get("cwd") and entry["cwd"] != here:
+            return False, None, (
+                f"cwd mismatch: token issued from {entry['cwd']!r}, "
+                f"called from {here!r}"
+            )
 
-    return True, entry, None
+        return True, entry, None
 
 
 def pending_count() -> int:
-    _purge_expired()
-    return len(_PENDING)
+    with _LOCK:
+        _purge_expired_locked()
+        return len(_PENDING)

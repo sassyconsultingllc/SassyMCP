@@ -399,13 +399,21 @@ def register(server):
             return json.dumps({"error": str(e)})
 
     @server.tool()
-    async def sassy_selfmod_edit(path: str, old_text: str, new_text: str) -> str:
+    async def sassy_selfmod_edit(path: str, old_text: str, new_text: str, confirm: str = "") -> str:
         """Surgical self-edit: find old_text, replace with new_text.
 
         Auto git-backup → edit → syntax check → hot-reload (if module).
         If syntax check fails, the edit is reverted automatically.
 
-        For core files: edit succeeds but flags restart as pending.
+        Module files (sassymcp/modules/<name>.py): edit freely; hot-reload
+        is automatic. This is the "add a new tool" workflow.
+
+        Core/infra files (sassymcp/server.py, auth.py, modules/_security.py,
+        etc.): require confirm='YES'. These files implement the safety
+        boundary the LLM is operating inside — editing them is equivalent
+        to remote code execution under the user's privileges, so we gate
+        it behind explicit acknowledgement. The edit succeeds and flags
+        a restart as pending.
         """
         try:
             resolved = _resolve_path(path)
@@ -416,6 +424,32 @@ def register(server):
             return json.dumps({"error": f"File not found: {resolved}"})
         if resolved.suffix != ".py":
             return json.dumps({"error": "Only .py files can be edited through selfmod"})
+
+        # Confirm gate for anything outside the hot-reloadable modules tier.
+        # Module files (modules/foo.py, no leading underscore) are the
+        # zero-friction "add a tool" path. Everything else — infra helpers
+        # (modules/_security.py, modules/_tool_loader.py) and core
+        # (server.py, auth.py, license.py) — needs confirm='YES' because
+        # editing them changes the safety boundary itself.
+        if not _is_module_file(resolved) and confirm != "YES":
+            tier = (
+                "infrastructure helper"
+                if _is_infra_file(resolved)
+                else ("core" if _is_core_file(resolved) else "non-module")
+            )
+            return json.dumps({
+                "error": (
+                    f"Refused: '{_safe_relative(resolved)}' is a {tier} file. "
+                    f"Editing it changes the SassyMCP safety boundary and "
+                    f"requires confirm='YES'. Pass that to acknowledge."
+                ),
+                "tier": tier,
+                "module_tier_alternative": (
+                    "If the goal is to add or modify a tool, edit a file "
+                    "under sassymcp/modules/<name>.py instead — those edits "
+                    "hot-reload without restart and without a confirm gate."
+                ),
+            })
 
         # Read current content
         try:
@@ -493,10 +527,16 @@ def register(server):
         return json.dumps(result, indent=2)
 
     @server.tool()
-    async def sassy_selfmod_write(path: str, content: str) -> str:
+    async def sassy_selfmod_write(path: str, content: str, confirm: str = "") -> str:
         """Full file replacement with git backup + syntax check + reload.
 
         Use sassy_selfmod_edit for surgical changes. This replaces the ENTIRE file.
+
+        Same confirm gate as sassy_selfmod_edit: writing a non-module file
+        (core, infra helpers, or any new file outside modules/) requires
+        confirm='YES'. New module files (sassymcp/modules/foo.py without
+        leading underscore) are unrestricted — that's the "add a tool"
+        workflow.
         """
         try:
             resolved = _resolve_path(path)
@@ -505,6 +545,37 @@ def register(server):
 
         if resolved.suffix != ".py":
             return json.dumps({"error": "Only .py files can be written through selfmod"})
+
+        # Confirm gate. A path that resolves to modules/<name>.py without
+        # leading underscore is a hot-reloadable module — those are the
+        # zero-friction path. Anything else (existing core/infra, or a
+        # brand-new file outside modules/) needs confirm='YES'.
+        if not _is_module_file(resolved) and confirm != "YES":
+            if _is_infra_file(resolved):
+                tier = "infrastructure helper"
+            elif _is_core_file(resolved):
+                tier = "core"
+            else:
+                # New file: classify based on intended location.
+                if resolved.parent.resolve() == _MODULES_DIR.resolve() and resolved.name.startswith("_"):
+                    tier = "new infrastructure helper"
+                elif resolved.parent.resolve() == _PKG_DIR.resolve():
+                    tier = "new core file"
+                else:
+                    tier = "non-standard location"
+            return json.dumps({
+                "error": (
+                    f"Refused: '{_safe_relative(resolved)}' is a {tier}. "
+                    f"Writing here changes the SassyMCP safety boundary "
+                    f"and requires confirm='YES'."
+                ),
+                "tier": tier,
+                "module_tier_alternative": (
+                    "To add a new tool, write to sassymcp/modules/<name>.py "
+                    "(no leading underscore). Those land hot-reloaded with "
+                    "no confirm gate."
+                ),
+            })
 
         # Git backup if file exists
         backup = {"backed_up": False, "note": "new file"}

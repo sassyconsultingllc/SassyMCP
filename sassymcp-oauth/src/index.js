@@ -155,11 +155,13 @@ async function handleAuthorize(request, env, origin) {
 
     // POST = submission of consent form
     const submitted = params.get("pre_auth_secret") || "";
-    // Timing-safe compare
     const expected = env.PRE_AUTH_SECRET || "";
-    const ok = submitted.length === expected.length
-        && submitted.length > 0
-        && timingSafeEqual(submitted, expected);
+    // SHA-256 constant-time compare. Don't short-circuit on length —
+    // that's the leak the new timingSafeEqual is designed to remove.
+    // The only fast-path is "expected is empty", which is a server
+    // misconfig rather than a credential test.
+    const ok = expected.length > 0 && submitted.length > 0
+        && await timingSafeEqual(submitted, expected);
     if (!ok) {
         return renderConsent({ client, redirect_uri, state, code_challenge, scope, origin,
             error: "Incorrect pre-auth secret." });
@@ -181,10 +183,30 @@ async function handleAuthorize(request, env, origin) {
     return Response.redirect(redirect.toString(), 302);
 }
 
-function timingSafeEqual(a, b) {
-    if (a.length !== b.length) return false;
+// SHA-256 hash compare — defeats both length-leak and JIT timing leaks
+// the original constant-time-style JS loop was vulnerable to.
+//
+// The old implementation had two issues:
+//   1. The early-return on length-mismatch revealed the expected length
+//      (an attacker could measure response time across guesses).
+//   2. A byte-by-byte JS loop with String.charCodeAt is constant-time
+//      at the source level only; V8 can add early exits during JIT,
+//      and charCodeAt in a hot loop is not a primitive the engine
+//      treats as constant-time.
+//
+// crypto.subtle.digest runs in native runtime code over the full input
+// regardless of content; comparing equal-length SHA-256 digests with a
+// constant-time byte loop on Uint8Array removes both leaks.
+async function timingSafeEqual(a, b) {
+    const enc = new TextEncoder();
+    const [ah, bh] = await Promise.all([
+        crypto.subtle.digest("SHA-256", enc.encode(a)),
+        crypto.subtle.digest("SHA-256", enc.encode(b)),
+    ]);
+    const av = new Uint8Array(ah);
+    const bv = new Uint8Array(bh);
     let diff = 0;
-    for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+    for (let i = 0; i < av.length; i++) diff |= av[i] ^ bv[i];
     return diff === 0;
 }
 

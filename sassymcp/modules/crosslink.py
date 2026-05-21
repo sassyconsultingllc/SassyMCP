@@ -91,13 +91,37 @@ def _ensure_db():
     conn.commit(); conn.close()
 
 
+# Per-message ceiling for crosslink payloads. SQLite happily stores
+# megabytes, but a malicious sender (or buggy caller in a loop) can
+# fill the DB to GBs before we notice. 256 KiB is large enough for
+# real handoff payloads (task descriptions, file lists, JSON state
+# blobs) and small enough that a flood is bounded.
+_MAX_PAYLOAD_BYTES = 256 * 1024
+# Channel/session-id are tiny strings; cap them to stop a caller from
+# stuffing the index columns with multi-MB junk.
+_MAX_SHORT_BYTES = 256
+
+
 def _post_message(sid, channel, payload, ttl_seconds=0):
     _ensure_db()
+    sid_s = str(sid) if sid is not None else ""
+    channel_s = str(channel) if channel is not None else ""
+    payload_s = payload if isinstance(payload, str) else json.dumps(payload, default=str)
+    if len(sid_s.encode("utf-8")) > _MAX_SHORT_BYTES:
+        raise ValueError(f"session_id exceeds {_MAX_SHORT_BYTES} bytes")
+    if len(channel_s.encode("utf-8")) > _MAX_SHORT_BYTES:
+        raise ValueError(f"channel exceeds {_MAX_SHORT_BYTES} bytes")
+    if len(payload_s.encode("utf-8")) > _MAX_PAYLOAD_BYTES:
+        raise ValueError(
+            f"crosslink payload exceeds {_MAX_PAYLOAD_BYTES} bytes "
+            f"(got {len(payload_s.encode('utf-8'))}). Split into multiple "
+            "messages or use sassy_state_set for bulk state."
+        )
     now = datetime.now(timezone.utc).isoformat()
     conn = open_db(DB_PATH)
-    cur = conn.execute("INSERT INTO messages (session_id,channel,payload,created_at,ttl_seconds) VALUES (?,?,?,?,?)", (sid, channel, payload, now, ttl_seconds))
+    cur = conn.execute("INSERT INTO messages (session_id,channel,payload,created_at,ttl_seconds) VALUES (?,?,?,?,?)", (sid_s, channel_s, payload_s, now, ttl_seconds))
     mid = cur.lastrowid; conn.commit(); conn.close()
-    return {"id": mid, "session_id": sid, "channel": channel, "created_at": now, "ttl_seconds": ttl_seconds}
+    return {"id": mid, "session_id": sid_s, "channel": channel_s, "created_at": now, "ttl_seconds": ttl_seconds}
 
 
 def _read_messages(sid, channel="default", limit=20, unread_only=True, since=""):

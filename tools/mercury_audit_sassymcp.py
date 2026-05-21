@@ -30,6 +30,20 @@ CONFIG_FILES = [
     ROOT / "sassymcp-oauth" / "package.json",
 ]
 
+# README + spec docs — give Mercury-2 the project's own architectural
+# context so it can reason about intent vs. implementation. Without these
+# the auditor has to infer the tool surface and trust model from code
+# alone, which produces shallower findings.
+CONTEXT_FILES = [
+    ROOT / "README.md",
+    ROOT / "MIGRATION.md",
+    ROOT / "docs" / "TUNNEL.md",
+    ROOT / "docs" / "SassyWorks.md",
+    ROOT / "docs" / "OAUTH.md",        # may not exist; filtered below
+    ROOT / "docs" / "SECURITY.md",     # may not exist; filtered below
+    ROOT / "docs" / "ARCHITECTURE.md", # may not exist; filtered below
+]
+
 EXCLUDE_DIR_PARTS = {"__pycache__", "_DELETE_", "node_modules", ".venv", "venv"}
 
 
@@ -181,12 +195,15 @@ def main():
     mod_files = collect_py(PY_MODS, recursive=True)
     js_files = collect_js(OAUTH_SRC) if OAUTH_SRC.exists() else []
     cfg_files = [p for p in CONFIG_FILES if p.exists()]
+    ctx_files = [p for p in CONTEXT_FILES if p.exists()]
 
     mods_a, mods_b = split_by_size(mod_files, 2)
 
     chunks = {
         "core": (
-            bundle(cfg_files, "PACKAGING / CONFIG")
+            bundle(ctx_files, "PROJECT CONTEXT (README + design docs)")
+            + "\n\n"
+            + bundle(cfg_files, "PACKAGING / CONFIG")
             + "\n\n"
             + bundle(core_files, "PYTHON CORE (sassymcp/*.py)")
             + ("\n\n" + bundle(js_files, "OAUTH WORKER (sassymcp-oauth/src/)") if js_files else "")

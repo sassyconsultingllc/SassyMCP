@@ -28,11 +28,11 @@ if exist "dist\sassymcp.exe" (
     for %%A in (dist\sassymcp.exe) do echo [BUILD] Size: %%~zA bytes
     echo.
     echo [BUILD] Launch modes:
-    echo   dist\sassymcp.exe                      (stdio — Claude Desktop pipe)
-    echo   dist\sassymcp.exe --http                (HTTP — localhost:21001)
-    echo   dist\sassymcp.exe --http --host 0.0.0.0 (HTTP — LAN access)
-    echo   dist\sassymcp.exe --http --sse          (SSE — legacy transport)
-    echo   dist\sassymcp.exe --setup               (force setup wizard)
+    echo   dist\sassymcp.exe                      ^(stdio — Claude Desktop pipe^)
+    echo   dist\sassymcp.exe --http                ^(HTTP — localhost:21001^)
+    echo   dist\sassymcp.exe --http --host 0.0.0.0 ^(HTTP — LAN access^)
+    echo   dist\sassymcp.exe --http --sse          ^(SSE — legacy transport^)
+    echo   dist\sassymcp.exe --setup               ^(force setup wizard^)
 ) else (
     echo [BUILD] FAILED — check output above.
     exit /b 1

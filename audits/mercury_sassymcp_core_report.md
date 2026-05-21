@@ -1,12 +1,131 @@
 ```json
-{"severity":"high","category":"security","file":"sassymcp/auth.py","symbol":"_check_file_permissions","issue":"Windows ACLs are ignored – the function always returns True on NT platforms","why":"World‑readable ~/.sassymcp/tokens.json can expose bearer tokens to any local user, allowing an attacker to steal credentials","fix":"Implement proper Windows ACL checks (e.g., use os.stat and check FILE_ATTRIBUTE_HIDDEN or use pywin32 to verify that only the owner has read access)","confidence":0.95}
-{"severity":"critical","category":"security","file":"sassymcp/license.py","symbol":"_SIGNING_SECRET","issue":"Hard‑coded default signing secret (\"sassy-mcp-v1-signing-key-change-me\")","why":"An attacker can forge valid license keys and unlock all premium tool groups without paying","fix":"Require the signing secret to be supplied via a protected environment variable or secure vault; abort startup if missing; never ship a default secret","confidence":0.98}
-{"severity":"critical","category":"mcp tool safety","file":"sassymcp/license.py","symbol":"get_allowed_groups","issue":"Function returns all TOOL_GROUPS unconditionally (beta mode) and never enforces tier restrictions","why":"Clients can load every tool, including high‑risk ones (e.g., shell, file‑ops) regardless of purchased license, enabling arbitrary command execution","fix":"Replace the beta shortcut with a proper lookup that returns only groups permitted by the validated license tier (use the tier from validate_license)","confidence":0.97}
-{"severity":"high","category":"auth / oauth / license","file":"sassymcp/server.py","symbol":"_build_server","issue":"Auth is disabled when no token env var or token file exists","why":"Anyone on the local network can connect to the MCP endpoint without any authentication, allowing unauthenticated LLM clients to invoke arbitrary tools","fix":"Make authentication mandatory for production builds; fail start‑up if no valid token source is present, or at least require an explicit opt‑out flag","confidence":0.94}
-{"severity":"medium","category":"resource / lifecycle","file":"sassymcp/server.py","symbol":"_generate_self_signed_cert","issue":"Self‑signed cert and private key are written to ~/.sassymcp with default filesystem permissions","why":"On multi‑user Windows the private key may be readable by other users, enabling them to impersonate the server and decrypt traffic","fix":"Create the cert directory with mode 0o700 (or Windows ACL restricting to the current user) and write the key with mode 0o600; use os.chmod or appropriate Windows APIs","confidence":0.85}
-{"severity":"medium","category":"error handling","file":"sassymcp/server.py","symbol":"audit_tool","issue":"On tool failure the decorator returns a JSON string but does not set an HTTP error status code","why":"Clients receive a 200 OK with an error payload, making it easy for a malicious LLM to treat failures as successful responses and hide injection attempts","fix":"Raise an appropriate HTTP exception (e.g., from fastapi import HTTPException) or return a response object with a non‑2xx status; ensure the MCP framework propagates the error code","confidence":0.88}
-{"severity":"low","category":"concurrency","file":"sassymcp/server.py","symbol":"_setup_rate_limiter","issue":"Any exception during rate‑limiter initialization is swallowed and the server continues without rate limiting","why":"If the limiter fails (e.g., missing dependency), attackers can flood the server with tool calls, causing DoS or resource exhaustion","fix":"Fail fast on rate‑limiter init errors (raise) or fall back to a safe default limiter that enforces a minimal global limit; log the error with full traceback","confidence":0.78}
-{"severity":"medium","category":"security","file":"sassymcp-oauth/src/index.js","symbol":"handleMcpProxy","issue":"No request‑size limits are enforced when proxying to the upstream MCP server","why":"A malicious client can send arbitrarily large bodies, exhausting memory or bandwidth on the worker and upstream server (DoS)","fix":"Enforce a maximum Content‑Length (e.g., reject >5 MiB) and stream bodies with size checks before forwarding","confidence":0.84}
-{"severity":"medium","category":"security","file":"sassymcp-oauth/src/index.js","symbol":"handleMcpProxy","issue":"CORS headers allow any origin (\"*\") on the proxy endpoint","why":"If a victim’s browser is compromised, a malicious site can read the proxied MCP responses and potentially exfiltrate data or tokens","fix":"Restrict Access‑Control‑Allow‑Origin to a whitelist of trusted origins (e.g., the configured client redirect URIs) and validate the Origin header before responding","confidence":0.81}
-{"severity":"low","category":"api / idiomatic","file":"sassymcp-oauth/src/index.js","symbol":"parse_license_key","issue":"Base64 padding is naively added as \"==\" regardless of actual padding needed","why":"Malformed keys may raise exceptions, causing valid keys with non‑standard length to be rejected","fix":"Use `base64.urlsafe_b64decode` with proper padding handling (`b64 + '=' * (-len(b64) % 4)`)","confidence":0.73}
+{
+  "severity": "high",
+  "category": "SECURITY",
+  "file": "sassymcp/auth.py",
+  "symbol": "_check_file_permissions",
+  "issue": "Windows token file permission check is a no‑op, allowing world‑readable tokens.",
+  "why": "An attacker with a non‑admin account could read ~/.sassymcp/tokens.json and steal bearer tokens, enabling remote LLM clients to impersonate the user.",
+  "fix": "Implement proper Windows ACL checks (e.g., using `os.stat` and `win32security` to ensure only the owner has read access) or reject token files that are not explicitly restricted.",
+  "confidence": 0.95
+}
+{
+  "severity": "high",
+  "category": "SECURITY",
+  "file": "sassymcp/server.py",
+  "symbol": "_ensure_default_token",
+  "issue": "Bootstrap token is written to tokens.json without restrictive file permissions on Windows.",
+  "why": "The generated token may be readable by any user on the machine, allowing them to extract the bearer token and bypass authentication.",
+  "fix": "After atomic_write_json, explicitly set the file mode to 0o600 on POSIX and use `os.chmod`/Windows ACL APIs to restrict access on Windows.",
+  "confidence": 0.9
+}
+{
+  "severity": "high",
+  "category": "SECURITY",
+  "file": "sassymcp/server.py",
+  "symbol": "_print_banner",
+  "issue": "Full bearer token is emitted in the startup banner (stdout) for copy‑and‑paste.",
+  "why": "If the server is started from a script, service, or CI pipeline where stdout is logged, the token will be captured in logs, leaking credentials to any party with log access.",
+  "fix": "Only display a placeholder in the banner and require the user to retrieve the token via `sassymcp.exe show-token`; never print the raw token to stdout.",
+  "confidence": 0.92
+}
+{
+  "severity": "critical",
+  "category": "PACKAGING / INSTALL / UPDATER",
+  "file": "installer.wxs",
+  "symbol": null,
+  "issue": "All File components reference absolute source paths on the developer's machine (e.g., V:\\Projects\\SassyMCP\\dist\\Most recent extract\\...).",
+  "why": "When the MSI is built on a different machine, those source files will not exist, causing the installer to fail or embed empty files, breaking the deployment and potentially leaving a partially‑installed, vulnerable state.",
+  "fix": "Replace the absolute paths with relative paths using the Wix `Source` attribute pointing to files in the project directory (e.g., `Source='..\dist\Most recent extract\...')` and ensure the build process copies the required files into the source tree before candle/light runs.",
+  "confidence": 0.99
+}
+{
+  "severity": "high",
+  "category": "PACKAGING / INSTALL / UPDATER",
+  "file": "installer.wxs",
+  "symbol": null,
+  "issue": "The MSI is configured with `InstallScope=\"perMachine\"`, which forces elevated privileges for installation.",
+  "why": "Running the installer as admin gives the MCP server system‑wide write access, allowing any user on the machine to trigger the installer (or a malicious version) and gain elevated execution of the SassyMCP binaries, facilitating privilege escalation.",
+  "fix": "Change `InstallScope` to `perUser` (default) so the installer runs without admin rights, and only request elevation when truly necessary (e.g., when installing system services).",
+  "confidence": 0.94
+}
+{
+  "severity": "medium",
+  "category": "CONCURRENCY",
+  "file": "sassymcp/server.py",
+  "symbol": "_maybe_run_first_run_install",
+  "issue": "Spawns a detached subprocess to patch client configs without synchronisation, potentially racing with the main process’s token bootstrap.",
+  "why": "Concurrent writes to the same config files could interleave, causing corrupted JSON or loss of the generated bearer token, which may lead to authentication failures or unintended privilege exposure.",
+  "fix": "Use a file‑based lock (e.g., `fasteners.InterProcessLock`) around both the bootstrap token write and the auto‑install subprocess, or make the subprocess wait for the token file to be safely written before proceeding.",
+  "confidence": 0.85
+}
+{
+  "severity": "low",
+  "category": "CONCURRENCY",
+  "file": "sassymcp/server.py",
+  "symbol": "_setup_rate_limiter",
+  "issue": "Catches all exceptions and silently disables rate limiting by returning `None`.",
+  "why": "If the rate‑limiter fails to initialise, all tools become unthrottled, allowing an adversarial LLM client to flood the server and potentially cause denial‑of‑service.",
+  "fix": "Log the exception at `error` level and abort startup or fall back to a safe default limiter that enforces a minimal per‑group limit.",
+  "confidence": 0.78
+}
+{
+  "severity": "low",
+  "category": "SECURITY",
+  "file": "sassymcp/auth.py",
+  "symbol": "_token_format_valid",
+  "issue": "Token validation only checks printable characters and length, allowing characters such as backticks or shell‑special symbols.",
+  "why": "If a token containing shell‑meta characters is later used in a `subprocess` call (e.g., in a custom tool), it could lead to command injection when the token is interpolated into a command string.",
+  "fix": "Restrict tokens to a strict URL‑safe Base64 alphabet (`[A-Za-z0-9\-_]`) and reject any other characters.",
+  "confidence": 0.7
+}
+{
+  "severity": "low",
+  "category": "API / IDIOMATIC",
+  "file": "sassymcp/server.py",
+  "symbol": "_print_banner",
+  "issue": "Uses `f\"Bearer {token[:6]}...{token[-4:]}\"` without handling tokens shorter than 10 characters, which could expose the whole token.",
+  "why": "A short token would be displayed in full, increasing leakage risk.",
+  "fix": "Add a guard: if `len(token) < 10` display a masked placeholder instead of the full token.",
+  "confidence": 0.6
+}
+{
+  "severity": "medium",
+  "category": "SECURITY",
+  "file": "sassymcp/auth.py",
+  "symbol": "SassyTokenVerifier.verify_token",
+  "issue": "Iterates over all stored tokens for each verification, performing a timing‑safe compare for each entry.",
+  "why": "With a large number of tokens this can cause noticeable latency, potentially leading to time‑outs that an attacker could exploit to cause denial‑of‑service.",
+  "fix": "Store a hash of each token (e.g., SHA‑256) as the key and perform a single constant‑time lookup; only compare the raw token when the hash matches.",
+  "confidence": 0.8
+}
+{
+  "severity": "low",
+  "category": "CONCURRENCY",
+  "file": "sassymcp/_audit_io.py",
+  "symbol": "append_audit",
+  "issue": "On POSIX the atomic append uses `os.open` with `O_APPEND` but does not lock the file; on some NFS implementations this may not be truly atomic.",
+  "why": "Concurrent writes could interleave, corrupting the audit log and making forensic analysis unreliable.",
+  "fix": "Add an advisory file lock (`fcntl.flock`) around the write on POSIX to guarantee serialization across NFS mounts.",
+  "confidence": 0.65
+}
+{
+  "severity": "medium",
+  "category": "AUTH / OAUTH / LICENSE",
+  "file": "sassymcp-oauth/src/index.js",
+  "symbol": "handleAuthorize",
+  "issue": "The `pre_auth_secret` is compared using a custom timing‑safe function that runs in JavaScript and may be vulnerable to side‑channel attacks in the Cloudflare Workers environment.",
+  "why": "An attacker could perform a timing analysis to guess the secret, allowing unauthorized issuance of tokens.",
+  "fix": "Replace the custom `timingSafeEqual` with `crypto.subtle.digest` based constant‑time comparison (e.g., compare SHA‑256 hashes) to avoid side‑channel leakage.",
+  "confidence": 0.78
+}
 ```
+
+**Top 5 things to fix before release**
+1. **Token file permissions on Windows** – `auth._check_file_permissions` and the bootstrap routine must enforce strict ACLs; otherwise bearer tokens can be read by any user.
+2. **Full token leakage in startup banner** – `_print_banner` prints the raw bearer token to stdout, risking exposure in logs or console recordings.
+3. **Installer source paths** – `installer.wxs` uses absolute developer‑machine paths, breaking the MSI on any other machine; replace them with relative paths.
+4. **Per‑machine install scope** – The MSI forces admin rights (`InstallScope="perMachine"`); switch to per‑user to avoid unnecessary privilege escalation.
+5. **Windows token file ACL check omitted** – `_check_file_permissions` returns `True` on Windows without actually verifying file security; implement proper Windows ACL verification.
+
+**Release‑readiness verdict:** **hold** – critical security and packaging defects must be addressed before the product can be safely shipped.

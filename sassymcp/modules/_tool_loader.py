@@ -26,6 +26,7 @@ import json
 import logging
 import math
 import os
+import threading
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -148,15 +149,24 @@ class ToolUsageTracker:
             return []
 
 
-# Module-level singleton
+# Module-level singleton. Guarded by a lock so a race during server
+# startup (where module register() calls and the audit wrapper both
+# invoke get_tracker() back-to-back) can't end up with two trackers.
 _tracker: Optional[ToolUsageTracker] = None
+_TRACKER_LOCK = threading.Lock()
 
 
 def get_tracker() -> ToolUsageTracker:
     global _tracker
-    if _tracker is None:
-        _tracker = ToolUsageTracker()
-    return _tracker
+    # Fast path: already constructed — no lock needed.
+    if _tracker is not None:
+        return _tracker
+    with _TRACKER_LOCK:
+        # Double-checked: another thread may have constructed it while
+        # we were waiting on the lock.
+        if _tracker is None:
+            _tracker = ToolUsageTracker()
+        return _tracker
 
 
 # ── Tool Groups ────────────────────────────────────────────────────────

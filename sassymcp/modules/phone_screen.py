@@ -36,28 +36,46 @@ def _adb_path() -> str:
     return "adb"
 
 
+# Bound concurrent ADB invocations. A LOOP of phone-state / phone-glance
+# can fork an adb subprocess on every call; enough concurrent calls runs
+# the device service out of slots and wedges every phone tool at once.
+# Cap at 4 in flight — plenty for real use, refuses a flood.
+_ADB_SEMAPHORE = asyncio.Semaphore(4)
+
+
 async def _adb(*args, device="", timeout=15):
-    """Run an ADB command, return stdout string."""
+    """Run an ADB call, return stdout string.
+
+    Bounded by _ADB_SEMAPHORE (4 in flight). When a caller passes a
+    multi-token shell pipeline via ('shell', 'dumpsys ...', '|', 'grep ...'),
+    we glue the pipeline onto ONE argument so `adb shell` invokes the
+    device's `sh -c` — passing `|` as a separate argv element ships it
+    as a literal token, which adb does not interpret as a pipeline.
+    """
+    raw_args = list(args)
+    if raw_args and raw_args[0] == "shell" and "|" in raw_args[1:]:
+        raw_args = ["shell", " ".join(raw_args[1:])]
     cmd = [_adb_path()]
     if device:
         cmd.extend(["-s", device])
-    cmd.extend(args)
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        out = stdout.decode("utf-8", errors="replace").strip()
-        if proc.returncode != 0 and not out:
-            return stderr.decode("utf-8", errors="replace").strip()
-        return out
-    except asyncio.TimeoutError:
+    cmd.extend(raw_args)
+    async with _ADB_SEMAPHORE:
         try:
-            proc.kill()
-        except Exception:
-            pass
-        return ""
-    except FileNotFoundError:
-        return ""
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            out = stdout.decode("utf-8", errors="replace").strip()
+            if proc.returncode != 0 and not out:
+                return stderr.decode("utf-8", errors="replace").strip()
+            return out
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            return ""
+        except FileNotFoundError:
+            return ""
 
 
 def _parse_ui_xml(xml_text: str) -> list[dict]:
@@ -712,6 +730,24 @@ def register(server):
             _scrcpy_proc = None
             return "scrcpy stopped"
         return "scrcpy not running"
+
+    # Register a shutdown hook so we don't leak a scrcpy subprocess when
+    # the server exits. atexit fires after the event loop is gone, so we
+    # use a sync terminate() rather than await wait() — the process is
+    # already on its way out and we just need the device handle freed.
+    import atexit as _atexit
+
+    def _reap_scrcpy_on_exit():
+        proc = _scrcpy_proc
+        if proc is None or proc.returncode is not None:
+            return
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+        # No await/wait here — the runtime is shutting down.
+
+    _atexit.register(_reap_scrcpy_on_exit)
 
     @server.tool()
     async def sassy_scrcpy_record(output_path: str, device: str = "", time_limit: int = 30) -> str:

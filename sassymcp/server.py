@@ -107,19 +107,102 @@ def _generate_self_signed_cert():
         raise SystemExit(1)
 
 
+# ── Auth Bootstrap ────────────────────────────────────────────────────
+#
+# Holds the active bearer token (env-supplied or freshly minted) so the
+# startup banner can paste it into the copy-paste config snippet. None
+# means auth is off (SASSYMCP_NO_AUTH=1, or token bootstrap failed and
+# the user has not configured anything).
+_ACTIVE_AUTH_TOKEN: str | None = None
+
+
+def _ensure_default_token() -> str | None:
+    """First-run bootstrap so copy-paste configs work without manual setup.
+
+    Resolution order:
+      1. SASSYMCP_NO_AUTH=1                  -> return None (auth stays off)
+      2. SASSYMCP_AUTH_TOKEN env var         -> use as-is (no disk write)
+      3. tokens.json has client_id=default   -> reuse it
+      4. otherwise                           -> mint one and persist it
+
+    Returns the active token, or None if the user opted out / writing
+    tokens.json failed (in which case auth simply stays off and the
+    banner reflects that).
+    """
+    if os.environ.get("SASSYMCP_NO_AUTH") == "1":
+        return None
+
+    env_token = os.environ.get("SASSYMCP_AUTH_TOKEN")
+    if env_token:
+        return env_token
+
+    from sassymcp._paths import TOKENS_FILE
+    import secrets
+    from sassymcp._atomic import atomic_write_json
+
+    tokens_data: dict = {"tokens": []}
+    if TOKENS_FILE.exists():
+        try:
+            tokens_data = json.loads(TOKENS_FILE.read_text(encoding="utf-8"))
+            if not isinstance(tokens_data, dict) or "tokens" not in tokens_data:
+                tokens_data = {"tokens": []}
+        except Exception as e:
+            logger.warning(f"tokens.json unreadable ({e}); leaving it alone, skipping bootstrap")
+            return None
+
+    for entry in tokens_data.get("tokens", []):
+        if entry.get("client_id") == "default":
+            tok = entry.get("token")
+            if isinstance(tok, str) and len(tok) >= 16:
+                return tok
+
+    try:
+        new_token = secrets.token_urlsafe(32)
+        tokens_data.setdefault("tokens", []).append({
+            "token": new_token,
+            "client_id": "default",
+            "scopes": ["read", "write", "admin"],
+        })
+        TOKENS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(TOKENS_FILE, tokens_data)
+        if os.name == "nt":
+            from sassymcp.auth import _lockdown_windows_acl
+            _lockdown_windows_acl(TOKENS_FILE)
+        else:
+            try:
+                os.chmod(TOKENS_FILE, 0o600)
+            except OSError:
+                pass
+        logger.info(f"Bootstrapped default auth token -> {TOKENS_FILE}")
+        return new_token
+    except Exception as e:
+        logger.warning(f"Token bootstrap failed, auth will be disabled: {e}")
+        return None
+
+
 # ── Server Construction ───────────────────────────────────────────────
 
 def _build_server() -> FastMCP:
     """Construct FastMCP with optional auth."""
+    global _ACTIVE_AUTH_TOKEN
+
     # DNS-rebinding protection requires an explicit Host allowlist; without
     # one, every non-loopback Host (including a Cloudflare-tunnelled
     # hostname like mcp.example.com) returns 421. The shipped default is
-    # loopback-only, since the product runs locally on first boot. To
-    # expose this server over a tunnel or LAN, add your hostname via the
-    # SASSYMCP_ALLOWED_HOSTS env var (comma-separated), e.g.:
-    #     setx SASSYMCP_ALLOWED_HOSTS "mcp.your-domain.tld,localhost,127.0.0.1"
+    # loopback-only, since the product runs locally on first boot.
+    #
+    # The MCP SDK's TransportSecurityMiddleware does **exact-match** on the
+    # full Host header (including port). Clients send `Host: localhost:21001`,
+    # so a bare `localhost` entry never matches. We use the SDK's `:*`
+    # wildcard-port syntax to accept any port on each loopback host, while
+    # still keeping the entries port-less as a defense-in-depth fallback.
+    #
+    # To expose this server over a tunnel or LAN, add your hostname via the
+    # SASSYMCP_ALLOWED_HOSTS env var (comma-separated). Use `host:*` to
+    # allow any port, or `host:port` for an exact port. E.g.:
+    #     setx SASSYMCP_ALLOWED_HOSTS "mcp.your-domain.tld,localhost:*,127.0.0.1:*"
     # See docs/TUNNEL.md for the full Cloudflare Tunnel walk-through.
-    default_hosts = "localhost,127.0.0.1"
+    default_hosts = "localhost:*,127.0.0.1:*,localhost,127.0.0.1"
     allowed_hosts = [
         h.strip()
         for h in os.environ.get("SASSYMCP_ALLOWED_HOSTS", default_hosts).split(",")
@@ -133,7 +216,13 @@ def _build_server() -> FastMCP:
         ),
     }
 
-    # Opt-in auth: only if SASSYMCP_AUTH_TOKEN or ~/.sassymcp/tokens.json exists
+    # First-run bootstrap: ensure a default bearer token exists so the
+    # snippet printed by the startup banner is paste-and-go for Claude
+    # Desktop, Claude Code, VS Code, Cursor, etc. Sets the module-level
+    # _ACTIVE_AUTH_TOKEN so _print_banner can render the Authorization
+    # header without re-reading tokens.json.
+    _ACTIVE_AUTH_TOKEN = _ensure_default_token()
+
     # FAIL CLOSED: if auth is configured but broken, refuse to start.
     from sassymcp.auth import get_auth_config
     auth_config = get_auth_config()
@@ -198,7 +287,13 @@ def _import_module(name: str):
 # ── Rate Limiter Setup ────────────────────────────────────────────────
 
 def _setup_rate_limiter():
-    """Configure per-group rate limits from TOOL_GROUPS."""
+    """Configure per-group rate limits from TOOL_GROUPS.
+
+    Logs at error level if setup fails so an operator noticing the
+    miss in the logs knows there's no concurrency cap any more. The
+    server still starts (rate limiting is a defense-in-depth layer,
+    not the auth boundary), but the failure is loud rather than silent.
+    """
     try:
         from sassymcp.modules._rate_limiter import get_limiter
         limiter = get_limiter()
@@ -210,7 +305,10 @@ def _setup_rate_limiter():
             )
         return limiter
     except Exception as e:
-        logger.warning(f"Rate limiter setup failed (non-fatal): {e}")
+        logger.error(
+            f"Rate limiter setup failed; tools will run UNTHROTTLED: {e}. "
+            "Investigate before exposing this instance over a tunnel or LAN."
+        )
         return None
 
 
@@ -569,38 +667,115 @@ def _format_update_line(update_info) -> str | None:
     return None
 
 
-def _print_banner(tool_count, host, port, first_run, update_info=None):
-    """Print a human-readable startup banner with connection instructions."""
-    url = f"http://{host}:{port}"
+def _print_banner(tool_count, host, port, first_run, *, transport="http",
+                  scheme="http", token: str | None = None, update_info=None):
+    """Print a human-readable startup banner with paste-and-go config snippets.
+
+    The snippet matches the current Claude Code / Claude Desktop / VS Code
+    Copilot / Cursor MCP shape:
+
+        {
+          "mcpServers": {
+            "sassymcp": {
+              "type": "http",
+              "url": "...",
+              "headers": {"Authorization": "Bearer ..."}
+            }
+          }
+        }
+
+    When `token` is provided, the `headers` block is emitted with the
+    real bearer value (NOT a placeholder), so the snippet works on the
+    first paste. When `token` is None, auth is off and the headers block
+    is omitted.
+    """
+    from sassymcp._paths import TOKENS_FILE
+    url = f"{scheme}://{host}:{port}"
+    endpoint = f"{url}/mcp/"
+    typ = "sse" if transport == "sse" else "http"
+
+    bar = "=" * 62
     print(flush=True)
-    print("  ==============================================================", flush=True)
+    print(f"  {bar}", flush=True)
     print(f"   SassyMCP v{__version__}  |  {tool_count} tools  |  Ready", flush=True)
     update_line = _format_update_line(update_info)
     if update_line:
         print(f"   {update_line}", flush=True)
-    print("  ==============================================================", flush=True)
+    print(f"  {bar}", flush=True)
     print(flush=True)
-    print(f"   MCP endpoint:  {url}/mcp/", flush=True)
+    print(f"   MCP endpoint:  {endpoint}", flush=True)
+    if token:
+        # For pathologically short tokens (shouldn't happen — our minimum
+        # is 16 — but a future caller could pass a custom value), avoid
+        # dumping the whole thing in the preview line. The full token
+        # still appears in the copy-paste snippet below where it's needed.
+        if len(token) >= 12:
+            preview = f"{token[:6]}...{token[-4:]}"
+        else:
+            preview = "*" * len(token)
+        print(f"   Auth:          Bearer {preview}  (full token in snippet below)", flush=True)
+    else:
+        print("   Auth:          disabled  (SASSYMCP_NO_AUTH=1 or token bootstrap failed)", flush=True)
+
+    # Surface insecure-auth situation in the banner too — the warning
+    # already went to the log, but the banner is what a person sees.
+    _is_loopback = host in ("127.0.0.1", "localhost", "::1")
+    if token and not _is_loopback and scheme == "http":
+        print("   ! INSECURE: bearer auth over plain HTTP on a non-loopback host.", flush=True)
+        print("     Make sure TLS is terminated upstream (Cloudflare Tunnel,", flush=True)
+        print("     reverse proxy) before sharing this snippet with anyone.", flush=True)
+    elif scheme == "https":
+        print("   TLS:           self-signed cert (clients may need to trust it on first connect)", flush=True)
     print(flush=True)
-    print("   Connect from any MCP client (Claude Desktop, Cursor, Windsurf,", flush=True)
-    print("   Cline, Grok Desktop, Continue, custom). Add to your client's", flush=True)
-    print("   MCP config (most clients use the `mcpServers` shape below):", flush=True)
+
+    # ── 1. Claude Code CLI one-liner ────────────────────────────────────
+    print("   Claude Code (CLI):", flush=True)
+    if token:
+        print(f'     claude mcp add --transport http sassymcp {endpoint} \\', flush=True)
+        print(f'       --header "Authorization: Bearer {token}"', flush=True)
+    else:
+        print(f"     claude mcp add --transport http sassymcp {endpoint}", flush=True)
     print(flush=True)
-    print('     {', flush=True)
+
+    # ── 2. JSON snippet for Claude Desktop / VS Code / Cursor / Windsurf ─
+    print("   Claude Desktop / VS Code / Cursor / Windsurf (paste into config):", flush=True)
+    print("     {", flush=True)
     print('       "mcpServers": {', flush=True)
     print('         "sassymcp": {', flush=True)
-    print(f'           "url": "{url}/mcp/"', flush=True)
+    print(f'           "type": "{typ}",', flush=True)
+    if token:
+        print(f'           "url": "{endpoint}",', flush=True)
+        print('           "headers": {', flush=True)
+        print(f'             "Authorization": "Bearer {token}"', flush=True)
+        print('           }', flush=True)
+    else:
+        print(f'           "url": "{endpoint}"', flush=True)
     print('         }', flush=True)
     print('       }', flush=True)
     print('     }', flush=True)
     print(flush=True)
-    print("   Templates for popular clients ship in deploy/*_config.template.json.", flush=True)
+    print("   (VS Code mcp.json uses the same shape under \"servers\" instead of \"mcpServers\".)", flush=True)
     print(flush=True)
-    if first_run:
-        print("   ** FIRST RUN: After connecting, ask the AI to run the setup", flush=True)
-        print("      wizard:  \"Run sassy_setup_wizard to set up my profile\"", flush=True)
+
+    # ── 3. Token management ─────────────────────────────────────────────
+    if token:
+        print("   Token management:", flush=True)
+        print(f"     stored in:  {TOKENS_FILE}", flush=True)
+        print("     rotate:     sassymcp.exe generate-token --client-id default", flush=True)
+        print("     show:       sassymcp.exe show-token", flush=True)
+        print("     disable:    set SASSYMCP_NO_AUTH=1 and restart", flush=True)
         print(flush=True)
-    print("  ==============================================================", flush=True)
+
+    # ── 4. Auto-patch every installed MCP client ────────────────────────
+    print("   Auto-register with every installed MCP client (idempotent):", flush=True)
+    print("     sassymcp.exe install", flush=True)
+    print(flush=True)
+
+    if first_run:
+        print("   ** FIRST RUN: After connecting, ask the AI:", flush=True)
+        print('        "Run sassy_setup_wizard to set up my profile"', flush=True)
+        print(flush=True)
+    print(f"  {bar}", flush=True)
     print(flush=True)
 
 
@@ -610,8 +785,11 @@ def _maybe_run_first_run_install():
     Windsurf etc. all see sassymcp without manual JSON editing.
 
     Idempotent: a marker file at ~/.sassymcp/.installed-other-clients
-    prevents re-runs. The subprocess is detached; if it fails or hangs we
-    do not block server startup.
+    prevents re-runs. The marker is created BEFORE we spawn the
+    installer, atomically via O_EXCL, so two concurrent first-run
+    invocations (e.g., DXT first-run AND a manual launch within the same
+    second) can't both spawn the installer subprocess. The subprocess is
+    detached; if it fails or hangs we do not block server startup.
     """
     from sassymcp._paths import HOME as _SASSY_HOME
     marker = _SASSY_HOME / ".installed-other-clients"
@@ -619,7 +797,13 @@ def _maybe_run_first_run_install():
         return
     try:
         _SASSY_HOME.mkdir(parents=True, exist_ok=True)
-        marker.touch()
+        # O_EXCL gives a single-winner semantic: only the process that
+        # successfully creates the marker proceeds to spawn the
+        # installer. Everyone else sees FileExistsError and returns.
+        fd = os.open(str(marker), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        os.close(fd)
+    except FileExistsError:
+        return  # another process won the race
     except OSError:
         return  # filesystem hostile, skip silently
 
@@ -648,10 +832,188 @@ def _maybe_run_first_run_install():
         pass  # never block startup on auto-install
 
 
+# ── CLI subcommands (token / install) ─────────────────────────────────
+#
+# The exe also doubles as a Swiss-army knife: `sassymcp.exe install`
+# patches every detected MCP client, `sassymcp.exe generate-token` mints
+# a fresh bearer (or rotates an existing one), `sassymcp.exe show-token`
+# prints the active one. These run BEFORE the server starts and exit on
+# their own — they never touch the FastMCP instance or load modules, so
+# they're safe to call from a fresh box.
+
+def _cli_generate_token(argv: list[str]) -> int:
+    """`sassymcp.exe generate-token` — create or rotate a bearer token."""
+    import argparse
+    import secrets
+    from sassymcp._paths import TOKENS_FILE
+    from sassymcp._atomic import atomic_write_json
+
+    p = argparse.ArgumentParser(
+        prog="sassymcp generate-token",
+        description="Create or rotate a SassyMCP bearer token.",
+    )
+    p.add_argument("--client-id", default="default",
+                   help="client identifier (default: 'default')")
+    p.add_argument("--scopes", default="read,write,admin",
+                   help="comma-separated scopes (default: read,write,admin)")
+    p.add_argument("--json", action="store_true",
+                   help="emit machine-readable JSON")
+    args = p.parse_args(argv)
+
+    scope_list = [s.strip() for s in args.scopes.split(",") if s.strip()]
+    token = secrets.token_urlsafe(32)
+
+    tokens_data: dict = {"tokens": []}
+    if TOKENS_FILE.exists():
+        try:
+            tokens_data = json.loads(TOKENS_FILE.read_text(encoding="utf-8"))
+            if not isinstance(tokens_data, dict) or "tokens" not in tokens_data:
+                tokens_data = {"tokens": []}
+        except Exception as e:
+            print(f"Error: tokens.json is corrupt ({e}). Move it aside and retry.",
+                  file=sys.stderr)
+            return 2
+
+    tokens_data["tokens"] = [
+        t for t in tokens_data.get("tokens", [])
+        if t.get("client_id") != args.client_id
+    ]
+    tokens_data["tokens"].append({
+        "token": token,
+        "client_id": args.client_id,
+        "scopes": scope_list,
+    })
+
+    try:
+        TOKENS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(TOKENS_FILE, tokens_data)
+        if os.name == "nt":
+            from sassymcp.auth import _lockdown_windows_acl
+            _lockdown_windows_acl(TOKENS_FILE)
+        else:
+            os.chmod(TOKENS_FILE, 0o600)
+    except Exception as e:
+        print(f"Error writing {TOKENS_FILE}: {e}", file=sys.stderr)
+        return 1
+
+    if args.json:
+        print(json.dumps({
+            "token": token,
+            "client_id": args.client_id,
+            "scopes": scope_list,
+            "saved_to": str(TOKENS_FILE),
+            "header": f"Authorization: Bearer {token}",
+        }, indent=2))
+    else:
+        print(f"Token created for client_id={args.client_id!r}, scopes={scope_list}")
+        print(f"Saved to: {TOKENS_FILE}")
+        print()
+        print(f"  Authorization: Bearer {token}")
+        print()
+        print("Paste this header into your MCP client config.")
+        print("Restart sassymcp.exe so the running server picks it up.")
+    return 0
+
+
+def _cli_show_token(argv: list[str]) -> int:
+    """`sassymcp.exe show-token` — print existing tokens (or just the default)."""
+    import argparse
+    from sassymcp._paths import TOKENS_FILE
+
+    p = argparse.ArgumentParser(
+        prog="sassymcp show-token",
+        description="Print SassyMCP bearer token(s) stored on disk.",
+    )
+    p.add_argument("--client-id", default="default",
+                   help="show only this client_id (default: 'default'). "
+                        "Pass --all to dump every entry.")
+    p.add_argument("--all", action="store_true",
+                   help="dump every token entry (raw JSON)")
+    p.add_argument("--json", action="store_true",
+                   help="emit machine-readable JSON")
+    args = p.parse_args(argv)
+
+    env_token = os.environ.get("SASSYMCP_AUTH_TOKEN")
+    if env_token:
+        if args.json:
+            print(json.dumps({"source": "SASSYMCP_AUTH_TOKEN", "token": env_token}, indent=2))
+        else:
+            print("Source: SASSYMCP_AUTH_TOKEN env var (overrides tokens.json)")
+            print(f"Token:  {env_token}")
+        return 0
+
+    if not TOKENS_FILE.exists():
+        msg = f"No tokens.json at {TOKENS_FILE}. Run: sassymcp.exe generate-token"
+        if args.json:
+            print(json.dumps({"error": msg}, indent=2))
+        else:
+            print(msg, file=sys.stderr)
+        return 1
+
+    try:
+        data = json.loads(TOKENS_FILE.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"Error: tokens.json is corrupt ({e})", file=sys.stderr)
+        return 2
+
+    entries = data.get("tokens", []) if isinstance(data, dict) else []
+    if args.all:
+        out = entries
+    else:
+        out = [t for t in entries if t.get("client_id") == args.client_id]
+        if not out:
+            msg = f"No token found for client_id={args.client_id!r}. Run: sassymcp.exe generate-token"
+            if args.json:
+                print(json.dumps({"error": msg}, indent=2))
+            else:
+                print(msg, file=sys.stderr)
+            return 1
+
+    if args.json:
+        print(json.dumps(out, indent=2))
+    else:
+        for t in out:
+            print(f"client_id: {t.get('client_id')}")
+            print(f"scopes:    {t.get('scopes')}")
+            print(f"token:     {t.get('token')}")
+            print()
+        print(f"(stored in {TOKENS_FILE})")
+    return 0
+
+
+def _dispatch_subcommand() -> int | None:
+    """Sniff argv[1] for a subcommand before argparse takes over.
+
+    Returns an exit code if a subcommand handled the invocation, otherwise
+    None (meaning fall through to the server's own argparse).
+    """
+    if len(sys.argv) < 2:
+        return None
+    sub = sys.argv[1]
+    if sub == "generate-token":
+        return _cli_generate_token(sys.argv[2:])
+    if sub == "show-token":
+        return _cli_show_token(sys.argv[2:])
+    if sub == "install":
+        from sassymcp.install import main as _install_main
+        return _install_main(sys.argv[2:])
+    return None
+
+
 def main():
+    # Subcommand dispatch happens before argparse so `sassymcp.exe install
+    # --client cursor` reaches install.main() with its own argparse intact.
+    rc = _dispatch_subcommand()
+    if rc is not None:
+        sys.exit(rc)
+
     import argparse
 
-    parser = argparse.ArgumentParser(description=f"SassyMCP Server v{__version__}")
+    parser = argparse.ArgumentParser(
+        description=f"SassyMCP Server v{__version__}",
+        epilog="Subcommands: install | generate-token | show-token  "
+               "(e.g. `sassymcp.exe generate-token --help`)",
+    )
     parser.add_argument(
         "--http", "--serve", action="store_true",
         help="Run as HTTP server (auto-detected when launched interactively)",
@@ -665,11 +1027,18 @@ def main():
     parser.add_argument("--setup", action="store_true",
                         help="Force first-run setup wizard (regenerate persona.md)")
     parser.add_argument("--ssl", action="store_true",
-                        help="Enable HTTPS with self-signed cert ($SASSYMCP_HOME/server.crt/key)")
+                        help="Enable HTTPS with self-signed cert ($SASSYMCP_HOME/server.crt/key). "
+                             "Auto-enabled when bearer auth is active AND --host is non-loopback "
+                             "(bearer tokens MUST NOT cross the wire in plaintext).")
     parser.add_argument("--ssl-cert", default="",
                         help="Path to SSL certificate file (default: $SASSYMCP_HOME/server.crt)")
     parser.add_argument("--ssl-key", default="",
                         help="Path to SSL key file (default: $SASSYMCP_HOME/server.key)")
+    parser.add_argument("--insecure-auth", action="store_true",
+                        help="Allow bearer auth over plain HTTP on non-loopback hosts. "
+                             "Only set this if TLS is terminated upstream (e.g. Cloudflare "
+                             "Tunnel, an ingress controller, or a reverse proxy). Otherwise "
+                             "your token leaks on the network.")
     args = parser.parse_args()
 
     _maybe_run_first_run_install()
@@ -723,6 +1092,34 @@ def main():
         mcp.run()
     else:
         import uvicorn
+
+        # ── TLS policy ──────────────────────────────────────────────────
+        # Bearer tokens over plain HTTP are safe ONLY on the loopback
+        # interface (the packets never touch the network). On any other
+        # bind address — 0.0.0.0, a LAN IP, a public IP — the bearer
+        # rides the wire in cleartext and any passive sniffer captures it.
+        # So: when auth is on AND host is non-loopback, auto-enable TLS
+        # (self-signed cert is regenerated below). If the user explicitly
+        # passed --insecure-auth, we honor that (their tunnel/proxy is
+        # presumably handling TLS upstream) but log a loud warning.
+        _LOOPBACK = {"127.0.0.1", "localhost", "::1"}
+        host_is_loopback = args.host in _LOOPBACK
+        if _ACTIVE_AUTH_TOKEN and not host_is_loopback and not args.ssl:
+            if args.insecure_auth:
+                logger.warning(
+                    f"--insecure-auth: bearer token over plain HTTP on "
+                    f"{args.host}. Assuming TLS is terminated upstream "
+                    f"(Cloudflare Tunnel / reverse proxy). If not, your "
+                    f"token is leaking on the network."
+                )
+            else:
+                logger.warning(
+                    f"Bearer auth active on non-loopback host {args.host} — "
+                    f"auto-enabling --ssl. Pass --insecure-auth to override "
+                    f"(only if TLS is handled upstream)."
+                )
+                args.ssl = True
+
         if args.sse:
             logger.info(f"Starting SassyMCP (SSE) on {args.host}:{args.port}")
             app = mcp.sse_app()
@@ -748,7 +1145,13 @@ def main():
             logger.info(f"SSL enabled: cert={ssl_cert}")
 
         # Print human-readable banner with connection instructions
-        _print_banner(tool_count, args.host, args.port, first_run or args.setup, update_info=update_info)
+        _print_banner(
+            tool_count, args.host, args.port, first_run or args.setup,
+            transport="sse" if args.sse else "http",
+            scheme="https" if args.ssl else "http",
+            token=_ACTIVE_AUTH_TOKEN,
+            update_info=update_info,
+        )
 
         uvicorn.run(app, **uvicorn_kwargs)
 

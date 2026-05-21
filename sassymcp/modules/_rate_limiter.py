@@ -42,38 +42,67 @@ class TokenBucket:
 
 
 class GroupRateLimiter:
-    """Per-group concurrency and rate limiting."""
+    """Per-group concurrency and rate limiting.
+
+    Two dicts on purpose:
+      _configs    — group_name -> int max_concurrent  (set at configure time)
+      _semaphores — group_name -> asyncio.BoundedSemaphore (created lazily)
+
+    Splitting them out fixes a race the old design had: storing the
+    config int in _semaphores meant two concurrent configure_group calls
+    for the same group could both see "not present" and write competing
+    semaphores. With separate dicts plus a lock guarding the lazy
+    create_semaphore step, only one semaphore is ever instantiated per
+    group regardless of caller interleaving.
+    """
 
     def __init__(self):
-        self._semaphores: dict[str, asyncio.Semaphore] = {}
+        self._configs: dict[str, int] = {}
+        self._semaphores: dict[str, asyncio.BoundedSemaphore] = {}
         self._buckets: dict[str, TokenBucket] = {}
+        # threading.Lock — configure_group and _get_semaphore can be
+        # called from worker threads (audit wrapper) and from coroutines
+        # alike. The critical section is dict-mutation only; no I/O.
+        import threading
+        self._lock = threading.Lock()
 
     def configure_group(self, group_name: str, max_concurrent: int = 10, calls_per_minute: int = 120):
         """Set up limits for a group. Safe to call multiple times.
 
-        Note: Semaphores are created lazily on first acquire() to ensure
-        they are bound to the correct event loop (uvicorn's).
+        Concurrency-safe: writes under a lock so racing callers can't
+        produce two semaphores for the same group. The semaphore itself
+        is still created lazily inside _get_semaphore() — that has to
+        happen on the loop the audit wrapper actually awaits on.
         """
-        if group_name not in self._semaphores:
-            # Store config, create semaphore lazily in acquire()
-            self._semaphores[group_name] = max_concurrent  # store int, create lazily
-        if group_name not in self._buckets:
-            self._buckets[group_name] = TokenBucket(
-                rate=calls_per_minute / 60.0,
-                capacity=max(calls_per_minute // 6, 5),  # 10-second burst window
-            )
+        with self._lock:
+            if group_name not in self._configs:
+                self._configs[group_name] = max_concurrent
+            if group_name not in self._buckets:
+                self._buckets[group_name] = TokenBucket(
+                    rate=calls_per_minute / 60.0,
+                    capacity=max(calls_per_minute // 6, 5),  # 10-second burst window
+                )
 
     def _get_semaphore(self, group_name: str) -> Optional[asyncio.BoundedSemaphore]:
-        """Get or lazily create BoundedSemaphore for a group."""
-        val = self._semaphores.get(group_name)
-        if val is None:
-            return None
-        if isinstance(val, int):
-            # Lazy creation — now we're inside the event loop
-            sem = asyncio.BoundedSemaphore(val)
+        """Get or lazily create BoundedSemaphore for a group.
+
+        Called from inside the running event loop. The lock ensures only
+        one semaphore is constructed even if multiple coroutines race
+        the first call for a group.
+        """
+        sem = self._semaphores.get(group_name)
+        if sem is not None:
+            return sem
+        with self._lock:
+            sem = self._semaphores.get(group_name)
+            if sem is not None:
+                return sem
+            cfg = self._configs.get(group_name)
+            if cfg is None:
+                return None
+            sem = asyncio.BoundedSemaphore(cfg)
             self._semaphores[group_name] = sem
             return sem
-        return val
 
     async def acquire(self, group_name: str, timeout: float = 30.0) -> bool:
         """Acquire both concurrency slot and rate token for a group.
@@ -107,7 +136,7 @@ class GroupRateLimiter:
     def release(self, group_name: str):
         """Release concurrency slot for a group."""
         sem = self._semaphores.get(group_name)
-        if sem is not None and isinstance(sem, asyncio.BoundedSemaphore):
+        if sem is not None:
             try:
                 sem.release()
             except ValueError:

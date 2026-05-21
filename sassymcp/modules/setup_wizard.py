@@ -416,9 +416,18 @@ def register(server):
 
         atomic_write_json(_TOKENS_FILE, tokens_data)
 
-        # Set restrictive permissions on Unix
-        if os.name != "nt":
-            os.chmod(_TOKENS_FILE, 0o600)
+        # Lock down DACL/permissions so the file is owner-only.
+        if os.name == "nt":
+            try:
+                from sassymcp.auth import _lockdown_windows_acl
+                _lockdown_windows_acl(_TOKENS_FILE)
+            except Exception as _e:
+                logger.warning(f"Windows ACL lockdown skipped: {_e}")
+        else:
+            try:
+                os.chmod(_TOKENS_FILE, 0o600)
+            except OSError as _e:
+                logger.warning(f"chmod 0600 on tokens.json failed: {_e}")
 
         return json.dumps({
             "token": token,
@@ -546,13 +555,22 @@ def register(server):
         host: str = "",
         user: str = "",
         password: str = "",
+        key: str = "",
+        session: str = "",
     ) -> str:
         """Guide SSH/Linux remote setup. Checks plink, saves creds, tests connection.
 
         action: check | save | test | skip
-        host: SSH hostname or IP (for save action)
-        user: SSH username (for save action)
-        password: SSH password (for save action)
+        host:     SSH hostname or IP                (for save action)
+        user:     SSH username                      (for save action)
+        password: SSH password                      (optional; fed via stdin
+                  at test time, not on the argv list)
+        key:      path to a .ppk private key        (preferred over password)
+        session:  saved PuTTY session name          (carries host+user+key)
+
+        Authentication priority at test time: session > key > Pageant >
+        password-via-stdin. Pass at least ONE auth source on save, otherwise
+        the call returns status=incomplete (no false 'saved' on empty creds).
         """
         import shutil
 
@@ -572,6 +590,9 @@ def register(server):
             ssh_host = os.environ.get("SSH_HOST")
             ssh_user = os.environ.get("SSH_USER")
             ssh_pass = os.environ.get("SSH_PASS")
+            ssh_key = os.environ.get("SSH_KEY")
+            ssh_session = os.environ.get("SSH_SESSION")
+            has_auth = bool(ssh_session or ssh_key or ssh_pass)
             return json.dumps({
                 "plink_found": plink is not None,
                 "plink_path": plink,
@@ -579,30 +600,73 @@ def register(server):
                 "ssh_host_set": bool(ssh_host),
                 "ssh_user_set": bool(ssh_user),
                 "ssh_pass_set": bool(ssh_pass),
-                "configured": bool(ssh_host and ssh_user and ssh_pass),
-                "hint": "Use action=save with host, user, password to configure." if not (ssh_host and ssh_user) else "SSH configured. Use action=test to verify.",
+                "ssh_key_set": bool(ssh_key),
+                "ssh_session_set": bool(ssh_session),
+                "configured": bool((ssh_session or (ssh_host and ssh_user)) and has_auth),
+                "hint": (
+                    "SSH configured. Use action=test to verify."
+                    if (ssh_session or (ssh_host and ssh_user and has_auth))
+                    else "Use action=save with host+user and AT LEAST ONE of: key, session, password."
+                ),
             })
 
         elif action == "save":
-            if not host or not user:
-                return json.dumps({"error": "Provide host and user parameters. password is also required for plink."})
-            os.environ["SSH_HOST"] = host
-            os.environ["SSH_USER"] = user
+            # A saved PuTTY session carries host+user+key in its own config,
+            # so session alone is a complete configuration. Otherwise we
+            # need host+user PLUS one of (key, password, session).
+            if not session and (not host or not user):
+                return json.dumps({
+                    "status": "incomplete",
+                    "error": "Provide host+user (or set session=<putty-session-name>).",
+                })
+            if not session and not key and not password:
+                return json.dumps({
+                    "status": "incomplete",
+                    "error": (
+                        "No auth source provided. Pass exactly one of: "
+                        "key=<path-to-.ppk>, password=<...>, session=<name>."
+                    ),
+                    "hint": (
+                        "Key-based auth is strongly preferred — your remote "
+                        "may refuse password auth (publickey-only config)."
+                    ),
+                })
+
+            if host:
+                os.environ["SSH_HOST"] = host
+            if user:
+                os.environ["SSH_USER"] = user
             if password:
                 os.environ["SSH_PASS"] = password
+            if key:
+                os.environ["SSH_KEY"] = key
+            if session:
+                os.environ["SSH_SESSION"] = session
 
             config["ssh_configured"] = True
-            config["ssh_host"] = host
-            config["ssh_user"] = user
+            config["ssh_host"] = host or config.get("ssh_host", "")
+            config["ssh_user"] = user or config.get("ssh_user", "")
+            config["ssh_auth_mode"] = (
+                "session" if session
+                else ("key" if key else "password")
+            )
             config["ssh_configured_at"] = time.strftime('%Y-%m-%d %H:%M')
             _save_config(config)
 
             return json.dumps({
                 "status": "saved",
-                "host": host,
-                "user": user,
+                "host": host or config.get("ssh_host"),
+                "user": user or config.get("ssh_user"),
+                "auth_mode": config["ssh_auth_mode"],
+                "key_set": bool(key),
+                "session_set": bool(session),
                 "password_set": bool(password),
-                "note": "Credentials active for this session. To persist, set SSH_HOST/SSH_USER/SSH_PASS in system env or MCP client config.",
+                "note": (
+                    "Credentials active for this session. To persist across "
+                    "restarts, set the matching SSH_HOST/SSH_USER/SSH_KEY/"
+                    "SSH_SESSION/SSH_PASS env vars in your system env or "
+                    "MCP client config."
+                ),
                 "next": "Use action=test to verify the connection.",
             })
 
@@ -610,19 +674,52 @@ def register(server):
             ssh_host = os.environ.get("SSH_HOST")
             ssh_user = os.environ.get("SSH_USER")
             ssh_pass = os.environ.get("SSH_PASS")
-            if not all([ssh_host, ssh_user, ssh_pass]):
-                return json.dumps({"error": "SSH credentials not set. Use action=save first."})
+            ssh_key = os.environ.get("SSH_KEY")
+            ssh_session = os.environ.get("SSH_SESSION")
+            if not (ssh_session or (ssh_host and ssh_user)):
+                return json.dumps({"error": "SSH_HOST/SSH_USER (or SSH_SESSION) not set. Use action=save first."})
+            if not (ssh_session or ssh_key or ssh_pass):
+                return json.dumps({"error": "No SSH auth source set (need SSH_KEY, SSH_SESSION, or SSH_PASS). Use action=save first."})
             if not plink:
                 return json.dumps({"error": "plink not found. Install PuTTY: https://www.chiark.greenend.org.uk/~sgtatham/putty/latest.html"})
             try:
                 import asyncio as _asyncio
+
+                # Mirror linux._ssh_exec_stream's resolution so the test
+                # validates the same path real calls use. Password goes
+                # via stdin so it isn't visible in the process list.
+                argv: list[str] = [plink, "-ssh", "-batch"]
+                stdin_payload: bytes | None = None
+                if ssh_session:
+                    argv += ["-load", ssh_session]
+                    if ssh_host and ssh_user:
+                        argv.append(f"{ssh_user}@{ssh_host}")
+                    elif ssh_host:
+                        argv.append(ssh_host)
+                else:
+                    if ssh_key:
+                        argv += ["-i", ssh_key]
+                    elif ssh_pass:
+                        stdin_payload = (ssh_pass + "\n").encode("utf-8")
+                    argv.append(f"{ssh_user}@{ssh_host}")
+                argv += ["echo", "SassyMCP_SSH_OK"]
+
                 proc = await _asyncio.create_subprocess_exec(
-                    plink, "-ssh", "-pw", ssh_pass, "-batch", f"{ssh_user}@{ssh_host}", "echo", "SassyMCP_SSH_OK",
-                    stdout=_asyncio.subprocess.PIPE, stderr=_asyncio.subprocess.PIPE)
+                    *argv,
+                    stdin=_asyncio.subprocess.PIPE if stdin_payload is not None else _asyncio.subprocess.DEVNULL,
+                    stdout=_asyncio.subprocess.PIPE,
+                    stderr=_asyncio.subprocess.PIPE)
+                if stdin_payload is not None:
+                    try:
+                        proc.stdin.write(stdin_payload)
+                        await proc.stdin.drain()
+                        proc.stdin.close()
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass
                 stdout, stderr = await _asyncio.wait_for(proc.communicate(), timeout=15)
                 out = stdout.decode("utf-8", errors="replace").strip()
                 if "SassyMCP_SSH_OK" in out:
-                    return json.dumps({"status": "connected", "host": ssh_host, "user": ssh_user, "output": out})
+                    return json.dumps({"status": "connected", "host": ssh_host or "(session)", "user": ssh_user or "(session)", "output": out})
                 return json.dumps({"status": "failed", "stdout": out, "stderr": stderr.decode("utf-8", errors="replace").strip()})
             except Exception as e:
                 return json.dumps({"status": "error", "error": str(e)})

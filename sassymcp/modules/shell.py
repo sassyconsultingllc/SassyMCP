@@ -210,6 +210,52 @@ def _normalize_for_powershell(command: str) -> str:
     return command
 
 
+# Native EXEs whose stderr PowerShell -Command tends to surface as
+# error records rather than ordinary stderr bytes, with the side effect
+# that the bytes can be dropped when we capture via the subprocess pipe.
+# When we detect the command begins with one of these, we wrap the call
+# with `& exe args 2>&1` and route through Out-String so every byte the
+# program produces ends up on stdout in a form PowerShell forwards
+# verbatim. This is the workaround for the "ssh.exe returns [exit:0]
+# with empty stdout/stderr" class of bug.
+_NATIVE_EXE_PREFIXES = (
+    "ssh.exe", "ssh ", "scp.exe", "scp ", "plink.exe", "plink ",
+    "git.exe", "git ", "curl.exe", "curl ", "wget.exe", "wget ",
+    "rclone.exe", "rclone ", "rsync.exe", "rsync ",
+    "openssl.exe", "openssl ", "adb.exe", "adb ", "node.exe", "node ",
+    "python.exe", "python ", "ssh-add.exe", "ssh-add ", "nmap.exe", "nmap ",
+)
+
+
+def _looks_like_bare_native_exe(command: str) -> bool:
+    """True when `command` starts with a known native-EXE name and looks
+    like a bare invocation (no `&` operator, no pipeline, no script).
+    Used to decide whether to wrap with `2>&1 | Out-String`."""
+    lower = command.lstrip().lower()
+    if any(lower.startswith(p) for p in _NATIVE_EXE_PREFIXES):
+        # Skip wrapping if the caller already piped, redirected, or used
+        # the call operator — they know what they're doing.
+        if "|" in command or ">" in command or command.lstrip().startswith("&"):
+            return False
+        return True
+    return False
+
+
+def _wrap_native_for_powershell(command: str) -> str:
+    """Wrap a native-EXE call so PowerShell forwards stdout AND stderr
+    bytes verbatim into the subprocess pipe.
+
+    `& <exe> <args> 2>&1 | Out-String -Stream` forces every line of
+    output (including stderr) onto stdout as plain strings, which
+    PowerShell -Command then prints. Without this, ssh.exe -v style
+    diagnostics can vanish: PowerShell sees them as error records and
+    routes them through $ErrorActionPreference, which may suppress them
+    before they reach our pipe.
+    """
+    stripped = command.lstrip()
+    return f"& {stripped} 2>&1 | Out-String -Stream"
+
+
 async def _auto_promote_to_session(shell: str, command: str, requested_timeout: int) -> str:
     """Spawn a background session for a long-running command and return a JSON handle.
 
@@ -264,6 +310,21 @@ async def _run_subprocess(shell: str, command: str, timeout_seconds: int) -> str
     timeout_seconds = min(max(timeout_seconds, 1), _MAX_TIMEOUT)
     if shell == "powershell":
         command = _normalize_for_powershell(command)
+        # Native EXEs (ssh, git, curl, ...) routinely write diagnostics
+        # to stderr. PowerShell -Command can surface those bytes as
+        # ErrorRecord objects that bypass our stderr pipe under certain
+        # $ErrorActionPreference values. Wrapping with the call operator
+        # plus stream-merge + Out-String forces every line back onto
+        # stdout as plain text, which is what we actually capture.
+        if _looks_like_bare_native_exe(command):
+            command = _wrap_native_for_powershell(command)
+    elif shell == "cmd":
+        # cmd /c handles its own redirection, but stderr from a child
+        # native binary can be silently lost when the parent has no
+        # console attached. Belt-and-braces: merge stderr into stdout
+        # only when the caller hasn't already directed either stream.
+        if ">" not in command and "2>" not in command:
+            command = command + " 2>&1"
     cmd = _SHELL_MAP[shell] + [command]
     proc = None
     try:
@@ -388,15 +449,31 @@ def register(server):
                 targets = _parse_delete_targets(command)
                 return await _safe_move_to_staging(targets, keyword, command)
 
-            # Pattern match. allow_pattern wildcard / matching label is the
-            # explicit opt-in bypass (logged as pattern_bypass). Otherwise
-            # tier-based policy applies.
-            if allow_pattern and (allow_pattern == keyword or allow_pattern == "*"):
+            # Pattern match. allow_pattern with a SPECIFIC label is the
+            # explicit opt-in bypass (logged as pattern_bypass). The legacy
+            # '*' wildcard let an LLM bypass the entire pattern blocklist
+            # in one call, which defeated the gate it was meant to provide
+            # an escape hatch around — removed. Callers must name the
+            # exact label they want to override.
+            if allow_pattern and allow_pattern == keyword:
                 _audit.log_pattern_event(
                     "pattern_bypass", "sassy_shell", keyword, command,
                     {"allow_pattern": allow_pattern},
                 )
                 # fall through to execution
+            elif allow_pattern == "*":
+                # Loud refusal so the LLM gets a clear diagnostic and a
+                # specific label to retry with, rather than silent failure.
+                _audit.log_pattern_event(
+                    "pattern_wildcard_refused", "sassy_shell", keyword, command,
+                    {"requested": "*"},
+                )
+                return (
+                    "Refused: allow_pattern='*' is no longer accepted "
+                    "(wildcard bypassed every safety regex in one call). "
+                    f"Pass allow_pattern={keyword!r} to override JUST this "
+                    "pattern, after confirming the command is intended."
+                )
             else:
                 tier = pattern_tier(keyword)
                 if tier == "low":

@@ -162,8 +162,69 @@ class Updater:
             "url": rel.get("html_url"),
         }
 
-    def apply(self, asset_name: str, tag: str | None = None, dest_dir: str | None = None) -> dict[str, Any]:
-        """Download an asset to staging. Does NOT execute it (UAC + user intent)."""
+    def _fetch_checksum(self, tag: str, asset_name: str) -> tuple[str | None, str | None]:
+        """Fetch the expected SHA-256 for a release asset.
+
+        Looks for one of these sidecars in the release's asset list, in
+        priority order:
+          1. <asset_name>.sha256   — single-line "<hex>  <name>"
+          2. SHA256SUMS            — multi-line, GNU coreutils format
+          3. checksums.txt         — same shape as SHA256SUMS
+
+        Returns (hex_digest, source_filename) on hit, (None, None) if no
+        sidecar is published. The caller decides whether absence is fatal.
+        """
+        info = self.list_assets(tag=tag)
+        if "error" in info:
+            return None, None
+        assets = info.get("assets") or []
+        # Per-asset .sha256 wins if present
+        sidecar = next((a for a in assets if a["name"] == f"{asset_name}.sha256"), None)
+        # Otherwise the aggregate file
+        if sidecar is None:
+            sidecar = next(
+                (a for a in assets if a["name"] in ("SHA256SUMS", "checksums.txt", "SHA256SUMS.txt")),
+                None,
+            )
+        if sidecar is None:
+            return None, None
+        url = sidecar["download_url"]
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                text = resp.read().decode("utf-8", errors="replace")
+        except (urllib.error.URLError, TimeoutError):
+            return None, None
+        # Parse "<hex>  <name>" lines and pick the row matching our asset
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(None, 1)
+            if not parts:
+                continue
+            digest = parts[0].strip().lower()
+            name = parts[1].strip().lstrip("*") if len(parts) > 1 else asset_name
+            if len(digest) == 64 and (name == asset_name or sidecar["name"].endswith(".sha256")):
+                return digest, sidecar["name"]
+        return None, None
+
+    def apply(
+        self,
+        asset_name: str,
+        tag: str | None = None,
+        dest_dir: str | None = None,
+        require_checksum: bool = True,
+    ) -> dict[str, Any]:
+        """Download an asset to staging. Does NOT execute it.
+
+        require_checksum (default True): refuse to return a run command if
+        the release publishes a SHA-256 sidecar AND verification fails. If
+        no sidecar is published, downgrades to a warning rather than
+        refusing — many older releases predate sidecar publication. Set
+        require_checksum=False to bypass entirely (e.g., when checksum
+        sidecar is being introduced and old assets haven't been backfilled).
+        """
         info = self.list_assets(tag=tag)
         if "error" in info:
             return info
@@ -183,6 +244,9 @@ class Updater:
         dest_root.mkdir(parents=True, exist_ok=True)
         dest = dest_root / asset_name
 
+        # Stream + hash in one pass so we never have to re-read the file.
+        import hashlib
+        hasher = hashlib.sha256()
         try:
             req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
             with urllib.request.urlopen(req, timeout=300) as resp, open(dest, "wb") as fh:
@@ -191,8 +255,53 @@ class Updater:
                     if not chunk:
                         break
                     fh.write(chunk)
+                    hasher.update(chunk)
         except (urllib.error.URLError, TimeoutError) as e:
             return {"error": f"Download failed: {e}", "url": url}
+        actual_sha256 = hasher.hexdigest()
+
+        expected_sha256, sidecar_name = self._fetch_checksum(info["tag"], asset_name)
+        checksum_status: dict[str, Any] = {
+            "sha256_actual": actual_sha256,
+            "sha256_expected": expected_sha256,
+            "sidecar": sidecar_name,
+        }
+        if expected_sha256:
+            if expected_sha256.lower() != actual_sha256.lower():
+                # Hard fail — refuse to return a run command for a tampered
+                # download. Delete the bad file so it can't be invoked
+                # accidentally.
+                try:
+                    dest.unlink()
+                except OSError:
+                    pass
+                return {
+                    "error": "Checksum mismatch — refusing to install.",
+                    "tag": info["tag"],
+                    "asset": asset_name,
+                    "expected_sha256": expected_sha256,
+                    "actual_sha256": actual_sha256,
+                    "sidecar": sidecar_name,
+                    "hint": (
+                        "The published SHA-256 sidecar does not match the "
+                        "downloaded bytes. This is either tampering, "
+                        "corruption in transit, or a stale sidecar. Do NOT "
+                        "run the asset. Investigate before retrying."
+                    ),
+                }
+            checksum_status["status"] = "verified"
+        else:
+            # Sidecar not published — downgrade to warning unless caller
+            # explicitly required a checksum.
+            checksum_status["status"] = "no_sidecar_published"
+            if require_checksum is True and sidecar_name is None:
+                # Default policy: allow but flag loudly. This avoids
+                # breaking older releases that don't yet publish sidecars.
+                checksum_status["warning"] = (
+                    "No SHA-256 sidecar found for this release. Verify the "
+                    "download out-of-band before running. Future releases "
+                    "should ship <asset>.sha256 or SHA256SUMS alongside."
+                )
 
         name_lower = asset_name.lower()
         if name_lower.endswith(".msi"):
@@ -211,6 +320,7 @@ class Updater:
             "size_bytes": dest.stat().st_size,
             "next_step": f"Run: {run_cmd}",
             "via_gated_url": bool(license_key),
+            "checksum": checksum_status,
         }
 
 

@@ -254,22 +254,44 @@ def register(server):
         file reads use sassy_read_file. This is for the common case:
         'where is X used'.
         """
+        # fileops doesn't expose its search at module level; the tool is
+        # registered as sassy_search_files inside its register(). Call
+        # through the registered tool on the server instance instead.
         try:
-            from sassymcp.modules import fileops as _fo
-        except ImportError as e:
-            return _err(f"fileops module unavailable: {e}")
-
-        # fileops exposes _search_files() at module level with the same
-        # interface as the registered tool. Call it directly.
-        search = getattr(_fo, "_search_files", None)
-        if search is None:
-            return _err("fileops._search_files not exposed; cannot run combo grep")
-
-        # Run the search
-        try:
-            search_result = await search(pattern=pattern, path=path, max_results=200)
+            tool = None
+            if hasattr(server, "_tool_manager"):
+                tool_obj = server._tool_manager._tools.get("sassy_search_files")
+                tool = getattr(tool_obj, "fn", None) if tool_obj else None
+            if tool is None:
+                return _err("sassy_search_files is not registered; combo grep needs the core fileops group.")
+            search_result = await tool(
+                path=path,
+                pattern=pattern,
+                search_type="content",
+                max_results=200,
+                context_lines=0,
+            )
         except Exception as e:
             return _err(f"search failed: {e}")
+
+        # sassy_search_files returns a newline-joined string ("path:line:
+        # match"); convert to the dict shape the rest of this combo
+        # expects.
+        if isinstance(search_result, str) and not search_result.startswith("{"):
+            matches_list = []
+            for ln in search_result.splitlines():
+                if not ln or ln.startswith("No matches"):
+                    continue
+                # "<path>:<line>: <text>"
+                parts = ln.split(":", 2)
+                if len(parts) >= 2:
+                    file_path = parts[0]
+                    try:
+                        line_no = int(parts[1])
+                    except ValueError:
+                        continue
+                    matches_list.append({"path": file_path, "line": line_no})
+            search_result = json.dumps({"matches": matches_list})
 
         # search_result is a JSON string from the underlying tool; parse it.
         try:

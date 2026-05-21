@@ -15,10 +15,38 @@ from sassymcp.modules import audit as _audit
 
 
 def _check_path(path: str) -> str | None:
-    """Validate path against allowedDirectories. Returns error string or None."""
+    """Validate path against allowedDirectories. Returns error string or None.
+
+    allowedDirectories is the explicit, user-configured allowlist. If
+    it's not set, we fall back to a denylist: anything matching
+    is_sensitive_read_path or is_protected_path is refused for write
+    operations. The result is a tool surface that's "permissive by
+    default, with a hard floor" — convenient for power users, but the
+    floor prevents an LLM from clobbering credential files.
+    """
     ok, err = validate_path(path)
     if not ok:
         return err
+    return None
+
+
+def _check_write_path(path: str) -> str | None:
+    """Stricter check for write/move/delete: refuse sensitive-read paths
+    AND protected-write paths even when allowedDirectories is empty.
+
+    Reads still use _check_path; the extra denylist is only for tools
+    that mutate the filesystem.
+    """
+    err = _check_path(path)
+    if err:
+        return err
+    from sassymcp.modules._security import is_sensitive_read_path
+    denied, reason = is_sensitive_read_path(path)
+    if denied:
+        return f"Refused: write to sensitive-read path. {reason}"
+    prot, prot_reason = is_protected_path(path)
+    if prot:
+        return f"Refused: write to protected path. {prot_reason}"
     return None
 
 
@@ -158,9 +186,12 @@ def register(server):
 
         Bypasses the shell-keyword interceptor entirely — content with
         words like 'format' or 'rm -rf' as data inside scripts is fine.
-        Only the path is validated (allowedDirectories + protected roots).
+        Path validation runs `_check_write_path` (allowedDirectories +
+        sensitive-read denylist + protected roots) so an LLM cannot
+        write into ~/.ssh, ~/.aws, the SassyMCP source tree, etc. even
+        when allowedDirectories is empty.
         """
-        err = _check_path(path)
+        err = _check_write_path(path)
         if err:
             return f"Error: {err}"
         p = Path(path).absolute()

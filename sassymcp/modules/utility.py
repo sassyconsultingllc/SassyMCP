@@ -315,17 +315,36 @@ def register(server):
     # ── HTTP Requests ─────────────────────────────────────────────────
 
     @server.tool()
-    async def sassy_http(url: str, method: str = "GET", headers: str = "", body: str = "", timeout_seconds: int = 15) -> str:
+    async def sassy_http(url: str, method: str = "GET", headers: str = "", body: str = "", timeout_seconds: int = 15, allow_mutating: bool = False) -> str:
         """Make an HTTP request. Lightweight alternative to web_inspector for quick API calls.
 
-        method: GET, POST, PUT, PATCH, DELETE, HEAD
+        method: GET, HEAD, OPTIONS, POST, PUT, PATCH, DELETE
         headers: JSON object of headers, e.g. {"Authorization": "Bearer xxx"}
         body: request body (string or JSON)
+        allow_mutating: required True for state-changing verbs (POST, PUT,
+          PATCH, DELETE). The MCP tool surface is reachable by an LLM that
+          may be partially adversarial; gating mutating verbs behind an
+          explicit flag stops an "innocent fetch" prompt from being steered
+          into a DELETE against an internal service.
         """
         from sassymcp.modules._security import validate_url
         ok, err = validate_url(url)
         if not ok:
             return json.dumps({"error": err})
+
+        method_upper = method.upper().strip()
+        _READ_VERBS = {"GET", "HEAD", "OPTIONS"}
+        _ALL_VERBS = _READ_VERBS | {"POST", "PUT", "PATCH", "DELETE"}
+        if method_upper not in _ALL_VERBS:
+            return json.dumps({"error": f"Unsupported HTTP method: {method!r}"})
+        if method_upper not in _READ_VERBS and not allow_mutating:
+            return json.dumps({
+                "error": (
+                    f"{method_upper} requires allow_mutating=True. Read-only "
+                    "verbs (GET / HEAD / OPTIONS) run without the flag."
+                ),
+                "method": method_upper,
+            })
 
         try:
             import httpx

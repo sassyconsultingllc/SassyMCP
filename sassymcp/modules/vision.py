@@ -437,42 +437,64 @@ def register(server):
                 return json.dumps({"error": "Region must be x,y,w,h"})
             capture_region = tuple(parts)
 
+        # Defense-in-depth: even with the max_frames cap, a malicious or
+        # buggy caller could request many large frames and blow up the
+        # JSON response. 1 MiB cumulative across all frames covers a
+        # comfortable monitoring session (15 frames × 60 KB avg) and
+        # cuts off cleanly before the MCP transport starts choking.
+        _MAX_TOTAL_BYTES = 1024 * 1024
         try:
             frames = []
             prev_img = None
             total_captured = 0
+            total_bytes_emitted = 0
+            byte_cap_hit = False
             start_time = time.time()
 
             while time.time() - start_time < seconds and len(frames) < max_frames:
                 gray, raw, b64 = _capture_grayscale(capture_region, max_width, quality)
                 total_captured += 1
                 elapsed = round(time.time() - start_time, 2)
+                frame_size = len(raw)
+
+                def _would_overflow(extra: int) -> bool:
+                    return total_bytes_emitted + extra > _MAX_TOTAL_BYTES
 
                 if prev_img is None:
                     # Always include first frame
+                    if _would_overflow(frame_size):
+                        byte_cap_hit = True
+                        prev_img = gray
+                        break
                     frames.append({
                         "frame": len(frames) + 1,
                         "elapsed_s": elapsed,
                         "change_pct": 0.0,
-                        "bytes": len(raw),
+                        "bytes": frame_size,
                         "image_base64": b64,
                     })
+                    total_bytes_emitted += frame_size
                 else:
                     diff_pct = _image_diff_percent(prev_img, gray)
                     if diff_pct >= change_threshold:
+                        if _would_overflow(frame_size):
+                            byte_cap_hit = True
+                            prev_img = gray
+                            break
                         frames.append({
                             "frame": len(frames) + 1,
                             "elapsed_s": elapsed,
                             "change_pct": diff_pct,
-                            "bytes": len(raw),
+                            "bytes": frame_size,
                             "image_base64": b64,
                         })
+                        total_bytes_emitted += frame_size
 
                 prev_img = gray
                 await asyncio.sleep(interval)
 
             total_bytes = sum(f["bytes"] for f in frames)
-            return json.dumps({
+            result = {
                 "frames": frames,
                 "total_captured": total_captured,
                 "frames_with_changes": len(frames),
@@ -483,7 +505,14 @@ def register(server):
                     "threshold": change_threshold,
                     "resolution": max_width,
                 },
-            })
+            }
+            if byte_cap_hit:
+                result["truncated"] = True
+                result["truncation_reason"] = (
+                    f"cumulative-byte cap of {_MAX_TOTAL_BYTES} bytes reached "
+                    f"before time/frame budget exhausted"
+                )
+            return json.dumps(result)
         except Exception as e:
             return json.dumps({"error": str(e)})
 

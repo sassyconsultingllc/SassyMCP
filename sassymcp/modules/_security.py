@@ -63,13 +63,48 @@ def validate_path(path: str) -> tuple[bool, Optional[str]]:
 
 # ── Command Validation ───────────────────────────────────────────────
 
-# Always blocked regardless of config — these are never safe to run from an MCP tool
+# Always blocked regardless of config — these are never safe to run from an
+# MCP tool. Multi-token entries (with spaces/slashes) match as substrings;
+# single-word entries are matched with word boundaries via the regex map
+# below so PowerShell verbs like `Format-Table` / `-Format` don't trip
+# `format`, and `Restart-Service` doesn't trip `restart` (if added later).
 _HARDCODED_BLOCKS = {
     "format", "diskpart", "cipher /w",
     "rm -rf /", "rm -rf /*", "dd if=/dev/zero",
     "mkfs", ":(){ :|:& };:",
     "shutdown", "reboot", "halt", "init 0", "init 6",
 }
+
+# Single-word entries that must match a STANDALONE token, not a substring.
+# Lower-case; matched against the lowered command. Entries containing
+# whitespace, slashes, or punctuation fall through to substring matching
+# (multi-token patterns are unambiguous and don't need boundary protection).
+_WORD_MATCH_BLOCKS: frozenset[str] = frozenset({
+    "format", "diskpart", "mkfs", "shutdown", "reboot", "halt",
+})
+# Compiled lookup so we can do the boundary scan once per blocked needle.
+# Boundary is "not preceded/followed by a word character" — Format-Table
+# has `-` between `Format` and `Table` which IS a word boundary in the
+# regex sense, so we additionally require that the match is NOT followed
+# by `-` (PowerShell verb-Noun) and NOT preceded by `-` (CLI flag).
+_WORD_BOUNDARY_CACHE: dict[str, "re.Pattern"] = {}
+
+
+def _word_boundary_pattern(needle: str):
+    """Cached compile of a 'standalone token' regex for `needle`.
+
+    Matches `needle` only when:
+      - it sits at a word boundary on both sides, AND
+      - it is not immediately preceded by `-` (would be a CLI flag like
+        `-Format`), AND
+      - it is not immediately followed by `-` (would be a PowerShell verb
+        like `Format-Table` / `Reboot-Server`).
+    """
+    pat = _WORD_BOUNDARY_CACHE.get(needle)
+    if pat is None:
+        pat = re.compile(rf"(?<![-\w]){re.escape(needle)}(?![-\w])", re.IGNORECASE)
+        _WORD_BOUNDARY_CACHE[needle] = pat
+    return pat
 
 
 def validate_command(command: str) -> tuple[bool, Optional[str]]:
@@ -106,6 +141,21 @@ def validate_command_tiered(command: str) -> tuple[bool, str, Optional[str]]:
     scan_literals = bool(_get_config_value("interceptor.scanStringLiterals", False))
 
     def _classify(needle: str, label: str) -> tuple[bool, str, Optional[str]]:
+        # Single-word entries get standalone-token matching so PowerShell
+        # verb-Noun pairs ("Format-Table", "-Format", "Format-List") and
+        # English prose ("the format of the file") don't trip the block.
+        # Multi-token entries (with spaces/slashes/colons) keep substring
+        # semantics — those patterns are already unambiguous.
+        if needle in _WORD_MATCH_BLOCKS:
+            pat = _word_boundary_pattern(needle)
+            if pat.search(cmd_stripped):
+                return False, "high", f"Command blocked ({label}): contains '{needle}'"
+            if pat.search(cmd_raw):
+                tier = "high" if scan_literals else "low"
+                suffix = "" if scan_literals else " inside a string literal"
+                return False, tier, f"Command contains '{needle}'{suffix}"
+            return True, "", None
+
         if needle in cmd_stripped:
             return False, "high", f"Command blocked ({label}): contains '{needle}'"
         if needle in cmd_raw:
@@ -295,11 +345,28 @@ _DESTRUCTIVE_PATTERNS = [
     (re.compile(r"\brobocopy\b[^|;&\n]*\s/purge\b"),                                                      "robocopy /purge"),
     # Truncate-by-redirect: a single `>` that is NOT part of `>>` (append),
     # `&>`/`2>` (stream redirect), etc., pointing at a filename.
-    # Exemption: redirects to scratch/temp locations are benign stdout capture.
-    # Matches `> "%TEMP%\...`, `> $env:TEMP\...`, `> /tmp/...`, `> %TMP%\...`.
+    #
+    # Exemptions (lookahead — match SUPPRESSED when target is benign):
+    #   - Scratch/temp dirs: %TEMP%, %TMP%, $env:TEMP, $env:TMP, /tmp/, /var/tmp/
+    #   - User home: %USERPROFILE%, $env:USERPROFILE, ~/, $HOME/, $env:HOME
+    #   - %LOCALAPPDATA% / $env:LOCALAPPDATA (scratch under user)
+    #   - Filenames ending in .log/.txt/.csv/.out/.err/.json — these are the
+    #     overwhelmingly common debug-capture idioms. A real "wipe system
+    #     file via redirect" attack uses a system path; treating log
+    #     redirects as destructive kills routine debugging on Windows.
+    #
+    # If you NEED to flag a redirect to a system path, that's already
+    # covered by the keyword/wrapper scans on rm/del/Remove-Item; this
+    # pattern is the "catch raw `>` overwrites" backstop.
     (re.compile(
         r"(?<![>&0-9])>(?!>)\s*"
-        r"(?!\"?%TEMP%|\"?%TMP%|\"?\$env:TEMP|\"?\$env:TMP|\"?/tmp/|\"?/var/tmp/)"
+        r"(?!"
+        r"\"?%TEMP%|\"?%TMP%|\"?\$env:TEMP|\"?\$env:TMP|"
+        r"\"?%USERPROFILE%|\"?\$env:USERPROFILE|\"?\$HOME|\"?\$env:HOME|"
+        r"\"?%LOCALAPPDATA%|\"?\$env:LOCALAPPDATA|"
+        r"\"?~[\\/]|\"?/tmp/|\"?/var/tmp/"
+        r")"
+        r"(?![^\s&|;<>]*\.(?:log|txt|csv|out|err|json)\b)"
         r"[^\s&|;<>]"
     ), "truncate-by-redirect"),
     (re.compile(r"\bmove-item\b[^|;&\n]*\s+\$null\b"),                                                    "move-item to $null"),
@@ -552,3 +619,93 @@ def validate_input_size(value: str, max_bytes: int = 10_000_000, label: str = "i
     if len(value) > max_bytes:
         return False, f"{label} exceeds maximum size ({len(value)} > {max_bytes} bytes)"
     return True, None
+
+
+# ── Sensitive-Read Path Guard ────────────────────────────────────────
+#
+# is_protected_path() (above) gates DELETE / OVERWRITE. This gate covers
+# the dual problem: tools that READ arbitrary paths chosen by the LLM
+# can be used to exfiltrate credentials (SSH keys, AWS creds, browser
+# cookies) or confirm file existence for fingerprinting. The set of
+# truly-sensitive locations is small and stable; rather than enforce a
+# narrow allowlist (which would block legitimate audit-tool use), we
+# enforce a focused denylist of well-known credential / token stores.
+#
+# Resolved paths are checked so `~/.ssh/../..` / 8.3 / symlinks cannot
+# bypass the gate.
+
+def _sensitive_read_roots() -> list[Path]:
+    """Directories whose contents an MCP tool must NOT read by default."""
+    roots: list[Path] = []
+    home = Path.home()
+    # POSIX credential stores
+    roots += [
+        home / ".ssh",
+        home / ".aws",
+        home / ".gnupg",
+        home / ".docker" / "config.json",
+        home / ".kube",
+        home / ".netrc",
+        home / ".pypirc",
+        home / ".npmrc",
+    ]
+    # SassyMCP's own token store — even read access here is a credential leak
+    try:
+        from sassymcp._paths import TOKENS_FILE, LICENSE_FILE
+        roots += [TOKENS_FILE, LICENSE_FILE]
+    except Exception:
+        pass
+    if os.name == "nt":
+        roots += [
+            # Browser credential databases (Chrome / Edge / Brave / Firefox)
+            home / "AppData" / "Local" / "Google" / "Chrome" / "User Data" / "Default" / "Login Data",
+            home / "AppData" / "Local" / "Microsoft" / "Edge" / "User Data" / "Default" / "Login Data",
+            home / "AppData" / "Local" / "BraveSoftware" / "Brave-Browser" / "User Data" / "Default" / "Login Data",
+            home / "AppData" / "Roaming" / "Mozilla" / "Firefox" / "Profiles",
+            # Windows credential vault
+            home / "AppData" / "Local" / "Microsoft" / "Credentials",
+            home / "AppData" / "Roaming" / "Microsoft" / "Credentials",
+            # SAM / SECURITY hives (require SYSTEM but worth blocking by default)
+            Path("C:/Windows/System32/config/SAM"),
+            Path("C:/Windows/System32/config/SECURITY"),
+            Path("C:/Windows/System32/config/SYSTEM"),
+        ]
+    else:
+        roots += [
+            Path("/etc/shadow"),
+            Path("/etc/gshadow"),
+            Path("/etc/sudoers"),
+            Path("/etc/sudoers.d"),
+            Path("/root/.ssh"),
+        ]
+    return roots
+
+
+def is_sensitive_read_path(path: str | Path) -> tuple[bool, Optional[str]]:
+    """Return (True, reason) if `path` is in a sensitive-read denylist.
+
+    Tools that take an LLM-supplied path and surface its bytes (hash,
+    contents, metadata that includes contents) must call this BEFORE
+    opening the file. Resolves traversal/symlink/8.3 before comparing.
+    """
+    try:
+        target_abs = Path(path).absolute()
+    except (OSError, ValueError):
+        return False, None
+    try:
+        target = target_abs.resolve(strict=False)
+    except (OSError, ValueError):
+        target = target_abs
+
+    for root in _sensitive_read_roots():
+        try:
+            r = root.resolve(strict=False)
+        except (OSError, ValueError):
+            try:
+                r = root.absolute()
+            except (OSError, ValueError):
+                continue
+        # Match if target IS the sensitive file OR sits under a sensitive dir.
+        if target == r or r in target.parents:
+            return True, f"path matches sensitive-read denylist: {r}"
+    return False, None

@@ -3,9 +3,21 @@
 Logs every MCP tool invocation with timestamp, tool name, and sanitized
 arguments. Logs are stored in $SASSYMCP_HOME/audit.log (default
 ~/.sassymcp/audit.log) and rotated at 10MB.
+
+Secret masking happens at TWO layers:
+
+  1. sassymcp/server.py::audit_tool wraps every tool and redacts kwargs
+     whose names look like secrets (password, token, etc.) BEFORE calling
+     log_tool_call. That covers the common case.
+
+  2. This module additionally scans values for token-shaped strings and
+     known prefixes (ghp_, github_pat_, sk-, AKIA...). Layer 2 is the
+     defense-in-depth pass for callers that bypass the server wrapper
+     (e.g., crosslink, or anything imported as audit.log_tool_call).
 """
 
 import json
+import re
 import time
 
 from sassymcp._audit_io import append_audit
@@ -148,12 +160,60 @@ def log_intercept(tool_name: str, keyword: str, command: str, targets: list, res
         pass
 
 
+_SENSITIVE_KEY_FRAGMENTS = (
+    "password", "passwd", "secret", "token", "api_key", "apikey",
+    "auth", "bearer", "credential", "session_id", "cookie",
+    "private_key", "privkey", "pw", "pass",
+)
+
+# Value-level regex matches for shapes that are credentials regardless of
+# what key they came in under (catches `command="ssh -p ghp_..." too).
+_VALUE_SECRET_PATTERNS = (
+    re.compile(r"\bghp_[A-Za-z0-9]{30,}\b"),           # GitHub fine-grained PAT prefix
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{50,}\b"),   # GitHub fine-grained PAT
+    re.compile(r"\bsk-[A-Za-z0-9_\-]{20,}\b"),         # OpenAI/Anthropic-style
+    re.compile(r"\bxoxb-[A-Za-z0-9-]{20,}\b"),         # Slack bot token
+    re.compile(r"\bAKIA[A-Z0-9]{16}\b"),               # AWS access key id
+    re.compile(r"\bASIA[A-Z0-9]{16}\b"),               # AWS STS key id
+    re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |)PRIVATE KEY-----"),
+)
+
+
+def _redact_value(value) -> str:
+    """Apply value-level masking. Returns the (possibly stringified) value
+    with credential-shaped substrings replaced by ***REDACTED***."""
+    s = str(value)
+    for pat in _VALUE_SECRET_PATTERNS:
+        s = pat.sub("***REDACTED***", s)
+    return s
+
+
+def _mask_args(args: dict) -> dict:
+    """Mask both key-based and value-based secrets, then truncate.
+
+    server.audit_tool already redacts most credential-shaped kwargs, but
+    we re-check here so callers that bypass the wrapper (crosslink, etc.)
+    can't accidentally write a raw password into audit.log.
+    """
+    out: dict = {}
+    for k, v in args.items():
+        k_lower = str(k).lower()
+        if any(frag in k_lower for frag in _SENSITIVE_KEY_FRAGMENTS):
+            out[k] = "***REDACTED***"
+            continue
+        s = _redact_value(v)
+        if len(s) > 200:
+            s = s[:200] + "...(truncated)"
+        out[k] = s
+    return out
+
+
 def log_tool_call(tool_name: str, args: dict, elapsed_ms: int = 0, error: str = None):
     """Log a tool invocation. Called by the audit wrapper in server.py.
 
     Args:
         tool_name: Name of the tool that was called.
-        args: Sanitized arguments dict.
+        args: Sanitized arguments dict (this module re-masks anyway).
         elapsed_ms: Execution time in milliseconds.
         error: Error message if the tool raised an exception.
     """
@@ -161,13 +221,8 @@ def log_tool_call(tool_name: str, args: dict, elapsed_ms: int = 0, error: str = 
         _LOG_DIR.mkdir(parents=True, exist_ok=True)
         _rotate_if_needed()
 
-        # Sanitize: truncate long values, redact potential secrets
-        sanitized = {}
-        for k, v in args.items():
-            s = str(v)
-            if len(s) > 200:
-                s = s[:200] + "...(truncated)"
-            sanitized[k] = s
+        # Two-layer masking (see module docstring).
+        sanitized = _mask_args(args)
 
         entry = {
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -177,7 +232,10 @@ def log_tool_call(tool_name: str, args: dict, elapsed_ms: int = 0, error: str = 
             "ms": elapsed_ms,
         }
         if error:
-            entry["error"] = error[:500]
+            # Apply value-level masking to the exception text too — some
+            # subprocess errors echo the offending argv (passwords, PATs)
+            # in their message, and the raw message lands here.
+            entry["error"] = _redact_value(error)[:500]
 
         # Update in-memory stats
         _stats["total_calls"] += 1
