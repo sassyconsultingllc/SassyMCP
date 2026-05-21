@@ -853,28 +853,49 @@ def register(server):
 
     @server.tool()
     async def sassy_setup_license(key: str = "", action: str = "status") -> str:
-        """Manage your SassyMCP license. Activate a Pro key, check status, or deactivate.
+        """Manage your SassyMCP license against LemonSqueezy.
 
-        action: status | activate | deactivate
-        key: license key string (required for activate action)
+        action: status | activate | deactivate | validate
+        key: LemonSqueezy license key (format XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX),
+             required for activate.
+
+        activate: calls LS to register this machine as an instance, then
+                  mints a local HMAC payload so offline use works.
+        validate: forces an immediate LS re-check (normally weekly).
+        deactivate: calls LS to free this machine's seat and removes the
+                    local file.
         """
-        from sassymcp.license import validate_license, save_license, remove_license, LICENSE_FILE
+        from sassymcp.license import (
+            validate_license, activate_via_lemonsqueezy, deactivate_via_lemonsqueezy,
+            LICENSE_FILE,
+        )
 
         if action == "status":
             result = validate_license()
             tier = result.get("tier", "free")
             info = {
                 "tier": tier,
+                "addons": result.get("addons", []),
                 "valid": result.get("valid", False),
                 "email": result.get("email"),
                 "expires": result.get("expires"),
                 "license_file": str(LICENSE_FILE),
                 "license_exists": LICENSE_FILE.exists(),
             }
+            # Surface LS-side identifiers when present so support can
+            # cross-reference the seat with the buyer's LS dashboard.
+            if LICENSE_FILE.exists():
+                try:
+                    raw = json.loads(LICENSE_FILE.read_text())
+                    for f in ("ls_instance_id", "ls_instance_name", "ls_variant_id",
+                              "ls_order_id", "activated_at"):
+                        if f in raw:
+                            info[f] = raw[f]
+                except Exception:
+                    pass
             if tier == "free" and not result.get("valid"):
                 info["upgrade"] = {
                     "url": "https://sassyconsultingllc.com/sassymcp",
-                    "price": "$29/mo",
                     "what_you_get": "255 tools, persistent memory, dynamic vision, phone control, "
                                     "GitHub full API, operational hooks, self-modification, and more.",
                 }
@@ -882,32 +903,70 @@ def register(server):
 
         elif action == "activate":
             if not key:
-                return json.dumps({"error": "Provide the key parameter with your license key.",
-                                   "get_key": "https://sassyconsultingllc.com/sassymcp"})
-            result = save_license(key)
+                return json.dumps({
+                    "error": "Provide the key parameter with your LemonSqueezy license key.",
+                    "format_hint": "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX",
+                    "get_key": "https://sassyconsultingllc.com/sassymcp",
+                })
+            result = activate_via_lemonsqueezy(key)
             if result.get("valid"):
                 return json.dumps({
                     "status": "activated",
                     "tier": result["tier"],
+                    "addons": result.get("addons", []),
                     "email": result.get("email"),
                     "expires": result.get("expires"),
-                    "note": "Restart the server to load all Pro tools, or call sassy_selfmod_restart().",
+                    "ls_instance_id": result.get("ls_instance_id"),
+                    "note": "Restart the server to load Pro tools, or call sassy_selfmod_restart().",
                 }, indent=2)
             return json.dumps({
                 "status": "failed",
                 "reason": result.get("reason"),
-                "hint": "Check the key and try again. Keys start with sassy_pro_ or sassy_forensics_.",
-            })
+                "detail": result.get("detail"),
+                "http_status": result.get("http_status"),
+                "hint": (
+                    "network_error: try again when online. "
+                    "ls_rejected: check the key format and that the license isn't already "
+                    "activated on the maximum number of machines."
+                ),
+            }, indent=2)
 
         elif action == "deactivate":
-            remove_license()
-            return json.dumps({
-                "status": "deactivated",
-                "tier": "free",
-                "note": "Downgraded to free tier. Restart to apply.",
-            })
+            result = deactivate_via_lemonsqueezy()
+            return json.dumps(result, indent=2)
 
-        return json.dumps({"error": f"Unknown action: {action}. Use: status, activate, deactivate"})
+        elif action == "validate":
+            # Force a synchronous re-check against LS. Useful for support
+            # ("verify my key works") and right after activation.
+            from sassymcp.license import _ls_revalidate
+            import asyncio
+            if not LICENSE_FILE.exists():
+                return json.dumps({"status": "no_license", "tier": "free"})
+            try:
+                data = json.loads(LICENSE_FILE.read_text())
+            except Exception as e:
+                return json.dumps({"status": "corrupt", "error": str(e)})
+            ls_key = data.get("ls_license_key")
+            ls_inst = data.get("ls_instance_id")
+            if not (ls_key and ls_inst):
+                return json.dumps({
+                    "status": "legacy_key",
+                    "note": "Self-signed key — no LS to validate against. Use status instead.",
+                })
+            await _ls_revalidate(data, ls_key, ls_inst)
+            # Re-read post-revalidate (file may have been removed)
+            post = validate_license()
+            return json.dumps({
+                "status": "checked",
+                "tier": post.get("tier"),
+                "addons": post.get("addons", []),
+                "valid": post.get("valid"),
+                "license_exists": LICENSE_FILE.exists(),
+            }, indent=2)
+
+        return json.dumps({
+            "error": f"Unknown action: {action}. Use: status, activate, deactivate, validate"
+        })
 
     # ── Updated setup_status with integration fields ─────────────
 

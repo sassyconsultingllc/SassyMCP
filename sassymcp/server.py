@@ -55,7 +55,9 @@ from sassymcp.modules._tool_loader import (
     TOOL_GROUPS,
 )
 
-from sassymcp.license import get_allowed_groups, weekly_validation_check
+from sassymcp.license import (
+    fast_revocation_check, get_allowed_groups, validate_license, weekly_validation_check,
+)
 
 
 # ── Self-Signed Cert Generation ──────────────────────────────────────
@@ -599,9 +601,18 @@ def _load_modules():
         modules_dir = Path(__file__).parent / "modules"
         enable_live_reload(mcp, modules_dir)
 
-    # Schedule weekly license validation (non-blocking background task)
+    # License validation, two cadences:
+    #   - Fast revocation check at startup: hits the billing Worker's
+    #     edge-cached revocation oracle. If LS fired a refund/cancel
+    #     webhook since last startup, the local license is removed
+    #     within ~seconds rather than waiting a week.
+    #   - Weekly full LS validate: the authoritative backstop in case
+    #     the billing Worker missed a webhook or returned 'unknown'.
+    # Both are non-blocking — startup never waits on network.
     try:
-        asyncio.get_event_loop().create_task(weekly_validation_check())
+        loop = asyncio.get_event_loop()
+        loop.create_task(fast_revocation_check())
+        loop.create_task(weekly_validation_check())
     except RuntimeError:
         pass  # No event loop yet — will run on first request
 
@@ -1077,7 +1088,16 @@ def main():
             logger.info(f"FIRST RUN DETECTED: no persona.md found in {_SASSY_HOME}")
 
     tool_count = len(mcp._tool_manager._tools) if hasattr(mcp, "_tool_manager") else "?"
-    logger.info(f"SassyMCP v{__version__} started | {tool_count} tools | groups: {list(TOOL_GROUPS.keys())}")
+    _lic = validate_license()
+    _tier_label = _lic.get("tier", "free")
+    if _lic.get("addons"):
+        _tier_label += "+" + ",".join(_lic["addons"])
+    if os.environ.get("SASSYMCP_LICENSE_BYPASS", "").strip() in ("1", "true", "yes"):
+        _tier_label = "BYPASS"
+    logger.info(
+        f"SassyMCP v{__version__} started | tier={_tier_label} | "
+        f"{tool_count} tools | groups: {sorted(get_allowed_groups())}"
+    )
 
     # Startup update check (opt-out: SASSYMCP_NO_UPDATE_CHECK=1).
     # Logged in both modes; printed in HTTP banner only — stdio uses stdout

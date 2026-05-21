@@ -201,12 +201,19 @@ TOOL_GROUPS = {
         "calls_per_minute": 30,
     },
     "system": {
-        "modules": ["network_audit", "process_manager", "security_audit",
-                     "registry", "bluetooth", "eventlog", "clipboard"],
-        "description": "System monitoring, security, networking",
+        "modules": ["network_audit", "process_manager",
+                     "bluetooth", "eventlog", "clipboard"],
+        "description": "System monitoring, networking, clipboard, events",
         "always_load": False,
         "max_concurrent": 5,
         "calls_per_minute": 60,
+    },
+    "forensics": {
+        "modules": ["security_audit", "registry"],
+        "description": "Security audit, registry inspection — paid forensics add-on",
+        "always_load": False,
+        "max_concurrent": 3,
+        "calls_per_minute": 30,
     },
     "linux": {
         "modules": ["linux"],

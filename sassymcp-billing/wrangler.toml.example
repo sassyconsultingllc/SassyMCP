@@ -1,0 +1,44 @@
+# SassyMCP Billing — LemonSqueezy webhook receiver + revocation oracle.
+#
+# Copy this to wrangler.toml and replace every <PLACEHOLDER> with your own
+# values. The working wrangler.toml is gitignored so your production
+# hostname, KV id, and account never leak into a public fork.
+#
+# Required setup before `wrangler deploy`:
+#   1. wrangler kv:namespace create BILLING_KV  → copy the returned id below
+#   2. Set custom domain on the Worker in Cloudflare dashboard (or use
+#      workers.dev for staging — set workers_dev = true, drop the route)
+#   3. wrangler secret put LS_WEBHOOK_SECRET    → the signing secret you
+#      configured in the LemonSqueezy webhook settings UI
+#   4. In LemonSqueezy: set webhook URL to https://<your-hostname>/lemonsqueezy/webhook
+#      and check at minimum these events:
+#        subscription_created, subscription_updated, subscription_cancelled,
+#        subscription_expired, subscription_paused, subscription_resumed,
+#        subscription_payment_failed, license_key_created, license_key_updated,
+#        order_refunded
+#
+# Then deploy:  wrangler deploy
+
+name = "sassymcp-billing"
+main = "src/index.js"
+compatibility_date = "2026-04-01"
+workers_dev = false
+
+[[routes]]
+# Public hostname the buyer's SassyMCP installs query for revocation
+# state, and the URL LemonSqueezy POSTs webhooks to.
+pattern = "billing.<your-domain>.tld"
+custom_domain = true
+
+[[kv_namespaces]]
+binding = "BILLING_KV"
+# Replace with the id printed by `wrangler kv:namespace create BILLING_KV`.
+id = "<YOUR_KV_NAMESPACE_ID>"
+
+[vars]
+# Comma-separated list of LS event_names that should clear (un-revoke) a
+# license. Defaults below match the canonical LS lifecycle.
+UNREVOKE_EVENTS = "subscription_created,subscription_resumed,license_key_created"
+# Comma-separated list of events that should revoke. license_key_updated
+# is handled separately — its action depends on the inner status field.
+REVOKE_EVENTS = "subscription_cancelled,subscription_expired,subscription_paused,order_refunded"

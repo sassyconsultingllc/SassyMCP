@@ -1,0 +1,6 @@
+# Real wrangler config — keeps account ID, KV ID, and hostname out of
+# any public fork. Use wrangler.toml.example as the template.
+wrangler.toml
+.wrangler/
+node_modules/
+.env
