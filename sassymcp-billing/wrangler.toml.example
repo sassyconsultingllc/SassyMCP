@@ -11,11 +11,10 @@
 #   3. wrangler secret put LS_WEBHOOK_SECRET    → the signing secret you
 #      configured in the LemonSqueezy webhook settings UI
 #   4. In LemonSqueezy: set webhook URL to https://<your-hostname>/lemonsqueezy/webhook
-#      and check at minimum these events:
-#        subscription_created, subscription_updated, subscription_cancelled,
-#        subscription_expired, subscription_paused, subscription_resumed,
-#        subscription_payment_failed, license_key_created, license_key_updated,
-#        order_refunded
+#      and check these events (SassyMCP uses a one-time-purchase model;
+#      subscription_* events are NOT needed):
+#        order_created, order_refunded,
+#        license_key_created, license_key_updated
 #
 # Then deploy:  wrangler deploy
 
@@ -37,8 +36,10 @@ id = "<YOUR_KV_NAMESPACE_ID>"
 
 [vars]
 # Comma-separated list of LS event_names that should clear (un-revoke) a
-# license. Defaults below match the canonical LS lifecycle.
-UNREVOKE_EVENTS = "subscription_created,subscription_resumed,license_key_created"
+# license. SassyMCP uses a one-time-purchase model — no subscription
+# events. Order creation / explicit license-key creation both
+# transition the install to ACTIVE.
+UNREVOKE_EVENTS = "order_created,license_key_created"
 # Comma-separated list of events that should revoke. license_key_updated
 # is handled separately — its action depends on the inner status field.
-REVOKE_EVENTS = "subscription_cancelled,subscription_expired,subscription_paused,order_refunded"
+REVOKE_EVENTS = "order_refunded"

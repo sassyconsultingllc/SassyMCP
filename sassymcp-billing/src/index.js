@@ -1,9 +1,16 @@
 // SassyMCP Billing Worker — LemonSqueezy webhook receiver + revocation oracle.
 //
-// LS calls POST /lemonsqueezy/webhook on subscription / license / order events.
-// We verify the X-Signature HMAC, classify the event, and either set or clear a
-// revocation record in KV keyed by the SHA-256 of the license key string. The
+// SassyMCP is sold as a one-time perpetual license. LS calls
+// POST /lemonsqueezy/webhook on order_created, order_refunded,
+// license_key_created, license_key_updated. We verify the X-Signature
+// HMAC, classify the event, and either set or clear a revocation
+// record in KV keyed by the SHA-256 of the license key string. The
 // raw license key never lands in KV or logs.
+//
+// The classifier still recognizes subscription_* events generically
+// (driven by env lists) so the same Worker can be repurposed if the
+// pricing model ever changes — but the deployed env defaults only
+// subscribe to the four one-time events listed above.
 //
 // SassyMCP installs call GET /lemonsqueezy/check/:hash to learn whether their
 // own key has been revoked. The lookup is cached at the edge (60s) so a million

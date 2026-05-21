@@ -50,7 +50,7 @@ SassyMCP replaces **75+ individual MCP servers** — including [Desktop Commande
 
 ## Licensing & Tiers
 
-SassyMCP is sold through [LemonSqueezy](https://sassyconsultingllc.com/sassymcp). Free tier runs out of the box with no key required — paid tiers unlock additional tool groups.
+SassyMCP is sold through [LemonSqueezy](https://sassyconsultingllc.com/sassymcp) as a **one-time perpetual license** (no subscriptions). Free tier runs out of the box with no key required — paid tiers unlock additional tool groups. Buy once, own forever; refunds revoke automatically.
 
 | Tier | What unlocks | What you get |
 |---|---|---|

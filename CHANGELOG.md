@@ -83,6 +83,17 @@ fewer groups.
 | Forensics add-on | + `security_audit`, `registry` modules |
 | Expired / tampered / corrupt | Silently downgrades to free baseline |
 
+### Commercial model
+
+One-time perpetual license per machine, sold through LemonSqueezy. No
+recurring subscription. The buyer pays once, receives a key, activates
+on the machines they own (up to the per-license seat cap configured on
+the LS variant). Refunds revoke via the `order_refunded` webhook;
+license deactivation by the buyer (LS dashboard self-serve) revokes via
+`license_key_updated`. The billing Worker subscribes to exactly four
+events: `order_created`, `order_refunded`, `license_key_created`,
+`license_key_updated`.
+
 ## [1.5.0] — 2026-05 — Frozen-exe completeness
 
 - Frozen `sassymcp.exe` via PyInstaller, lean build, generalized for

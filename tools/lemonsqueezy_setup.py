@@ -190,16 +190,11 @@ def cmd_variants(_args) -> int:
 # ── Webhook subscription creation ─────────────────────────────────────────
 
 DEFAULT_EVENTS = [
-    "subscription_created",
-    "subscription_updated",
-    "subscription_cancelled",
-    "subscription_expired",
-    "subscription_paused",
-    "subscription_resumed",
-    "subscription_payment_failed",
-    "license_key_created",
-    "license_key_updated",
-    "order_refunded",
+    # One-time purchase model — no subscription_* events needed.
+    "order_created",       # license issued, ensure ACTIVE
+    "order_refunded",      # revoke
+    "license_key_created", # ACTIVE on creation
+    "license_key_updated", # follow inner status: active/inactive/expired/disabled
 ]
 
 
