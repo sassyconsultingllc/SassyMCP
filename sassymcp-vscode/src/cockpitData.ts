@@ -106,6 +106,27 @@ function emptyBoard(error: string): Board {
     return { peers: [], channels: [], handoffs: [], sessions: [], error };
 }
 
+/** Register this VS Code instance as an observer peer (fire-and-forget, TTL'd). */
+export function announceSelf(ttlSeconds = 600): void {
+    const repo = resolveRepo();
+    const py = resolvePython(repo);
+    try {
+        const proc = spawn(
+            py,
+            [
+                "-m", "sassymcp.modules.coordination", "announce",
+                "--id", "vscode-cockpit", "--name", "VS Code Cockpit",
+                "--platform", "vscode", "--caps", "observer,cockpit",
+                "--ttl", String(ttlSeconds),
+            ],
+            { cwd: repo, shell: false }
+        );
+        proc.on("error", () => { /* best effort */ });
+    } catch {
+        /* best effort */
+    }
+}
+
 /** Poll the coordination board. Never rejects — returns a Board with `.error` set on failure. */
 export function getBoard(timeoutMs = 12000): Promise<Board> {
     const repo = resolveRepo();

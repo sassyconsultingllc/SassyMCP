@@ -8,10 +8,15 @@ Rides the SAME crosslink.db (no new tables, no schema migration, no new port) â€
 peers are announced as heartbeats on the `peer-announce` channel and registered
 in the existing `sessions` table; delegations are targeted messages on
 `device-handoff` that the receiver filters by `to`. This is the data layer the
-Sassy Brain cockpit's coordination view reads via `sassy_coordination_board`.
+Sassy Brain cockpit's coordination view reads.
+
+Two entry points share the same module-level helpers (single source of truth):
+  - MCP tools (register): sassy_peer_announce / peer_list / peer_delegate / coordination_board
+  - CLI: `python -m sassymcp.modules.coordination [board|peers|announce|delegate]`
+    used by the VS Code cockpit (WAL-aware reads/writes without native deps).
 
 Peers in practice: Claude Desktop, Cursor, Windsurf, the Hermes Ollama node
-(hermes_node.py), or a remote SassyMCP instance reachable over LAN/Tunnel.
+(hermes_node.py), the VS Code cockpit itself, or a remote SassyMCP instance.
 
 Pro tier (registered in the `v020` group alongside crosslink).
 """
@@ -141,6 +146,42 @@ def _recent_peers(stale_seconds: int = DEFAULT_STALE_SECONDS) -> list[dict]:
     return sorted(peers.values(), key=lambda p: p["age_seconds"])
 
 
+def announce_peer(peer_id: str = "", name: str = "", platform: str = "",
+                  capabilities="", endpoint: str = "", ttl_seconds: int = 0) -> dict:
+    """Register/refresh a peer heartbeat. Shared by the MCP tool and the CLI."""
+    if not peer_id:
+        peer_id = f"peer-{uuid.uuid4().hex[:8]}"
+    payload = {
+        "peer_id": peer_id,
+        "name": name,
+        "platform": platform,
+        "capabilities": _split_caps(capabilities),
+        "endpoint": endpoint,
+        "ts": _now().isoformat(),
+    }
+    _register_session(peer_id, name=name, platform=platform)
+    msg = _post_message(peer_id, PEER_CHANNEL, json.dumps(payload), ttl_seconds)
+    return {"announced": payload, "message_id": msg.get("id")}
+
+
+def delegate_task(peer_id: str, task: str, context: str = "", next_steps: str = "",
+                  from_peer: str = "", channel: str = HANDOFF_CHANNEL) -> dict:
+    """Post a targeted handoff to one peer. Shared by the MCP tool and the CLI."""
+    if not from_peer:
+        from_peer = f"peer-{uuid.uuid4().hex[:6]}"
+    payload = {
+        "to": peer_id,
+        "from": from_peer,
+        "task": task,
+        "context": context,
+        "next_steps": next_steps,
+        "ts": _now().isoformat(),
+    }
+    msg = _post_message(from_peer, channel, json.dumps(payload))
+    return {"delegated_to": peer_id, "channel": channel,
+            "message_id": msg.get("id"), "payload": payload}
+
+
 def board_snapshot(stale_seconds: int = DEFAULT_STALE_SECONDS, handoff_limit: int = 20) -> dict:
     """Coordination snapshot for the Sassy Brain cockpit (read-only, WAL-aware).
 
@@ -216,20 +257,7 @@ def register(server):
 
         Re-call periodically to stay 'alive' (see sassy_peer_list stale window).
         """
-        if not peer_id:
-            peer_id = f"peer-{uuid.uuid4().hex[:8]}"
-        caps = _split_caps(capabilities)
-        payload = {
-            "peer_id": peer_id,
-            "name": name,
-            "platform": platform,
-            "capabilities": caps,
-            "endpoint": endpoint,
-            "ts": _now().isoformat(),
-        }
-        _register_session(peer_id, name=name, platform=platform)
-        msg = _post_message(peer_id, PEER_CHANNEL, json.dumps(payload), ttl_seconds)
-        return json.dumps({"announced": payload, "message_id": msg.get("id")})
+        return json.dumps(announce_peer(peer_id, name, platform, capabilities, endpoint, ttl_seconds))
 
     @server.tool()
     async def sassy_peer_list(stale_seconds: int = DEFAULT_STALE_SECONDS) -> str:
@@ -263,21 +291,7 @@ def register(server):
         from_peer: sender id (auto-generated if empty).
         channel: handoff channel (default 'device-handoff').
         """
-        if not from_peer:
-            from_peer = f"peer-{uuid.uuid4().hex[:6]}"
-        payload = {
-            "to": peer_id,
-            "from": from_peer,
-            "task": task,
-            "context": context,
-            "next_steps": next_steps,
-            "ts": _now().isoformat(),
-        }
-        msg = _post_message(from_peer, channel, json.dumps(payload))
-        return json.dumps(
-            {"delegated_to": peer_id, "channel": channel, "message_id": msg.get("id"),
-             "payload": payload}
-        )
+        return json.dumps(delegate_task(peer_id, task, context, next_steps, from_peer, channel))
 
     @server.tool()
     async def sassy_coordination_board(
@@ -292,12 +306,51 @@ def register(server):
         return json.dumps(board_snapshot(stale_seconds, handoff_limit), indent=2)
 
 
+def _main(argv=None):
+    """CLI used by the VS Code cockpit. Emits one JSON line to stdout.
+
+    Subcommands: board (default) | peers | announce | delegate.
+    """
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(prog="python -m sassymcp.modules.coordination")
+    sub = parser.add_subparsers(dest="cmd")
+    sub.add_parser("board")
+    p_peers = sub.add_parser("peers")
+    p_peers.add_argument("--stale", type=int, default=DEFAULT_STALE_SECONDS)
+    p_ann = sub.add_parser("announce")
+    p_ann.add_argument("--id", default="")
+    p_ann.add_argument("--name", default="")
+    p_ann.add_argument("--platform", default="")
+    p_ann.add_argument("--caps", default="")
+    p_ann.add_argument("--endpoint", default="")
+    p_ann.add_argument("--ttl", type=int, default=0)
+    p_del = sub.add_parser("delegate")
+    p_del.add_argument("--to", required=True)
+    p_del.add_argument("--task", required=True)
+    p_del.add_argument("--context", default="")
+    p_del.add_argument("--next", default="")
+    p_del.add_argument("--from", dest="from_peer", default="")
+    p_del.add_argument("--channel", default=HANDOFF_CHANNEL)
+    args = parser.parse_args(argv)
+
+    if args.cmd == "announce":
+        return announce_peer(args.id, args.name, args.platform, args.caps, args.endpoint, args.ttl)
+    if args.cmd == "delegate":
+        return delegate_task(args.to, args.task, args.context, args.next, args.from_peer, args.channel)
+    if args.cmd == "peers":
+        peers = _recent_peers(args.stale)
+        return {"peers": peers, "count": len(peers), "alive": len([p for p in peers if p["alive"]])}
+    return board_snapshot()
+
+
 if __name__ == "__main__":
-    # `python -m sassymcp.modules.coordination` â€” emits the board as one JSON
-    # line for the VS Code cockpit to poll (WAL-aware, no native deps).
     import sys
     try:
-        sys.stdout.write(json.dumps(board_snapshot()))
+        sys.stdout.write(json.dumps(_main()))
+    except SystemExit:
+        raise
     except Exception as e:  # never crash the poller; hand it a usable error shape
         sys.stdout.write(json.dumps({
             "error": str(e), "peers": [], "channels": [],

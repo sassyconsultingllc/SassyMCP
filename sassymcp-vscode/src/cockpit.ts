@@ -3,10 +3,11 @@
 // cockpit.css). The host polls the coordination board and relays Hermes events.
 
 import * as vscode from "vscode";
-import { getBoard } from "./cockpitData";
+import { announceSelf, getBoard } from "./cockpitData";
 import { HermesController } from "./hermes";
 
 const POLL_MS = 4000;
+const REANNOUNCE_MS = 45000;
 
 export class BrainCockpitPanel {
     public static current: BrainCockpitPanel | undefined;
@@ -15,6 +16,7 @@ export class BrainCockpitPanel {
     private readonly panel: vscode.WebviewPanel;
     private disposables: vscode.Disposable[] = [];
     private timer: ReturnType<typeof setInterval> | undefined;
+    private lastAnnounce = 0;
     private readonly hermes: HermesController;
 
     public static createOrShow(extensionUri: vscode.Uri): void {
@@ -76,6 +78,11 @@ export class BrainCockpitPanel {
     }
 
     private async refresh(): Promise<void> {
+        const now = Date.now();
+        if (now - this.lastAnnounce > REANNOUNCE_MS) {
+            announceSelf();
+            this.lastAnnounce = now;
+        }
         const board = await getBoard();
         this.post({ type: "board", data: board });
     }
