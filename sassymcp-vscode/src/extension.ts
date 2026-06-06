@@ -12,6 +12,7 @@ import { Installer } from "./installer";
 import { StatusManager } from "./status";
 import { Brain } from "./brain";
 import { SetupWizardPanel } from "./setupWizard";
+import { BrainCockpitPanel } from "./cockpit";
 
 let statusManager: StatusManager | undefined;
 
@@ -63,6 +64,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     // Commands
     context.subscriptions.push(
+        vscode.commands.registerCommand("sassymcp.openCockpit", () => {
+            BrainCockpitPanel.createOrShow(context.extensionUri);
+        }),
         vscode.commands.registerCommand("sassymcp.runSetupWizard", () => {
             if (!exePath) {
                 vscode.window.showErrorMessage("SassyMCP: sassymcp.exe not found.");

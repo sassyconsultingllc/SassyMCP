@@ -141,6 +141,59 @@ def _recent_peers(stale_seconds: int = DEFAULT_STALE_SECONDS) -> list[dict]:
     return sorted(peers.values(), key=lambda p: p["age_seconds"])
 
 
+def board_snapshot(stale_seconds: int = DEFAULT_STALE_SECONDS, handoff_limit: int = 20) -> dict:
+    """Coordination snapshot for the Sassy Brain cockpit (read-only, WAL-aware).
+
+    Single source of truth shared by the sassy_coordination_board MCP tool and
+    the `python -m sassymcp.modules.coordination` CLI the VS Code extension polls.
+    Reads through open_db() so it sees rows still in the WAL — direct file reads
+    (e.g. sql.js) would miss recent handoffs until checkpoint.
+    """
+    _ensure_db()
+    conn = open_db(DB_PATH)
+    conn.row_factory = sqlite3.Row
+
+    channels = [
+        {"channel": r["channel"], "count": r["c"]}
+        for r in conn.execute(
+            "SELECT channel, COUNT(*) AS c FROM messages "
+            "GROUP BY channel ORDER BY c DESC"
+        ).fetchall()
+    ]
+
+    handoff_rows = conn.execute(
+        "SELECT id, session_id, channel, payload, created_at FROM messages "
+        "WHERE channel IN (?, 'task-handoff') ORDER BY id DESC LIMIT ?",
+        (HANDOFF_CHANNEL, handoff_limit),
+    ).fetchall()
+    conn.close()
+
+    handoffs = []
+    for r in handoff_rows:
+        try:
+            data = json.loads(r["payload"])
+        except (json.JSONDecodeError, TypeError):
+            data = {"raw": r["payload"][:200]}
+        handoffs.append({
+            "id": r["id"],
+            "channel": r["channel"],
+            "from": data.get("from", r["session_id"]),
+            "to": data.get("to", ""),
+            "task": data.get("task", data.get("status", "")),
+            "created_at": r["created_at"],
+            "age_seconds": round(_age_seconds(r["created_at"]), 1),
+        })
+
+    return {
+        "peers": _recent_peers(stale_seconds),
+        "channels": channels,
+        "handoffs": handoffs,
+        "sessions": _list_sessions(),
+        "db": str(DB_PATH),
+        "generated_at": _now().isoformat(),
+    }
+
+
 def register(server):
 
     @server.tool()
@@ -236,46 +289,18 @@ def register(server):
         timeline (peer-delegate + task-handoff), and registered sessions — without
         marking any messages read.
         """
-        _ensure_db()
-        conn = open_db(DB_PATH)
-        conn.row_factory = sqlite3.Row
+        return json.dumps(board_snapshot(stale_seconds, handoff_limit), indent=2)
 
-        channels = [
-            {"channel": r["channel"], "count": r["c"]}
-            for r in conn.execute(
-                "SELECT channel, COUNT(*) AS c FROM messages "
-                "GROUP BY channel ORDER BY c DESC"
-            ).fetchall()
-        ]
 
-        handoff_rows = conn.execute(
-            "SELECT id, session_id, channel, payload, created_at FROM messages "
-            "WHERE channel IN (?, 'task-handoff') ORDER BY id DESC LIMIT ?",
-            (HANDOFF_CHANNEL, handoff_limit),
-        ).fetchall()
-        conn.close()
-
-        handoffs = []
-        for r in handoff_rows:
-            try:
-                data = json.loads(r["payload"])
-            except (json.JSONDecodeError, TypeError):
-                data = {"raw": r["payload"][:200]}
-            handoffs.append({
-                "id": r["id"],
-                "channel": r["channel"],
-                "from": data.get("from", r["session_id"]),
-                "to": data.get("to", ""),
-                "task": data.get("task", data.get("status", "")),
-                "created_at": r["created_at"],
-                "age_seconds": round(_age_seconds(r["created_at"]), 1),
-            })
-
-        return json.dumps({
-            "peers": _recent_peers(stale_seconds),
-            "channels": channels,
-            "handoffs": handoffs,
-            "sessions": _list_sessions(),
-            "db": str(DB_PATH),
-            "generated_at": _now().isoformat(),
-        }, indent=2)
+if __name__ == "__main__":
+    # `python -m sassymcp.modules.coordination` — emits the board as one JSON
+    # line for the VS Code cockpit to poll (WAL-aware, no native deps).
+    import sys
+    try:
+        sys.stdout.write(json.dumps(board_snapshot()))
+    except Exception as e:  # never crash the poller; hand it a usable error shape
+        sys.stdout.write(json.dumps({
+            "error": str(e), "peers": [], "channels": [],
+            "handoffs": [], "sessions": [],
+        }))
+        sys.exit(1)
