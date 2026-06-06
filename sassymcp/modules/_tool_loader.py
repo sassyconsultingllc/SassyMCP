@@ -237,8 +237,8 @@ TOOL_GROUPS = {
         "calls_per_minute": 30,
     },
     "v020": {
-        "modules": ["vision", "app_launcher", "web_inspector", "crosslink"],
-        "description": "Vision, app launcher, web inspector, crosslink",
+        "modules": ["vision", "app_launcher", "web_inspector", "crosslink", "coordination"],
+        "description": "Vision, app launcher, web inspector, crosslink, multi-AI coordination",
         "always_load": False,
         "max_concurrent": 5,
         "calls_per_minute": 60,
