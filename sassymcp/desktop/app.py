@@ -24,7 +24,24 @@ THEME = """:root{
   --vscode-input-background:#26262b; --vscode-input-foreground:#e6e6e6;
   --vscode-focusBorder:#d6409f;
 }
-html,body{height:100%} body{background:var(--vscode-editor-background)}"""
+html,body{height:100%} body{background:var(--vscode-editor-background)}
+#__err{display:none;position:fixed;inset:0;z-index:99999;background:#2a0a0a;color:#ff9b9b;
+ font:12px/1.5 ui-monospace,Consolas,monospace;padding:16px;white-space:pre-wrap;overflow:auto}"""
+
+# Surfaces any JS load/runtime error to the window (no more silent black screen)
+# AND to stdout via the bridge log, so a headless launch is debuggable.
+ERRTRAP = """<div id="__err"></div>
+<script>
+(function(){
+  var pending=[];
+  function flush(){ try{ if(window.pywebview&&window.pywebview.api&&window.pywebview.api.log){ pending.splice(0).forEach(function(m){ window.pywebview.api.log(m); }); } }catch(_){} }
+  function show(m){ var e=document.getElementById('__err'); if(e){ e.style.display='block'; e.textContent='Sassy Brain JS error:\\n\\n'+m; } pending.push(String(m).slice(0,3000)); flush(); }
+  window.addEventListener('error', function(ev){ show((ev.error&&ev.error.stack)||ev.message||String(ev)); });
+  window.addEventListener('unhandledrejection', function(ev){ show('promise: '+((ev.reason&&ev.reason.stack)||ev.reason)); });
+  window.addEventListener('pywebviewready', flush);
+  var n=0,iv=setInterval(function(){ if(window.pywebview&&window.pywebview.api){ clearInterval(iv); flush(); } else if(++n>100){clearInterval(iv);} },100);
+})();
+</script>"""
 
 # Bridges the VS Code message protocol to window.pywebview.api so the SAME
 # React bundle runs unmodified. Queues messages until pywebview is ready, then
@@ -68,13 +85,32 @@ def build_html() -> str:
             f"cockpit.js not found in {d}. Build it: npm run compile (in sassymcp-vscode)."
         )
     js = js_path.read_text(encoding="utf-8")
+    # Inlining guard: a literal "</script>" / "</style>" inside the bundle would
+    # close the tag early and blank the page. Escape the only dangerous tokens.
+    js = js.replace("</script", "<\\/script")
+    css = css.replace("</style", "<\\/style")
     return (
         "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
         "<title>Sassy Brain</title><style>" + THEME + "\n" + css + "</style></head>"
-        "<body><div id=\"root\"></div>" + SHIM +
-        "<script>" + js + "</script></body></html>"
+        "<body><script>window.process=window.process||{env:{NODE_ENV:\"production\"}};</script>"
+        "<div id=\"root\"></div>" + ERRTRAP + SHIM +
+        "<script>" + js + "</script>" + MOUNT_PROBE + "</body></html>"
     )
+
+
+# Reports whether React actually rendered into #root — a definitive headless
+# signal (logged to stdout) so we can debug a blank window without a screenshot.
+MOUNT_PROBE = """<script>
+setTimeout(function(){
+  try{
+    var r=document.getElementById('root');
+    var n=r?r.childElementCount:-1;
+    var msg='mount-check root.children='+n+' bodylen='+(document.body.innerText||'').length;
+    if(window.pywebview&&window.pywebview.api&&window.pywebview.api.log){ window.pywebview.api.log(msg); }
+  }catch(e){ try{ window.pywebview.api.log('probe-fail '+e); }catch(_){} }
+}, 2500);
+</script>"""
 
 
 def main(argv=None) -> int:
@@ -103,7 +139,7 @@ def main(argv=None) -> int:
         "Sassy Brain", html=build_html(), js_api=bridge,
         width=1180, height=800, min_size=(860, 560),
     )
-    webview.start()
+    webview.start(debug="--debug" in argv)
     return 0
 
 

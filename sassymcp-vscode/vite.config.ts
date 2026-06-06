@@ -8,6 +8,13 @@ import { resolve } from "path";
 // webview <script> a classic tag — simplest under VS Code's CSP.
 export default defineConfig({
     plugins: [react()],
+    // Library builds don't replace process.env.NODE_ENV — without this, React's
+    // bundle hits a bare `process` at runtime in a webview ("process is not
+    // defined") and never mounts. Pin it so the IIFE is self-contained.
+    define: {
+        "process.env.NODE_ENV": JSON.stringify("production"),
+        "process.env": "{}",
+    },
     build: {
         outDir: resolve(__dirname, "media/cockpit"),
         emptyOutDir: true,

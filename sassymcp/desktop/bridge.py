@@ -11,6 +11,13 @@ from pathlib import Path
 
 
 class Bridge:
+    def log(self, text: str) -> None:
+        """JS-side error/diagnostic sink — prints to the app's stdout."""
+        try:
+            print(f"[webview] {text}", flush=True)
+        except Exception:
+            pass
+
     def request(self, msg_json: str) -> str:
         """Handle one outbound webview message; return a JSON list of inbound
         messages ({type:'board'|'brain'|'phone'}) for the shim to dispatch."""
