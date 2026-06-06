@@ -65,6 +65,18 @@ export interface BrainStatus {
     error?: string;
 }
 
+export interface PhoneDevice {
+    serial: string;
+    model?: string;
+    state?: string;
+}
+
+export interface PhoneState {
+    devices: PhoneDevice[];
+    adb?: boolean;
+    error?: string;
+}
+
 export interface VsCodeApi {
     postMessage(msg: unknown): void;
     getState(): unknown;

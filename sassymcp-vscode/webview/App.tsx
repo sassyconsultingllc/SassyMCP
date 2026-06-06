@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { Board, BrainStatus, Handoff, Peer, Session, VsCodeApi } from "./types";
+import { useEffect, useMemo, useState } from "react";
+import type { Board, BrainStatus, Handoff, Peer, PhoneState, Session, VsCodeApi } from "./types";
 
 declare function acquireVsCodeApi(): VsCodeApi;
 const vscode = acquireVsCodeApi();
 
-const ANDROID_RE = /android|mobile|adb|phone/i;
 type Tab = "coord" | "dash" | "actions";
 
 function ago(seconds: number): string {
@@ -15,14 +14,14 @@ function ago(seconds: number): string {
     return `${Math.round(seconds / 86400)}d ago`;
 }
 
+const send = (m: unknown) => vscode.postMessage(m);
+
 export function App() {
     const [board, setBoard] = useState<Board | null>(null);
     const [brain, setBrain] = useState<BrainStatus | null>(null);
-    const [hermesRunning, setHermesRunning] = useState(false);
-    const [hermesLog, setHermesLog] = useState<string[]>([]);
+    const [phone, setPhone] = useState<PhoneState | null>(null);
     const [updated, setUpdated] = useState<number>(0);
     const [tab, setTab] = useState<Tab>("coord");
-    const logRef = useRef<HTMLDivElement | null>(null);
 
     useEffect(() => {
         const onMsg = (event: MessageEvent) => {
@@ -32,40 +31,32 @@ export function App() {
                 setUpdated(Date.now());
             } else if (msg?.type === "brain") {
                 setBrain(msg.data as BrainStatus);
-            } else if (msg?.type === "hermes") {
-                if (typeof msg.running === "boolean") { setHermesRunning(msg.running); }
-                if (msg.line) {
-                    setHermesLog((prev) => [...prev, String(msg.line)].slice(-200));
-                }
+            } else if (msg?.type === "phone") {
+                setPhone(msg.data as PhoneState);
             }
         };
         window.addEventListener("message", onMsg);
-        vscode.postMessage({ type: "ready" });
+        send({ type: "ready" });
         return () => window.removeEventListener("message", onMsg);
     }, []);
 
-    useEffect(() => {
-        if (logRef.current) { logRef.current.scrollTop = logRef.current.scrollHeight; }
-    }, [hermesLog]);
-
     const peers = board?.peers ?? [];
-    const aliveCount = peers.filter((p) => p.alive).length + (hermesRunning ? 1 : 0);
+    const agentCount = peers.filter((p) => p.alive).length;
+    const deviceCount = phone?.devices?.length ?? 0;
 
     return (
         <div className="cockpit">
             <Header
-                aliveCount={aliveCount}
+                agentCount={agentCount}
+                deviceCount={deviceCount}
                 error={board?.error}
                 tab={tab}
                 setTab={setTab}
-                onRefresh={() => vscode.postMessage({ type: "refresh" })}
             />
 
-            {tab === "coord" && (
-                <CoordinationView board={board} hermesRunning={hermesRunning} hermesLog={hermesLog} logRef={logRef} aliveCount={aliveCount} />
-            )}
+            {tab === "coord" && <CoordinationView board={board} phone={phone} agentCount={agentCount} />}
             {tab === "dash" && <DashboardView brain={brain} />}
-            {tab === "actions" && <ActionsView hermesRunning={hermesRunning} />}
+            {tab === "actions" && <ActionsView phone={phone} />}
 
             <footer className="foot">
                 <span>{board?.db ? `db: ${board.db}` : "connecting…"}{updated ? ` · updated ${ago((Date.now() - updated) / 1000)}` : ""}</span>
@@ -74,7 +65,7 @@ export function App() {
     );
 }
 
-function Header(props: { aliveCount: number; error?: string; tab: Tab; setTab: (t: Tab) => void; onRefresh: () => void }) {
+function Header(props: { agentCount: number; deviceCount: number; error?: string; tab: Tab; setTab: (t: Tab) => void }) {
     const tabs: [Tab, string][] = [["coord", "Coordination"], ["dash", "Dashboard"], ["actions", "Actions"]];
     return (
         <header className="head">
@@ -90,36 +81,29 @@ function Header(props: { aliveCount: number; error?: string; tab: Tab; setTab: (
             <div className="head-right">
                 {props.error
                     ? <span className="status err" title={props.error}>● disconnected</span>
-                    : <span className="status ok">● live · {props.aliveCount} active</span>}
-                <button className="btn ghost" onClick={props.onRefresh}>↻ Refresh</button>
+                    : <span className="status ok">● {props.agentCount} agent{props.agentCount === 1 ? "" : "s"} · {props.deviceCount} device{props.deviceCount === 1 ? "" : "s"}</span>}
+                <button className="btn ghost" onClick={() => send({ type: "refresh" })}>↻ Refresh</button>
             </div>
         </header>
     );
 }
 
 // ── Coordination tab ──────────────────────────────────────────────────
-function CoordinationView(props: {
-    board: Board | null; hermesRunning: boolean; hermesLog: string[];
-    logRef: React.RefObject<HTMLDivElement | null>; aliveCount: number;
-}) {
+function CoordinationView(props: { board: Board | null; phone: PhoneState | null; agentCount: number }) {
     const board = props.board;
     const peers = board?.peers ?? [];
     const sessions = board?.sessions ?? [];
     const peerIds = useMemo(() => new Set(peers.map((p) => p.peer_id)), [peers]);
     const idleSessions = sessions.filter((s) => !peerIds.has(s.session_id));
-    const androidNodes = [
-        ...peers.filter((p) => ANDROID_RE.test(`${p.platform} ${p.name}`)),
-        ...idleSessions.filter((s) => ANDROID_RE.test(`${s.platform} ${s.name}`)),
-    ];
 
     return (
         <div className="grid">
             <section className="card span2">
-                <h2>Coordination mesh{props.aliveCount >= 2 && <span className="badge two-headed">⚡ {props.aliveCount} heads live</span>}</h2>
+                <h2>Agents{props.agentCount >= 2 && <span className="badge two-headed">⚡ {props.agentCount} coordinating</span>}</h2>
                 {peers.length === 0 && (
                     <p className="empty">
-                        No announced peers yet. Agents appear here when they call
-                        <code> sassy_peer_announce</code>, or start the second head.
+                        No agents in the mesh yet. Claude Desktop, Cursor, Windsurf and other MCP
+                        clients show up here when they call <code>sassy_peer_announce</code>.
                     </p>
                 )}
                 <div className="peers">
@@ -136,8 +120,8 @@ function CoordinationView(props: {
             </section>
 
             <section className="card">
-                <h2>Second head — Hermes</h2>
-                <HermesControl running={props.hermesRunning} log={props.hermesLog} logRef={props.logRef} />
+                <h2>Phone</h2>
+                <PhonePanel phone={props.phone} />
             </section>
 
             <section className="card">
@@ -149,18 +133,48 @@ function CoordinationView(props: {
                 <h2>Handoff timeline</h2>
                 <Handoffs handoffs={board?.handoffs ?? []} />
             </section>
+        </div>
+    );
+}
 
-            <section className="card">
-                <h2>Phone</h2>
-                <AndroidTile nodes={androidNodes} />
-            </section>
+function PhonePanel({ phone }: { phone: PhoneState | null }) {
+    const devices = phone?.devices ?? [];
+    if (!phone) { return <p className="empty">Checking for devices…</p>; }
+    if (devices.length === 0) {
+        return (
+            <div>
+                <p className="empty">
+                    {phone.error
+                        ? phone.error
+                        : "No phone connected. Plug in an Android device (USB debugging on) — it joins the mesh as a node you can drive and observe."}
+                </p>
+                <button className="btn ghost" onClick={() => send({ type: "refreshPhone" })}>↻ Re-scan</button>
+            </div>
+        );
+    }
+    return (
+        <div className="devices">
+            {devices.map((d) => (
+                <div key={d.serial} className="device">
+                    <div className="device-top">
+                        <span className={`dot ${d.state === "device" ? "g" : "x"}`} />
+                        <span className="device-name">{d.model || d.serial}</span>
+                        <span className="device-state">{d.state}</span>
+                    </div>
+                    <div className="device-serial">{d.serial}</div>
+                    <div className="device-actions">
+                        <button className="btn primary" onClick={() => send({ type: "action", action: "observePhone", serial: d.serial })}>Observe</button>
+                        <button className="btn" onClick={() => send({ type: "action", action: "mirrorPhone", serial: d.serial })}>Mirror</button>
+                    </div>
+                </div>
+            ))}
         </div>
     );
 }
 
 // ── Dashboard tab ─────────────────────────────────────────────────────
 function DashboardView({ brain }: { brain: BrainStatus | null }) {
-    useEffect(() => { vscode.postMessage({ type: "refreshBrain" }); }, []);
+    useEffect(() => { send({ type: "refreshBrain" }); }, []);
     if (!brain) { return <p className="empty pad">Reading brain state…</p>; }
     if (brain.error) { return <p className="empty pad">Couldn’t read brain: {brain.error}</p>; }
 
@@ -205,21 +219,17 @@ function Stat({ label, value, sub, accent }: { label: string; value: string; sub
 // ── Actions tab ───────────────────────────────────────────────────────
 interface ActionDef { label: string; hint: string; fire: () => void; }
 
-function ActionsView({ hermesRunning }: { hermesRunning: boolean }) {
+function ActionsView({ phone }: { phone: PhoneState | null }) {
     const [q, setQ] = useState("");
-    const send = (m: unknown) => vscode.postMessage(m);
+    const firstSerial = phone?.devices?.[0]?.serial;
     const actions: ActionDef[] = [
-        hermesRunning
-            ? { label: "■ Stop Hermes", hint: "stop the local Ollama peer", fire: () => send({ type: "stopHermes" }) }
-            : { label: "⚡ Start Hermes", hint: "bring the second head online", fire: () => send({ type: "startHermes" }) },
-        { label: "📣 Announce this instance", hint: "register VS Code in the mesh", fire: () => send({ type: "announce" }) },
+        { label: "📣 Announce this instance", hint: "register in the agent mesh", fire: () => send({ type: "announce" }) },
+        { label: "📱 Observe phone", hint: "pull the phone's screen + UI into the mesh", fire: () => send({ type: "action", action: "observePhone", serial: firstSerial }) },
+        { label: "🖥 Mirror phone (scrcpy)", hint: "live screen mirror", fire: () => send({ type: "action", action: "mirrorPhone", serial: firstSerial }) },
         { label: "🧭 Run Setup Wizard", hint: "generate persona.md", fire: () => send({ type: "action", action: "runWizard" }) },
         { label: "📜 Open Audit Log", hint: "every tool call, logged", fire: () => send({ type: "action", action: "openAudit" }) },
-        { label: "🗑 Open _DELETE_ folder", hint: "safe-delete staging", fire: () => send({ type: "action", action: "openDelete" }) },
         { label: "📂 Open ~/.sassymcp", hint: "the brain on disk", fire: () => send({ type: "action", action: "openHome" }) },
-        { label: "🔧 Reinstall client configs", hint: "re-patch every MCP client", fire: () => send({ type: "action", action: "reinstall" }) },
-        { label: "⚙ Open SassyMCP settings", hint: "repo/python paths, hotkeys", fire: () => send({ type: "action", action: "openSettings" }) },
-        { label: "↻ Refresh everything", hint: "board + brain", fire: () => send({ type: "refresh" }) },
+        { label: "↻ Refresh everything", hint: "agents + phone + brain", fire: () => send({ type: "refresh" }) },
     ];
     const filtered = q.trim()
         ? actions.filter((a) => (a.label + " " + a.hint).toLowerCase().includes(q.trim().toLowerCase()))
@@ -302,46 +312,5 @@ function Handoffs({ handoffs }: { handoffs: Handoff[] }) {
                 </li>
             ))}
         </ol>
-    );
-}
-
-function HermesControl(props: { running: boolean; log: string[]; logRef: React.RefObject<HTMLDivElement | null> }) {
-    return (
-        <div className="hermes">
-            <div className="hermes-row">
-                <span className={`status ${props.running ? "ok" : "idle"}`}>
-                    ● {props.running ? "running" : "stopped"}
-                </span>
-                {props.running
-                    ? <button className="btn danger" onClick={() => vscode.postMessage({ type: "stopHermes" })}>Stop</button>
-                    : <button className="btn primary" onClick={() => vscode.postMessage({ type: "startHermes" })}>Start Hermes</button>}
-            </div>
-            <p className="hint">Local Ollama peer joins the <code>joint</code> channel and trades turns with Claude.</p>
-            <div className="log" ref={props.logRef}>
-                {props.log.length === 0
-                    ? <span className="dim">no output yet</span>
-                    : props.log.map((l, i) => <div key={i} className="log-line">{l}</div>)}
-            </div>
-        </div>
-    );
-}
-
-function AndroidTile({ nodes }: { nodes: { name?: string; platform?: string; peer_id?: string; session_id?: string }[] }) {
-    if (nodes.length === 0) {
-        return (
-            <p className="empty">
-                No phone peer yet. Connect a device over ADB and run
-                <code> sassy_combo_phone_observe</code> — it joins the mesh as a coordinated actuator.
-            </p>
-        );
-    }
-    return (
-        <div className="sessions">
-            {nodes.map((n, i) => (
-                <span key={i} className="chip phone">
-                    {n.name || n.peer_id || n.session_id}<i>{n.platform}</i>
-                </span>
-            ))}
-        </div>
     );
 }
