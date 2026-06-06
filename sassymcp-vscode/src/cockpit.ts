@@ -3,10 +3,14 @@
 // cockpit.css). The host polls the coordination board and relays Hermes events.
 
 import * as vscode from "vscode";
-import { announceSelf, getBoard } from "./cockpitData";
+import * as os from "os";
+import * as path from "path";
+import { randomBytes } from "crypto";
+import { announceSelf, getBoard, getBrainStatus } from "./cockpitData";
 import { HermesController } from "./hermes";
 
 const POLL_MS = 4000;
+const BRAIN_POLL_MS = 60000;
 const REANNOUNCE_MS = 45000;
 
 export class BrainCockpitPanel {
@@ -16,6 +20,7 @@ export class BrainCockpitPanel {
     private readonly panel: vscode.WebviewPanel;
     private disposables: vscode.Disposable[] = [];
     private timer: ReturnType<typeof setInterval> | undefined;
+    private brainTimer: ReturnType<typeof setInterval> | undefined;
     private lastAnnounce = 0;
     private readonly hermes: HermesController;
 
@@ -48,12 +53,15 @@ export class BrainCockpitPanel {
         this.panel.webview.onDidReceiveMessage(async (msg: any) => {
             switch (msg?.type) {
                 case "ready":
-                    await this.refresh();
+                    await Promise.all([this.refresh(), this.refreshBrain()]);
                     this.post({ type: "hermes", running: this.hermes.running });
                     this.startPolling();
                     break;
                 case "refresh":
-                    await this.refresh();
+                    await Promise.all([this.refresh(), this.refreshBrain()]);
+                    break;
+                case "refreshBrain":
+                    await this.refreshBrain();
                     break;
                 case "startHermes": {
                     const r = this.hermes.start();
@@ -66,6 +74,13 @@ export class BrainCockpitPanel {
                 case "stopHermes":
                     this.hermes.stop();
                     break;
+                case "announce":
+                    announceSelf();
+                    await this.refresh();
+                    break;
+                case "action":
+                    await this.runAction(String(msg.action || ""));
+                    break;
             }
         }, null, this.disposables);
     }
@@ -75,6 +90,10 @@ export class BrainCockpitPanel {
             return;
         }
         this.timer = setInterval(() => { void this.refresh(); }, POLL_MS);
+        // Brain status changes slowly (tier, memory, audit) — poll it on a
+        // slower cadence so the Dashboard tab doesn't go stale, without paying
+        // an extra python spawn every 4s.
+        this.brainTimer = setInterval(() => { void this.refreshBrain(); }, BRAIN_POLL_MS);
     }
 
     private async refresh(): Promise<void> {
@@ -85,6 +104,38 @@ export class BrainCockpitPanel {
         }
         const board = await getBoard();
         this.post({ type: "board", data: board });
+    }
+
+    private async refreshBrain(): Promise<void> {
+        const brain = await getBrainStatus();
+        this.post({ type: "brain", data: brain });
+    }
+
+    private async runAction(action: string): Promise<void> {
+        switch (action) {
+            case "runWizard":
+                await vscode.commands.executeCommand("sassymcp.runSetupWizard");
+                break;
+            case "openAudit":
+                await vscode.commands.executeCommand("sassymcp.openAuditLog");
+                break;
+            case "openDelete":
+                await vscode.commands.executeCommand("sassymcp.openDeleteFolder");
+                break;
+            case "reinstall":
+                await vscode.commands.executeCommand("sassymcp.reinstallConfigs");
+                break;
+            case "openSettings":
+                await vscode.commands.executeCommand("workbench.action.openSettings", "sassymcp");
+                break;
+            case "openHome": {
+                const home = process.env.SASSYMCP_HOME || path.join(os.homedir(), ".sassymcp");
+                await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(home));
+                break;
+            }
+            default:
+                vscode.window.showWarningMessage(`SassyMCP: unknown action '${action}'`);
+        }
     }
 
     private post(m: any): void {
@@ -122,6 +173,9 @@ export class BrainCockpitPanel {
         if (this.timer) {
             clearInterval(this.timer);
         }
+        if (this.brainTimer) {
+            clearInterval(this.brainTimer);
+        }
         this.hermes.dispose();
         this.panel.dispose();
         for (const d of this.disposables) {
@@ -131,10 +185,6 @@ export class BrainCockpitPanel {
 }
 
 function nonceStr(): string {
-    let t = "";
-    const c = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    for (let i = 0; i < 32; i++) {
-        t += c.charAt(Math.floor(Math.random() * c.length));
-    }
-    return t;
+    // CSPRNG — a CSP nonce must be unguessable (Math.random() is not).
+    return randomBytes(16).toString("base64url");
 }

@@ -127,45 +127,78 @@ export function announceSelf(ttlSeconds = 600): void {
     }
 }
 
-/** Poll the coordination board. Never rejects — returns a Board with `.error` set on failure. */
-export function getBoard(timeoutMs = 12000): Promise<Board> {
+export interface BrainStatus {
+    version?: string;
+    tier?: string;
+    addons?: string[];
+    license_valid?: boolean;
+    email?: string;
+    memory_count?: number;
+    milestones?: number;
+    projects?: string[];
+    audit_count?: number;
+    persona?: boolean;
+    groups?: { name: string; module_count: number; always_load: boolean; allowed: boolean; description: string }[];
+    group_count?: number;
+    allowed_group_count?: number;
+    module_total?: number;
+    module_allowed?: number;
+    home?: string;
+    error?: string;
+}
+
+/** Spawn a python -m entry that prints one JSON line. Never rejects — resolves
+ *  the parsed object, or an object with `.error` set on any failure. */
+function spawnJson(args: string[], timeoutMs: number): Promise<any> {
     const repo = resolveRepo();
     const py = resolvePython(repo);
     return new Promise((resolve) => {
         let stdout = "";
         let stderr = "";
         let done = false;
-        const finish = (b: Board) => {
+        const finish = (v: any) => {
             if (done) {
                 return;
             }
             done = true;
             clearTimeout(timer);
-            resolve(b);
+            resolve(v);
         };
         let proc;
         try {
-            proc = spawn(py, ["-m", "sassymcp.modules.coordination"], { cwd: repo, shell: false });
+            proc = spawn(py, args, { cwd: repo, shell: false });
         } catch (e) {
-            return resolve(emptyBoard(`could not spawn ${py}: ${String(e)}`));
+            return resolve({ error: `could not spawn ${py}: ${String(e)}` });
         }
         const timer = setTimeout(() => {
             try { proc.kill(); } catch { /* noop */ }
-            finish(emptyBoard(`board timed out after ${timeoutMs}ms (python=${py}, repo=${repo || "?"})`));
+            finish({ error: `timed out after ${timeoutMs}ms (python=${py}, repo=${repo || "?"})` });
         }, timeoutMs);
         proc.stdout.on("data", (d) => { stdout += d.toString(); });
         proc.stderr.on("data", (d) => { stderr += d.toString(); });
-        proc.on("error", (err) => finish(emptyBoard(`spawn failed (${py}): ${err.message}`)));
+        proc.on("error", (err) => finish({ error: `spawn failed (${py}): ${err.message}` }));
         proc.on("close", (code) => {
             if (code !== 0 && !stdout.trim()) {
-                finish(emptyBoard(`python exit ${code}: ${stderr.slice(0, 300) || "no output"}`));
+                finish({ error: `python exit ${code}: ${stderr.slice(0, 300) || "no output"}` });
                 return;
             }
             try {
-                finish(JSON.parse(stdout) as Board);
+                finish(JSON.parse(stdout));
             } catch (e) {
-                finish(emptyBoard(`bad board JSON: ${String(e)} :: ${stdout.slice(0, 200)}`));
+                finish({ error: `bad JSON: ${String(e)} :: ${stdout.slice(0, 200)}` });
             }
         });
     });
+}
+
+/** Poll the coordination board. Never rejects — returns a Board with `.error` set on failure. */
+export async function getBoard(timeoutMs = 12000): Promise<Board> {
+    const v = await spawnJson(["-m", "sassymcp.modules.coordination"], timeoutMs);
+    return v && !v.error ? (v as Board) : emptyBoard(v?.error || "unknown error");
+}
+
+/** Read the brain status snapshot (tier, memory, audit, groups). */
+export async function getBrainStatus(timeoutMs = 12000): Promise<BrainStatus> {
+    const v = await spawnJson(["-m", "sassymcp._brain_status"], timeoutMs);
+    return (v && typeof v === "object") ? (v as BrainStatus) : { error: "unknown error" };
 }

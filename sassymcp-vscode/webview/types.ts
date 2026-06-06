@@ -37,6 +37,34 @@ export interface Board {
     error?: string;
 }
 
+export interface BrainGroup {
+    name: string;
+    module_count: number;
+    always_load: boolean;
+    allowed: boolean;
+    description: string;
+}
+
+export interface BrainStatus {
+    version?: string;
+    tier?: string;
+    addons?: string[];
+    license_valid?: boolean;
+    email?: string;
+    memory_count?: number;
+    milestones?: number;
+    projects?: string[];
+    audit_count?: number;
+    persona?: boolean;
+    groups?: BrainGroup[];
+    group_count?: number;
+    allowed_group_count?: number;
+    module_total?: number;
+    module_allowed?: number;
+    home?: string;
+    error?: string;
+}
+
 export interface VsCodeApi {
     postMessage(msg: unknown): void;
     getState(): unknown;

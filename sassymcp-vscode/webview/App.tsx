@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Board, Handoff, Peer, Session, VsCodeApi } from "./types";
+import type { Board, BrainStatus, Handoff, Peer, Session, VsCodeApi } from "./types";
 
 declare function acquireVsCodeApi(): VsCodeApi;
 const vscode = acquireVsCodeApi();
 
 const ANDROID_RE = /android|mobile|adb|phone/i;
+type Tab = "coord" | "dash" | "actions";
 
 function ago(seconds: number): string {
     if (!isFinite(seconds) || seconds < 0) { return "—"; }
@@ -16,9 +17,11 @@ function ago(seconds: number): string {
 
 export function App() {
     const [board, setBoard] = useState<Board | null>(null);
+    const [brain, setBrain] = useState<BrainStatus | null>(null);
     const [hermesRunning, setHermesRunning] = useState(false);
     const [hermesLog, setHermesLog] = useState<string[]>([]);
     const [updated, setUpdated] = useState<number>(0);
+    const [tab, setTab] = useState<Tab>("coord");
     const logRef = useRef<HTMLDivElement | null>(null);
 
     useEffect(() => {
@@ -27,6 +30,8 @@ export function App() {
             if (msg?.type === "board") {
                 setBoard(msg.data as Board);
                 setUpdated(Date.now());
+            } else if (msg?.type === "brain") {
+                setBrain(msg.data as BrainStatus);
             } else if (msg?.type === "hermes") {
                 if (typeof msg.running === "boolean") { setHermesRunning(msg.running); }
                 if (msg.line) {
@@ -44,83 +49,43 @@ export function App() {
     }, [hermesLog]);
 
     const peers = board?.peers ?? [];
-    const sessions = board?.sessions ?? [];
     const aliveCount = peers.filter((p) => p.alive).length + (hermesRunning ? 1 : 0);
-
-    // Sessions that aren't already represented as a live peer (idle history).
-    const peerIds = useMemo(() => new Set(peers.map((p) => p.peer_id)), [peers]);
-    const idleSessions = sessions.filter((s) => !peerIds.has(s.session_id));
-    const androidNodes = [
-        ...peers.filter((p) => ANDROID_RE.test(`${p.platform} ${p.name}`)),
-        ...idleSessions.filter((s) => ANDROID_RE.test(`${s.platform} ${s.name}`)),
-    ];
 
     return (
         <div className="cockpit">
             <Header
                 aliveCount={aliveCount}
-                updated={updated}
                 error={board?.error}
+                tab={tab}
+                setTab={setTab}
                 onRefresh={() => vscode.postMessage({ type: "refresh" })}
             />
 
-            <div className="grid">
-                <section className="card span2">
-                    <h2>Coordination mesh{aliveCount >= 2 && <span className="badge two-headed">⚡ {aliveCount} heads live</span>}</h2>
-                    {peers.length === 0 && (
-                        <p className="empty">
-                            No announced peers yet. Agents appear here when they call
-                            <code> sassy_peer_announce</code>, or start the second head below.
-                        </p>
-                    )}
-                    <div className="peers">
-                        {peers.map((p) => <PeerCard key={p.peer_id} peer={p} />)}
-                    </div>
-                    {idleSessions.length > 0 && (
-                        <>
-                            <h3 className="muted">Registered sessions</h3>
-                            <div className="sessions">
-                                {idleSessions.slice(0, 8).map((s) => <SessionChip key={s.session_id} s={s} />)}
-                            </div>
-                        </>
-                    )}
-                </section>
-
-                <section className="card">
-                    <h2>Second head — Hermes</h2>
-                    <HermesControl running={hermesRunning} log={hermesLog} logRef={logRef} />
-                </section>
-
-                <section className="card">
-                    <h2>Channels</h2>
-                    <Channels channels={board?.channels ?? []} />
-                </section>
-
-                <section className="card span2">
-                    <h2>Handoff timeline</h2>
-                    <Handoffs handoffs={board?.handoffs ?? []} />
-                </section>
-
-                <section className="card">
-                    <h2>Phone</h2>
-                    <AndroidTile nodes={androidNodes} />
-                </section>
-            </div>
+            {tab === "coord" && (
+                <CoordinationView board={board} hermesRunning={hermesRunning} hermesLog={hermesLog} logRef={logRef} aliveCount={aliveCount} />
+            )}
+            {tab === "dash" && <DashboardView brain={brain} />}
+            {tab === "actions" && <ActionsView hermesRunning={hermesRunning} />}
 
             <footer className="foot">
-                <span>{board?.db ? `db: ${board.db}` : "connecting…"}</span>
+                <span>{board?.db ? `db: ${board.db}` : "connecting…"}{updated ? ` · updated ${ago((Date.now() - updated) / 1000)}` : ""}</span>
             </footer>
         </div>
     );
 }
 
-function Header(props: { aliveCount: number; updated: number; error?: string; onRefresh: () => void }) {
+function Header(props: { aliveCount: number; error?: string; tab: Tab; setTab: (t: Tab) => void; onRefresh: () => void }) {
+    const tabs: [Tab, string][] = [["coord", "Coordination"], ["dash", "Dashboard"], ["actions", "Actions"]];
     return (
         <header className="head">
             <div className="title">
                 <span className="logo">🧠</span>
                 <span className="brand">Sassy&nbsp;Brain</span>
-                <span className="sub">Coordination cockpit</span>
+                <nav className="tabs">
+                    {tabs.map(([id, label]) => (
+                        <button key={id} className={`tab ${props.tab === id ? "active" : ""}`} onClick={() => props.setTab(id)}>{label}</button>
+                    ))}
+                </nav>
             </div>
             <div className="head-right">
                 {props.error
@@ -132,6 +97,158 @@ function Header(props: { aliveCount: number; updated: number; error?: string; on
     );
 }
 
+// ── Coordination tab ──────────────────────────────────────────────────
+function CoordinationView(props: {
+    board: Board | null; hermesRunning: boolean; hermesLog: string[];
+    logRef: React.RefObject<HTMLDivElement | null>; aliveCount: number;
+}) {
+    const board = props.board;
+    const peers = board?.peers ?? [];
+    const sessions = board?.sessions ?? [];
+    const peerIds = useMemo(() => new Set(peers.map((p) => p.peer_id)), [peers]);
+    const idleSessions = sessions.filter((s) => !peerIds.has(s.session_id));
+    const androidNodes = [
+        ...peers.filter((p) => ANDROID_RE.test(`${p.platform} ${p.name}`)),
+        ...idleSessions.filter((s) => ANDROID_RE.test(`${s.platform} ${s.name}`)),
+    ];
+
+    return (
+        <div className="grid">
+            <section className="card span2">
+                <h2>Coordination mesh{props.aliveCount >= 2 && <span className="badge two-headed">⚡ {props.aliveCount} heads live</span>}</h2>
+                {peers.length === 0 && (
+                    <p className="empty">
+                        No announced peers yet. Agents appear here when they call
+                        <code> sassy_peer_announce</code>, or start the second head.
+                    </p>
+                )}
+                <div className="peers">
+                    {peers.map((p) => <PeerCard key={p.peer_id} peer={p} />)}
+                </div>
+                {idleSessions.length > 0 && (
+                    <>
+                        <h3 className="muted">Registered sessions</h3>
+                        <div className="sessions">
+                            {idleSessions.slice(0, 8).map((s) => <SessionChip key={s.session_id} s={s} />)}
+                        </div>
+                    </>
+                )}
+            </section>
+
+            <section className="card">
+                <h2>Second head — Hermes</h2>
+                <HermesControl running={props.hermesRunning} log={props.hermesLog} logRef={props.logRef} />
+            </section>
+
+            <section className="card">
+                <h2>Channels</h2>
+                <Channels channels={board?.channels ?? []} />
+            </section>
+
+            <section className="card span2">
+                <h2>Handoff timeline</h2>
+                <Handoffs handoffs={board?.handoffs ?? []} />
+            </section>
+
+            <section className="card">
+                <h2>Phone</h2>
+                <AndroidTile nodes={androidNodes} />
+            </section>
+        </div>
+    );
+}
+
+// ── Dashboard tab ─────────────────────────────────────────────────────
+function DashboardView({ brain }: { brain: BrainStatus | null }) {
+    useEffect(() => { vscode.postMessage({ type: "refreshBrain" }); }, []);
+    if (!brain) { return <p className="empty pad">Reading brain state…</p>; }
+    if (brain.error) { return <p className="empty pad">Couldn’t read brain: {brain.error}</p>; }
+
+    const tierLabel = (brain.tier || "free").toUpperCase() + (brain.addons && brain.addons.length ? ` + ${brain.addons.join(", ")}` : "");
+    const allowed = (brain.groups ?? []).filter((g) => g.allowed);
+    return (
+        <div className="grid">
+            <Stat label="License tier" value={tierLabel} sub={brain.license_valid ? (brain.email || "valid") : "free / unlicensed"} accent />
+            <Stat label="Memory entries" value={String(brain.memory_count ?? 0)} sub={`${brain.milestones ?? 0} milestones`} />
+            <Stat label="Audit log" value={String(brain.audit_count ?? 0)} sub="recorded tool calls" />
+            <Stat label="Persona" value={brain.persona ? "configured" : "not set"} sub={brain.persona ? "every session reads it" : "run Setup Wizard"} />
+            <Stat label="Tool groups" value={`${brain.allowed_group_count ?? 0}/${brain.group_count ?? 0}`} sub={`${brain.module_allowed ?? 0}/${brain.module_total ?? 0} modules enabled`} />
+            <Stat label="Version" value={`v${brain.version ?? "?"}`} sub={brain.home || ""} />
+
+            <section className="card span2">
+                <h2>Tool groups</h2>
+                <div className="groups">
+                    {(brain.groups ?? []).map((g) => (
+                        <div key={g.name} className={`group ${g.allowed ? "on" : "off"}`} title={g.description}>
+                            <span className={`dot ${g.allowed ? "g" : "x"}`} />
+                            <span className="g-name">{g.name}</span>
+                            <span className="g-meta">{g.module_count} mod{g.always_load ? " · auto" : ""}</span>
+                        </div>
+                    ))}
+                </div>
+                <p className="hint">{allowed.length} of {brain.groups?.length ?? 0} groups available on this tier.</p>
+            </section>
+        </div>
+    );
+}
+
+function Stat({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: boolean }) {
+    return (
+        <section className="card stat">
+            <div className="stat-label">{label}</div>
+            <div className={`stat-value ${accent ? "accent" : ""}`}>{value}</div>
+            {sub && <div className="stat-sub">{sub}</div>}
+        </section>
+    );
+}
+
+// ── Actions tab ───────────────────────────────────────────────────────
+interface ActionDef { label: string; hint: string; fire: () => void; }
+
+function ActionsView({ hermesRunning }: { hermesRunning: boolean }) {
+    const [q, setQ] = useState("");
+    const send = (m: unknown) => vscode.postMessage(m);
+    const actions: ActionDef[] = [
+        hermesRunning
+            ? { label: "■ Stop Hermes", hint: "stop the local Ollama peer", fire: () => send({ type: "stopHermes" }) }
+            : { label: "⚡ Start Hermes", hint: "bring the second head online", fire: () => send({ type: "startHermes" }) },
+        { label: "📣 Announce this instance", hint: "register VS Code in the mesh", fire: () => send({ type: "announce" }) },
+        { label: "🧭 Run Setup Wizard", hint: "generate persona.md", fire: () => send({ type: "action", action: "runWizard" }) },
+        { label: "📜 Open Audit Log", hint: "every tool call, logged", fire: () => send({ type: "action", action: "openAudit" }) },
+        { label: "🗑 Open _DELETE_ folder", hint: "safe-delete staging", fire: () => send({ type: "action", action: "openDelete" }) },
+        { label: "📂 Open ~/.sassymcp", hint: "the brain on disk", fire: () => send({ type: "action", action: "openHome" }) },
+        { label: "🔧 Reinstall client configs", hint: "re-patch every MCP client", fire: () => send({ type: "action", action: "reinstall" }) },
+        { label: "⚙ Open SassyMCP settings", hint: "repo/python paths, hotkeys", fire: () => send({ type: "action", action: "openSettings" }) },
+        { label: "↻ Refresh everything", hint: "board + brain", fire: () => send({ type: "refresh" }) },
+    ];
+    const filtered = q.trim()
+        ? actions.filter((a) => (a.label + " " + a.hint).toLowerCase().includes(q.trim().toLowerCase()))
+        : actions;
+
+    return (
+        <div className="actions-wrap">
+            <input
+                className="search"
+                placeholder="Search actions…  (Enter runs the first match)"
+                value={q}
+                autoFocus
+                onChange={(e) => setQ(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && filtered[0]) { filtered[0].fire(); } }}
+            />
+            <div className="actions">
+                {filtered.map((a) => (
+                    <button key={a.label} className="action" onClick={a.fire}>
+                        <span className="a-label">{a.label}</span>
+                        <span className="a-hint">{a.hint}</span>
+                    </button>
+                ))}
+                {filtered.length === 0 && <p className="empty">No actions match “{q}”.</p>}
+            </div>
+        </div>
+    );
+}
+
+// ── shared bits ───────────────────────────────────────────────────────
 function PeerCard({ peer }: { peer: Peer }) {
     return (
         <div className={`peer ${peer.alive ? "alive" : "stale"}`}>
