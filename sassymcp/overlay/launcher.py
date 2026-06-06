@@ -132,8 +132,19 @@ class Launcher:
 
     # ── window ────────────────────────────────────────────────────────
     def _on_focus_out(self, _event):
-        # Dismiss when the user clicks elsewhere.
-        self.hide()
+        # Click-away to dismiss — but NOT when focus merely moved to a child
+        # widget (Entry/Listbox). Tk fires <FocusOut> on the toplevel when
+        # focus shifts to a child, so we defer and re-check: focus_get()
+        # returns a widget if focus is still inside this app, None if it left.
+        self.win.after(120, self._maybe_hide)
+
+    def _maybe_hide(self):
+        try:
+            focused = self.win.focus_get()
+        except Exception:
+            focused = None
+        if focused is None:
+            self.hide()
 
     def visible(self) -> bool:
         return self.win.state() != "withdrawn"

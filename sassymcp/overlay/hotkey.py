@@ -12,3 +12,12 @@ def register_hotkey(callback: Callable[[], None], combo: str = "ctrl+alt+s") -> 
         return True
     except Exception:
         return False
+
+
+def unregister_hotkeys() -> None:
+    """Remove all global hotkeys (best effort, called on quit)."""
+    try:
+        import keyboard
+        keyboard.unhook_all()
+    except Exception:
+        pass

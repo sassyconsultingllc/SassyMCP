@@ -58,6 +58,11 @@ class OverlayApp:
 
     def quit(self) -> None:
         try:
+            from .hotkey import unregister_hotkeys
+            unregister_hotkeys()
+        except Exception:
+            pass
+        try:
             self.tray.stop()
         except Exception:
             pass
