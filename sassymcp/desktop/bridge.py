@@ -26,6 +26,8 @@ class Bridge:
         except Exception:
             msg = {}
         t = msg.get("type")
+        if t not in ("ready", "refresh", "refreshBrain", "refreshPhone"):
+            self.log(f"request: {t} action={msg.get('action')}")
         out: list[dict] = []
         try:
             if t in ("ready", "refresh"):
@@ -74,19 +76,26 @@ class Bridge:
     def _action(self, msg: dict) -> None:
         action = msg.get("action")
         serial = msg.get("serial")
+        self.log(f"action: {action} serial={serial}")
         if action == "observePhone":
             # Surface the phone as a coordinated node in the mesh.
             self._announce(f"phone-{serial or 'device'}", serial or "phone", "android", "screen,ui,tap,swipe")
+            self.log("observePhone -> announced phone peer")
         elif action == "mirrorPhone":
+            self.log(f"mirrorPhone -> scrcpy (serial={serial})")
             self._spawn(["scrcpy"] + (["-s", serial] if serial else []))
         elif action == "openHome":
-            self._open(self._home())
+            self.log(f"openHome -> explorer {self._home()}")
+            self._open_folder(self._home())
         elif action == "openAudit":
-            self._open(self._home() / "audit.log")
+            p = self._home() / "audit.log"
+            self.log(f"openAudit -> {p} exists={p.exists()}")
+            self._open_text(p)
         elif action == "runWizard":
-            exe = Path(sys.executable).with_name("sassymcp.exe")
-            self._spawn([str(exe) if exe.exists() else sys.executable,
-                         *([] if exe.exists() else ["-m", "sassymcp"]), "setup-wizard"])
+            self.log("runWizard -> persona.md")
+            self._open_text(self._home() / "persona.md")
+        else:
+            self.log(f"unknown action: {action}")
 
     def _home(self) -> Path:
         try:
@@ -95,14 +104,35 @@ class Bridge:
         except Exception:
             return Path(os.path.expanduser("~/.sassymcp"))
 
-    def _open(self, path: Path) -> None:
+    def _open_folder(self, path: Path) -> None:
+        """Open a folder in the OS file manager (never a browser)."""
         try:
-            if hasattr(os, "startfile"):
-                os.startfile(str(path))  # type: ignore[attr-defined]
+            path = Path(path)
+            if os.name == "nt":
+                subprocess.Popen(["explorer", str(path)])
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(path)])
             else:
                 subprocess.Popen(["xdg-open", str(path)])
-        except Exception:
-            pass
+        except Exception as e:
+            self.log(f"open_folder fail: {e}")
+
+    def _open_text(self, path: Path) -> None:
+        """Open a text file in a known text editor — bypasses the file
+        association so it never lands in the user's default browser."""
+        path = Path(path)
+        if not path.exists():
+            self.log(f"open_text: {path} not found")
+            return
+        try:
+            if os.name == "nt":
+                subprocess.Popen(["notepad.exe", str(path)])
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", "-t", str(path)])
+            else:
+                subprocess.Popen(["xdg-open", str(path)])
+        except Exception as e:
+            self.log(f"open_text fail: {e}")
 
     def _spawn(self, args: list) -> None:
         try:
