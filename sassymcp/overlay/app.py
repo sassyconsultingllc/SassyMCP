@@ -53,7 +53,9 @@ class OverlayApp:
     def run(self) -> None:
         threading.Thread(target=self.tray.run, daemon=True).start()
         self.mesh.announce_self()
-        print(f"[sassy-overlay] live | tray + Ctrl+Alt+S launcher | global hotkey: {'on' if self.hotkey_ok else 'unavailable (use tray)'}")
+        print(f"[sassy-overlay] live | python={sys.executable}", flush=True)
+        print(f"[sassy-overlay] repo={self.mesh.repo_root()} | hermes_node={'found' if self.mesh.hermes_path().exists() else 'MISSING'}", flush=True)
+        print(f"[sassy-overlay] tray + Ctrl+Alt+S launcher | global hotkey: {'on' if self.hotkey_ok else 'UNAVAILABLE (use tray click)'}", flush=True)
         self.root.mainloop()
 
     def quit(self) -> None:
@@ -85,6 +87,10 @@ def _check() -> int:
 
 
 def main(argv=None) -> int:
+    try:
+        sys.stdout.reconfigure(line_buffering=True)  # flush diagnostics when redirected to a log
+    except Exception:
+        pass
     argv = list(sys.argv[1:] if argv is None else argv)
     if "--check" in argv:
         return _check()
