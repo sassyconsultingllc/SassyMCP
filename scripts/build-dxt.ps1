@@ -8,19 +8,29 @@
 $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
-$exe = Join-Path $root "sassymcp.exe"
+$exeDist = Join-Path $root "dist\sassymcp.exe"   # PyInstaller's actual output
+$exeRoot = Join-Path $root "sassymcp.exe"        # legacy copy at repo root
 $manifestSrc = Join-Path $root "dxt\manifest.json"
 $iconSrc = Join-Path $root "dxt\icon.png"
 $readmeSrc = Join-Path $root "dxt\README.md"
 
-if (-not (Test-Path $exe)) {
+# Prefer the freshly built exe in dist\; fall back to the legacy root copy.
+# build.bat emits dist\sassymcp.exe, so never trust a stale root exe to mean
+# "already built" — that silently packages an old binary.
+if (Test-Path $exeDist) {
+    $exe = $exeDist
+} elseif (Test-Path $exeRoot) {
+    $exe = $exeRoot
+} else {
     Write-Host "sassymcp.exe not found, running build.bat..."
     & (Join-Path $root "build.bat")
-    if (-not (Test-Path $exe)) {
-        Write-Error "build.bat did not produce sassymcp.exe"
+    if (-not (Test-Path $exeDist)) {
+        Write-Error "build.bat did not produce dist\sassymcp.exe"
         exit 1
     }
+    $exe = $exeDist
 }
+Write-Host "Using exe: $exe"
 
 # Read version from sassymcp/__init__.py
 $initContent = Get-Content (Join-Path $root "sassymcp\__init__.py") -Raw
@@ -55,7 +65,30 @@ try {
     New-Item -ItemType Directory -Path $distDir -Force | Out-Null
     $output = Join-Path $distDir "sassymcp-v$version.dxt"
     if (Test-Path $output) { Remove-Item $output -Force }
-    Compress-Archive -Path (Join-Path $staging "*") -DestinationPath $output -CompressionLevel Optimal
+
+    # Build the .dxt (a zip) with forward-slash entry names. We can't use
+    # Compress-Archive for two reasons:
+    #   1. it rejects a .dxt destination ("only .zip is supported"); and
+    #   2. on Windows PowerShell 5.1 it writes BACKSLASH separators into the
+    #      archive (server\sassymcp.exe). The ZIP spec mandates '/', and a
+    #      spec-compliant DXT loader then can't resolve the manifest's
+    #      entry_point "server/sassymcp.exe" -> the extension errors out on
+    #      load. Writing entries by hand guarantees '/' regardless of host.
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $stagingFull = (Resolve-Path $staging).Path.TrimEnd('\')
+    $fs = [System.IO.File]::Open($output, [System.IO.FileMode]::CreateNew)
+    $zip = New-Object System.IO.Compression.ZipArchive($fs, [System.IO.Compression.ZipArchiveMode]::Create)
+    try {
+        Get-ChildItem -Path $staging -Recurse -File | ForEach-Object {
+            $rel = $_.FullName.Substring($stagingFull.Length + 1) -replace '\\', '/'
+            [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+                $zip, $_.FullName, $rel,
+                [System.IO.Compression.CompressionLevel]::Optimal) | Out-Null
+        }
+    } finally {
+        $zip.Dispose(); $fs.Dispose()
+    }
     Write-Host "Built: $output ($([math]::Round((Get-Item $output).Length / 1MB, 1)) MB)"
 } finally {
     Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
