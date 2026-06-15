@@ -5,6 +5,24 @@ All notable changes to SassyMCP. Newest first. Versions follow semver:
 for new tier-visible features, PATCH for fixes that don't move buyer-
 facing surfaces.
 
+## [1.7.1] — 2026-06-15 — Fix: `install --client auto` crash
+
+### Fixed
+
+- **`sassymcp install --client auto` (and `--client all`) no longer exits 2
+  with "Unknown client: 'auto'".** `auto`/`all` are now recognized as
+  sentinels meaning "every detected client" — identical to omitting
+  `--client`. The old code treated the entire `--client` value as a single
+  short_name to filter on, so the advertised `install --client auto` and the
+  bundled exe's TTY wizard quick-install (which passes `auto`) both crashed
+  before writing any client config. `patch_client()` already skips
+  undetected clients, so fanning out over all of them is safe.
+- The DXT first-run hook was never affected — it uses `--auto-other` — so
+  drag-drop installs into Claude Desktop kept working. The crash only hit
+  users who ran the documented command or the exe's interactive menu.
+- Unknown `--client` values now print the valid short_names plus the
+  `auto`/`all` sentinels instead of a bare "Unknown client".
+
 ## [1.7.0] — 2026-06-15 — Perpetual licensing + core refocus
 
 A focused core release. The product surface is the MCP server itself —

@@ -355,6 +355,31 @@ def test_main_unknown_client_returns_2(capsys):
     assert rc == 2
 
 
+def test_main_client_auto_patches_all_detected(tmp_path: Path, monkeypatch):
+    """Regression: `--client auto` / `all` is a sentinel for "every client",
+    not a short_name. It used to fall into the filter branch, match nothing,
+    and exit 2 with "Unknown client: 'auto'" — which broke both the TTY
+    wizard's quick-install and the documented `install --client auto`."""
+    cursor_cfg = tmp_path / "cursor" / "mcp.json"
+    cursor_cfg.parent.mkdir()
+
+    from sassymcp import install as inst_mod
+    monkeypatch.setattr(inst_mod, "_cursor_mcp", lambda: cursor_cfg)
+    # Constrain the registry to one client so the test is hermetic and never
+    # touches the real machine's other client configs.
+    monkeypatch.setattr(inst_mod, "_CLIENT_REGISTRY", [
+        ("Cursor", "cursor", "_cursor_mcp", "mcpServers", ""),
+    ])
+
+    for sentinel in ("auto", "all", "AUTO"):
+        cursor_cfg.write_text("{}")
+        rc = main(["--client", sentinel, "--exe-path",
+                   "C:/sassy/sassymcp.exe", "--no-skills"])
+        assert rc == 0, f"--client {sentinel} should succeed, got {rc}"
+        parsed = json.loads(cursor_cfg.read_text())
+        assert "sassymcp" in parsed["mcpServers"]
+
+
 def test_main_auto_other_skips_claude(tmp_path: Path, monkeypatch):
     """--auto-other (DXT first-run hook) skips Claude Desktop because DXT
     already installed itself there."""

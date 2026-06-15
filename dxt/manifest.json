@@ -2,7 +2,7 @@
   "dxt_version": "0.1",
   "name": "sassymcp",
   "display_name": "SassyMCP",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "description": "One MCP server replacing 75+. File ops, shell, GitHub, Android control, vision, security audit, persona memory — with multi-client auto-config. Tier-licensed (free / pro / forensics) via LemonSqueezy.",
   "author": {"name": "SassyMCP Contributors", "url": "https://sassyconsultingllc.com"},
   "license": "MIT",

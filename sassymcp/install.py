@@ -458,7 +458,8 @@ def _print_table(results: list[PatchResult]) -> None:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="sassymcp install",
                                 description="Patch every installed MCP client to register sassymcp.")
-    p.add_argument("--client", help="only patch this client (short_name)")
+    p.add_argument("--client", help="only patch this client (short_name), "
+                   "or 'auto'/'all' to patch every detected client")
     p.add_argument("--dry-run", action="store_true", help="show what would change, write nothing")
     p.add_argument("--uninstall", action="store_true", help="remove sassymcp from every config")
     p.add_argument("--exe-path", help="override the exe path (default: locate self)")
@@ -477,10 +478,19 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     clients = detect_clients()
-    if args.client:
+    # `auto` / `all` are sentinels meaning "every known client" — identical
+    # to omitting --client. The TTY wizard and the documented
+    # `install --client auto` both pass `auto`; the old code treated it as a
+    # short_name filter, matched nothing, and exited 2 with
+    # "Unknown client: 'auto'". patch_client() already skips undetected
+    # clients, so fanning out over all of them is safe.
+    if args.client and args.client.lower() not in ("auto", "all"):
         clients = [c for c in clients if c.short_name == args.client]
         if not clients:
-            print(f"Unknown client: {args.client!r}", file=sys.stderr)
+            valid = ", ".join(short for _, short, *_ in _CLIENT_REGISTRY)
+            print(f"Unknown client: {args.client!r}. "
+                  f"Valid clients: {valid} (or 'auto'/'all' for every client).",
+                  file=sys.stderr)
             return 2
     if args.auto_other:
         clients = [c for c in clients if c.short_name != "claude"]
