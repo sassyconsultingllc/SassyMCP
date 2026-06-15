@@ -5,6 +5,37 @@ All notable changes to SassyMCP. Newest first. Versions follow semver:
 for new tier-visible features, PATCH for fixes that don't move buyer-
 facing surfaces.
 
+## [1.7.0] — 2026-06-15 — Perpetual licensing + core refocus
+
+A focused core release. The product surface is the MCP server itself —
+the frozen `sassymcp.exe`, the `.dxt` bundle, the Python modules, and the
+launcher `.bat` files. Experimental "Sassy Brain" cockpit/desktop work
+stays out of this repo's release line.
+
+### Changed
+
+- **Billing pivots from subscription to one-time perpetual license.**
+  LemonSqueezy is now configured for a perpetual buy-once entitlement
+  instead of a recurring subscription. Activation, validation, and the
+  fast revocation oracle are unchanged; only the purchase model moved.
+- **LS post-purchase automation** (`tools/ls-setup`) for variant +
+  webhook provisioning after the dashboard is configured.
+
+### Removed
+
+- **Multi-AI coordination mesh.** `sassy_peer_announce`,
+  `sassy_peer_list`, `sassy_peer_delegate`, and `sassy_coordination_board`
+  (the `coordination` module), the `_brain_status` / `_phone_status`
+  snapshot helpers, and the `sassymcp mesh` CLI subcommand are removed.
+  These were scaffolding for the separate Sassy Brain cockpit and do not
+  belong in the core server. The `v020` tool group keeps vision, app
+  launcher, web inspector, and crosslink.
+
+### Maintenance
+
+- Dependency bumps closing Dependabot alerts: `starlette` 0.52.1 → 1.0.1,
+  plus dev-dependency bumps (`qs`, `tmp`) in the VS Code extension.
+
 ## [1.6.0] — 2026-05-20 — Monetization-ready
 
 The big one: SassyMCP is now sold through LemonSqueezy with real
