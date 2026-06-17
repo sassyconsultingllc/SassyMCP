@@ -1,7 +1,7 @@
-"""Generate icon.png files for the VS Code extension and DXT package.
+"""Generate icon.png files for the VS Code extension and MCPB package.
 
 Pure-PIL gradient + bold "S" — matches the gradient in resources/icon.svg.
-192x192 is the standard size for both VS Code marketplace icons and DXT
+192x192 is the standard size for both VS Code marketplace icons and MCPB
 package icons.
 
 Run from the repo root:
@@ -9,7 +9,7 @@ Run from the repo root:
 
 Output:
     sassymcp-vscode/resources/icon.png
-    dxt/icon.png
+    mcpb/icon.png
 """
 from __future__ import annotations
 
@@ -87,7 +87,7 @@ def main() -> int:
     repo_root = Path(__file__).resolve().parent.parent
     targets = [
         repo_root / "sassymcp-vscode" / "resources" / "icon.png",
-        repo_root / "dxt" / "icon.png",
+        repo_root / "mcpb" / "icon.png",
     ]
     icon = make_icon()
     for t in targets:

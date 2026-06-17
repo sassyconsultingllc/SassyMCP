@@ -5,6 +5,29 @@ All notable changes to SassyMCP. Newest first. Versions follow semver:
 for new tier-visible features, PATCH for fixes that don't move buyer-
 facing surfaces.
 
+## [1.7.2] — 2026-06-17 — `.mcpb` bundle + first built release
+
+### Changed
+
+- **Desktop bundle migrated from `.dxt` to `.mcpb`** — Anthropic's MCP
+  Bundle format. `manifest.json` now declares `manifest_version: "0.2"`
+  (the deprecated `dxt_version` field is removed), and the bundle is
+  packed and validated with the official `@anthropic-ai/mcpb` CLI. The
+  staging dir was renamed `dxt/` → `mcpb/` and `scripts/build-dxt.ps1`
+  → `scripts/build-mcpb.ps1`.
+- **Rebuilt `sassymcp.exe` from current `main`**, so the distributed
+  binary now contains the v1.7.1 `install --client auto`/`all` fix.
+  (v1.7.1 was a source-only tag with no published artifact; v1.7.2 is
+  the first built release of the 1.7.x line.)
+
+### Verification
+
+- Frozen-exe QC against the rebuilt binary: `sassymcp.exe install
+  --client auto --dry-run` exits 0 and lists clients; `--client bogus`
+  exits 2 with the valid-name hint; the stdio `initialize` handshake
+  returns `serverInfo`; `--http` boot answers `/mcp` with 200. Full
+  pytest suite green. `mcpb validate` + `mcpb info` pass on the bundle.
+
 ## [1.7.1] — 2026-06-15 — Fix: `install --client auto` crash
 
 ### Fixed
