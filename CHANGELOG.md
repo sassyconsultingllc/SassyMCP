@@ -5,6 +5,22 @@ All notable changes to SassyMCP. Newest first. Versions follow semver:
 for new tier-visible features, PATCH for fixes that don't move buyer-
 facing surfaces.
 
+## [1.8.1] — 2026-06-18 — Dependency maintenance
+
+### Maintenance
+
+- **Cleared all open Dependabot alerts** — bumps applied directly on `main`
+  (the PR branches had diverged from the 1.8.0 tree), rebuilt, full suite
+  green:
+  - Python (`uv.lock`): `cryptography` 48.0.0 → 49.0.0, `starlette`
+    1.0.1 → 1.3.1, `python-multipart` 0.0.29 → 0.0.32, `pyjwt`
+    2.12.1 → 2.13.0.
+  - VS Code extension (build/dev deps): `@vscode/vsce` 2.27 → 3.9.2,
+    `markdown-it` 14.2.0, `undici` → 7.28.0, `form-data` → 4.0.6. Two
+    high-severity advisories cleared; `npm audit` reports 0 vulnerabilities.
+- Rebuilt `sassymcp.exe` / `.mcpb` against the updated dependency tree;
+  frozen-exe smoke check (supervise + stdio init) passes.
+
 ## [1.8.0] — 2026-06-18 — Process supervisor (`sassymcp supervise`)
 
 ### Added

@@ -4,9 +4,20 @@
   "description": "One MCP server replacing 75+. Auto-configures Claude Desktop, Cursor, Windsurf, Continue, Cline, Zed, Grok and the VS Code Copilot agent.",
   "version": "1.6.0",
   "publisher": "sassyconsultingllc",
-  "engines": { "vscode": "^1.85.0" },
-  "categories": ["AI", "Other"],
-  "keywords": ["mcp", "ai", "claude", "copilot", "agent"],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "keywords": [
+    "mcp",
+    "ai",
+    "claude",
+    "copilot",
+    "agent"
+  ],
   "icon": "resources/icon.png",
   "main": "./out/extension.js",
   "activationEvents": [
@@ -15,11 +26,26 @@
   ],
   "contributes": {
     "commands": [
-      { "command": "sassymcp.runSetupWizard", "title": "SassyMCP: Run Setup Wizard" },
-      { "command": "sassymcp.reinstallConfigs", "title": "SassyMCP: Reinstall Client Configs" },
-      { "command": "sassymcp.openAuditLog", "title": "SassyMCP: Open Audit Log" },
-      { "command": "sassymcp.openDeleteFolder", "title": "SassyMCP: Open _DELETE_ Folder" },
-      { "command": "sassymcp.showBrainStatus", "title": "SassyMCP: Show Brain Status" }
+      {
+        "command": "sassymcp.runSetupWizard",
+        "title": "SassyMCP: Run Setup Wizard"
+      },
+      {
+        "command": "sassymcp.reinstallConfigs",
+        "title": "SassyMCP: Reinstall Client Configs"
+      },
+      {
+        "command": "sassymcp.openAuditLog",
+        "title": "SassyMCP: Open Audit Log"
+      },
+      {
+        "command": "sassymcp.openDeleteFolder",
+        "title": "SassyMCP: Open _DELETE_ Folder"
+      },
+      {
+        "command": "sassymcp.showBrainStatus",
+        "title": "SassyMCP: Show Brain Status"
+      }
     ],
     "configuration": {
       "title": "SassyMCP",
@@ -50,11 +76,14 @@
     "publish": "vsce publish"
   },
   "devDependencies": {
-    "@types/vscode": "^1.85.0",
     "@types/node": "^20.0.0",
-    "typescript": "^5.4.0",
-    "@vscode/vsce": "^2.27.0"
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.9.2",
+    "typescript": "^5.4.0"
   },
-  "repository": { "type": "git", "url": "https://github.com/sassyconsultingllc/SassyMCP" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sassyconsultingllc/SassyMCP"
+  },
   "license": "MIT"
 }
