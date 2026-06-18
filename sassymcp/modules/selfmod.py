@@ -721,6 +721,20 @@ def register(server):
         async def _do_restart():
             await asyncio.sleep(delay_seconds)
             try:
+                # If we're a child of `sassymcp supervise`, do NOT spawn our
+                # own successor — that would race the supervisor's respawn for
+                # the same port and crash-loop both. Just exit cleanly; the
+                # supervisor sees the exit and relaunches us (with its job
+                # object intact, so no orphan). See sassymcp/supervisor.py.
+                if os.environ.get("SASSYMCP_SUPERVISED") == "1":
+                    logger.info("Supervised restart: exiting; supervisor will respawn.")
+                    try:
+                        from sassymcp.server import _graceful_shutdown
+                        await _graceful_shutdown(signum="selfmod-restart-supervised")
+                    except Exception:
+                        pass
+                    await asyncio.sleep(0.3)
+                    os._exit(0)
                 # Spawn new process (detached)
                 if os.name == "nt":
                     # Windows: CREATE_NEW_PROCESS_GROUP + DETACHED_PROCESS

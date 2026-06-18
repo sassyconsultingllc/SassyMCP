@@ -1008,6 +1008,9 @@ def _dispatch_subcommand() -> int | None:
     if sub == "install":
         from sassymcp.install import main as _install_main
         return _install_main(sys.argv[2:])
+    if sub == "supervise":
+        from sassymcp.supervisor import main as _supervise_main
+        return _supervise_main(sys.argv[2:])
     if sub in ("setup", "wizard"):
         # Interactive menu. Returns "run_server" if the user picks the
         # "Run as HTTP server" option, in which case we fall through to

@@ -5,6 +5,43 @@ All notable changes to SassyMCP. Newest first. Versions follow semver:
 for new tier-visible features, PATCH for fixes that don't move buyer-
 facing surfaces.
 
+## [1.8.0] — 2026-06-18 — Process supervisor (`sassymcp supervise`)
+
+### Added
+
+- **`sassymcp supervise` — an orphan-proof, self-healing process manager**
+  for the runtime tree. It runs the HTTP bridge (and, optionally, the
+  cloudflared tunnel) as managed children, health-checks them, and
+  restarts crashed/hung children with exponential backoff. Subcommands:
+  `start` / `stop` / `status` / `restart <role>`.
+  - **Orphan-proof teardown** (`sassymcp/_jobctl.py`): on Windows a Job
+    Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` (via `ctypes`/
+    `kernel32` — no `pywin32`, so it works in the frozen exe); on POSIX a
+    new session per child plus `killpg`, and `PR_SET_PDEATHSIG` on Linux.
+    A hard `kill -9` / `TerminateProcess` of the supervisor leaves **zero**
+    surviving children — no orphaned bridge holding a wedged SQLite/WAL
+    lock.
+  - **Readiness health check** POSTs to the bridge's `/mcp` and recycles a
+    *hung-but-alive* bridge — the failure Windows Task Scheduler can never
+    catch.
+  - **Crash-survivable control surface**: a single-instance pidfile, an
+    on-disk child registry (`supervisor-children.json`), and a file
+    command channel under `$SASSYMCP_HOME` — `status` works even when the
+    bridge is dead, so an operator (or agent) can recover a wedged system.
+- **`SASSYMCP_SUPERVISED=1`**: when the bridge runs under the supervisor,
+  `sassy_selfmod_restart` now exits and lets the supervisor respawn it,
+  instead of detaching its own successor (which would race for the port).
+- **Test hygiene** (`tests/conftest.py`): an autouse fixture reaps any
+  child process a test leaks (scoped to pytest's own descendants), so a
+  failed test can't wedge a later one's DB lock.
+
+### Notes
+
+- `start-supervised.bat` is the recommended launcher; the legacy
+  `taskkill /f` port-kill in `start-tunnel.bat` was the source of wedged
+  locks. stdio mode is intentionally not supervised (the MCP client owns
+  that pipe).
+
 ## [1.7.2] — 2026-06-17 — `.mcpb` bundle + first built release
 
 ### Changed

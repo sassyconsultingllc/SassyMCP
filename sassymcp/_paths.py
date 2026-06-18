@@ -44,6 +44,14 @@ CROSSLINK_DB: Path = HOME / "crosslink.db"
 SSL_CERT: Path = HOME / "server.crt"
 SSL_KEY: Path = HOME / "server.key"
 
+# Process supervisor (sassymcp supervise) — single-instance pidfile, the
+# on-disk child registry (crash-survivable source of truth for "what did I
+# spawn"), and a transient command channel the running supervisor polls.
+# HOME-scoped so $SASSYMCP_HOME instances never fight over one tree.
+SUPERVISOR_PIDFILE: Path = HOME / "supervisor.pid"
+SUPERVISOR_REGISTRY: Path = HOME / "supervisor-children.json"
+SUPERVISOR_CMD: Path = HOME / "supervisor.cmd"
+
 # Tool-usage analytics, runtime config, recent calls, etc., that other
 # modules manage with their own filenames inside HOME — they should
 # build paths via `HOME / "..."` directly rather than getting an entry
@@ -59,4 +67,7 @@ __all__ = [
     "CROSSLINK_DB",
     "SSL_CERT",
     "SSL_KEY",
+    "SUPERVISOR_PIDFILE",
+    "SUPERVISOR_REGISTRY",
+    "SUPERVISOR_CMD",
 ]

@@ -4,7 +4,7 @@
 
 **270 tools | 35 modules | 18 tool groups | Replaces 75+ MCP servers | 34MB standalone exe**
 
-*Last updated: 2026-06-17 — v1.7.2 | one-time perpetual licensing (free / pro / forensics)*
+*Last updated: 2026-06-18 — v1.8.0 | one-time perpetual licensing (free / pro / forensics)*
 
 Compatible with Claude Desktop, Grok Desktop, Cursor, Windsurf, and any MCP client.
 
@@ -69,6 +69,26 @@ SassyMCP is sold through [LemonSqueezy](https://sassyconsultingllc.com/sassymcp)
 **Safe failure modes:** Missing, expired, tampered, or corrupt license files silently downgrade to free tier — the product never bricks. Network errors during activation or revalidation leave the local license intact.
 
 **Dev escape hatch:** Set `SASSYMCP_LICENSE_BYPASS=1` to unlock all groups regardless of license state. Intended for development on the upstream codebase, CI, and air-gapped support cases. Logged at WARNING level.
+
+## Running supervised (`sassymcp supervise`)
+
+For always-on / remote deployments, run SassyMCP under its built-in supervisor instead of bare launcher scripts:
+
+```
+sassymcp.exe supervise start              # bridge only (127.0.0.1:21001)
+sassymcp.exe supervise start --tunnel-mode managed   # also run the cloudflared tunnel as a child
+sassymcp.exe supervise status             # JSON status; exit code != 0 if unhealthy
+sassymcp.exe supervise stop               # graceful stop
+```
+
+The supervisor owns the runtime tree and makes it self-healing and **orphan-proof**:
+
+- **No orphans, ever.** A hard kill of the supervisor (crash, `kill -9`, `taskkill /f`) takes every child with it — on Windows via a Job Object (`KILL_ON_JOB_CLOSE`), on Linux via process groups + `PR_SET_PDEATHSIG`. No leftover bridge holding a wedged SQLite/WAL lock, which is what the old `taskkill`-based scripts caused.
+- **Self-healing.** Crashed children restart with exponential backoff (and give up cleanly after a crash-loop, rather than spinning).
+- **Catches hangs.** An HTTP readiness probe recycles a *hung-but-alive* bridge — the failure a Windows scheduled task can never detect.
+- **Crash-survivable control.** A pidfile + on-disk registry under `$SASSYMCP_HOME` mean `supervise status`/`stop` work even when the bridge is down, so an operator or agent can recover a wedged system.
+
+`start-supervised.bat` wraps this as the recommended Windows launcher. stdio mode (Claude Desktop pipe) is client-owned and intentionally not supervised.
 
 ## Modules
 

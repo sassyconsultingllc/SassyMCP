@@ -20,6 +20,11 @@ a = Analysis(
         'sassymcp._cli_wizard',
         'sassymcp._paths',
         'sassymcp._atomic',
+        # Process supervisor (v1.8) — lazy-imported by the `supervise`
+        # subcommand, so PyInstaller can't see them without these entries.
+        # _jobctl is pure ctypes/stdlib (no pywin32), so nothing else to add.
+        'sassymcp.supervisor',
+        'sassymcp._jobctl',
         # Core
         'sassymcp.modules.fileops',
         'sassymcp.modules.shell',
