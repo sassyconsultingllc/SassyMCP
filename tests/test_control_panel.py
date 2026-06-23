@@ -81,6 +81,14 @@ def test_rules_post_invalid_action(monkeypatch):
     assert "permission.rules" not in store
 
 
+def test_classifiers_route():
+    s, o = cp.handle_api("GET", "/api/classifiers", {}, None)
+    assert s == 200
+    # the real _security keyword set should surface
+    assert "rm" in o["delete_keywords"]
+    assert isinstance(o["pattern_tiers"], dict)
+
+
 def test_unknown_route():
     s, o = cp.handle_api("GET", "/api/nope", {}, None)
     assert s == 404

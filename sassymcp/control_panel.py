@@ -173,6 +173,21 @@ def _apply_settings(body: dict) -> tuple[int, dict]:
     return 200, _settings()
 
 
+def _classifiers() -> dict:
+    """Read-only view of the built-in destructive-command classifiers that
+    gate the shell, so the panel can show *why* a command would be caught."""
+    try:
+        from sassymcp.modules import _security as sec
+    except Exception:
+        return {"delete_keywords": [], "word_blocks": [], "hard_blocks": [], "pattern_tiers": {}}
+    return {
+        "delete_keywords": sorted(getattr(sec, "_DELETE_KEYWORDS", [])),
+        "word_blocks": sorted(getattr(sec, "_WORD_MATCH_BLOCKS", [])),
+        "hard_blocks": sorted(getattr(sec, "_HARDCODED_BLOCKS", [])),
+        "pattern_tiers": dict(getattr(sec, "_PATTERN_TIERS", {})),
+    }
+
+
 def _rules() -> dict:
     from sassymcp.modules.runtime_config import get
     return {"rules": list(get("permission.rules", []) or [])}
@@ -209,6 +224,8 @@ def handle_api(method: str, path: str, query: dict, body: dict | None) -> tuple[
             return 200, _settings()
         if method == "POST":
             return _apply_settings(body)
+    if path == "/api/classifiers" and method == "GET":
+        return 200, _classifiers()
     if path == "/api/rules":
         if method == "GET":
             return 200, _rules()
@@ -417,7 +434,10 @@ INDEX_HTML = r"""<!doctype html>
   </section>
 
   <section class=pane id=rules>
-    <p class=hint>Allow / ask / deny rules. First match wins, evaluated before the mode default.
+    <h3 style="margin:.25rem 0">Built-in classifiers <span class=hint>(read-only — what the shell gates by default)</span></h3>
+    <div id=classifiers></div>
+    <h3 style="margin:1.25rem 0 .25rem">Your allow / ask / deny rules</h3>
+    <p class=hint>First match wins, evaluated before the mode default.
       Fields: action (allow|ask|deny), and any of tool (glob), path (glob), command (regex).</p>
     <div id=rulelist></div>
     <label>Add rule (JSON)</label>
@@ -484,13 +504,23 @@ function renderRules(){document.getElementById('rulelist').innerHTML=RULES.map((
   esc(JSON.stringify({tool:r.tool,path:r.path,command:r.command}))+
   '<button data-i="'+i+'">×</button></div>').join('')||'<p class=hint>No rules.</p>';
   document.querySelectorAll('#rulelist .chip button').forEach(b=>b.onclick=()=>{RULES.splice(+b.dataset.i,1);renderRules();});}
+async function loadClassifiers(){const c=await api('/classifiers');
+  const tierTag=t=>'<span class="tag '+(t==='high'?'deny':t==='medium'?'ask':'')+'">'+esc(t)+'</span>';
+  const kw=(c.delete_keywords||[]).map(k=>'<span class=chip>'+esc(k)+'</span>').join(' ');
+  const wb=(c.word_blocks||[]).map(k=>'<span class=chip>'+esc(k)+'</span>').join(' ');
+  const hb=(c.hard_blocks||[]).map(k=>'<span class=chip>'+esc(k)+'</span>').join(' ');
+  const pt=Object.entries(c.pattern_tiers||{}).map(([k,v])=>'<tr><td class=cmd>'+esc(k)+'</td><td>'+tierTag(v)+'</td></tr>').join('');
+  document.getElementById('classifiers').innerHTML=
+    '<p class=hint>Delete keywords (auto-staged to _DELETE_ when leading):</p><div class=row>'+kw+'</div>'+
+    '<p class=hint style="margin-top:.6rem">Always-blocked, every mode (catastrophic):</p><div class=row>'+hb+' '+wb+'</div>'+
+    '<p class=hint style="margin-top:.6rem">Tiered regex patterns:</p><table><tbody>'+pt+'</tbody></table>';}
 async function loadRules(){const {rules}=await api('/rules');RULES=rules||[];renderRules();}
 document.getElementById('addrule').onclick=()=>{try{const r=JSON.parse(document.getElementById('newrule').value);
   if(!['allow','ask','deny'].includes((r.action||'').toLowerCase())){toast('action must be allow|ask|deny',true);return;}
   RULES.push(r);renderRules();document.getElementById('newrule').value='';}catch(e){toast('rule must be valid JSON',true);}};
 document.getElementById('saverules').onclick=async()=>{await api('/rules','POST',{rules:RULES});toast('Rules saved');};
 // init
-loadStatus();loadEvents();loadSettings();loadRules();
+loadStatus();loadEvents();loadSettings();loadClassifiers();loadRules();
 </script>
 </body></html>
 """
