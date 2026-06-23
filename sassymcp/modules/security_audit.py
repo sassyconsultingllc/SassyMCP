@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 
+from sassymcp import _platform
 from sassymcp.modules._security import is_sensitive_read_path
 
 
@@ -117,15 +118,24 @@ def register(server):
 
     @server.tool()
     async def sassy_file_permissions(path: str) -> str:
-        """Check file/directory permissions (Windows ACLs)."""
-        # Escape single quotes for PS single-quoted string
+        """Check file/directory permissions. Windows: ACLs (Get-Acl). macOS:
+        POSIX mode + ACLs + flags (ls -led@). Linux: getfacl, or ls -lad."""
+        # argv form means `path` is a single token (no shell), so no escaping
+        # is needed on POSIX; the PS branch still escapes for its quoted string.
         safe_path = path.replace("'", "''")
-        ps_script = f"Get-Acl '{safe_path}' | Format-List"
+        argv = _platform.pick(
+            windows=["powershell.exe", "-NoProfile", "-Command",
+                     f"Get-Acl '{safe_path}' | Format-List"],
+            macos=["ls", "-l", "-e", "-d", "-@", path],
+            linux=(["getfacl", path] if _platform.which("getfacl")
+                   else ["ls", "-l", "-a", "-d", path]),
+            feature="file permissions",
+        )
         proc = await asyncio.create_subprocess_exec(
-            "powershell.exe", "-NoProfile", "-Command", ps_script,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
-        return stdout.decode("utf-8", errors="replace").strip()
+            *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15)
+        out = stdout.decode("utf-8", errors="replace").strip()
+        return out or stderr.decode("utf-8", errors="replace").strip()
 
     @server.tool()
     async def sassy_cert_check(target: str, port: int = 443) -> str:
@@ -190,29 +200,43 @@ def register(server):
 
     @server.tool()
     async def sassy_firewall_status() -> str:
-        """Check Windows Firewall status."""
+        """Check the host firewall. Windows: netsh advfirewall. macOS:
+        Application Firewall (socketfilterfw). Linux: ufw, or iptables."""
+        argv = _platform.pick(
+            windows=["netsh", "advfirewall", "show", "allprofiles"],
+            macos=["/usr/libexec/ApplicationFirewall/socketfilterfw",
+                   "--getglobalstate", "--getstealthmode",
+                   "--getblockall", "--getloggingmode"],
+            linux=(["ufw", "status", "verbose"] if _platform.which("ufw")
+                   else ["iptables", "-L", "-n"]),
+            feature="firewall status",
+        )
         proc = await asyncio.create_subprocess_exec(
-            "netsh", "advfirewall", "show", "allprofiles",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
-        return stdout.decode("utf-8", errors="replace").strip()
+            *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15)
+        out = stdout.decode("utf-8", errors="replace").strip()
+        return out or stderr.decode("utf-8", errors="replace").strip()
 
     @server.tool()
     async def sassy_open_ports() -> str:
-        """List all listening ports."""
+        """List all listening ports (netstat on every OS; LISTEN/LISTENING)."""
         proc = await asyncio.create_subprocess_exec(
             "netstat", "-an",
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
-        lines = [l for l in stdout.decode("utf-8", errors="replace").splitlines() if "LISTENING" in l]
+        # Windows prints state "LISTENING"; macOS/Linux print "LISTEN".
+        lines = [l for l in stdout.decode("utf-8", errors="replace").splitlines()
+                 if "LISTEN" in l.upper()]
         return "\n".join(lines)
 
     @server.tool()
     async def sassy_defender_status() -> str:
-        """Check Windows Defender status via Event Log (avoids BitDefender ATD flags).
-        Falls back to Get-MpComputerStatus if event log query fails."""
-        # Primary: Event Log approach (ATD-safe)
-        ps_script = (
+        """Endpoint-protection status. Windows: Defender via Event Log (ATD-safe),
+        falling back to Get-MpComputerStatus. macOS has no Defender — reports the
+        equivalent posture: Gatekeeper (spctl), SIP (csrutil), XProtect. Linux:
+        reports ClamAV if installed."""
+        # Windows: Event Log approach (ATD-safe), falls back to Get-MpComputerStatus.
+        win_ps = (
             "try { "
             "$events = Get-WinEvent -LogName 'Microsoft-Windows-Windows Defender/Operational' -MaxEvents 5 -ErrorAction Stop; "
             "$events | Select TimeCreated,Id,Message | FL "
@@ -221,8 +245,27 @@ def register(server):
             "catch { 'Defender status unavailable: ' + $_.Exception.Message } "
             "}"
         )
+        mac_sh = (
+            'echo "== Gatekeeper =="; spctl --status 2>&1; '
+            'echo "== System Integrity Protection =="; csrutil status 2>&1; '
+            'echo "== XProtect =="; '
+            'system_profiler SPInstallHistoryDataType 2>/dev/null '
+            '| grep -A2 -i "xprotect\\|MRT\\|Gatekeeper" | head -30; '
+            'echo "(macOS uses Gatekeeper + XProtect + MRT instead of Defender)"'
+        )
+        linux_sh = (
+            'if command -v clamscan >/dev/null 2>&1; then clamscan --version; '
+            'systemctl is-active clamav-daemon 2>/dev/null; '
+            'else echo "No on-access AV (ClamAV) detected. Check distro security tooling."; fi'
+        )
+        argv = _platform.pick(
+            windows=["powershell.exe", "-NoProfile", "-Command", win_ps],
+            macos=["/bin/sh", "-c", mac_sh],
+            linux=["/bin/sh", "-c", linux_sh],
+            feature="endpoint protection status",
+        )
         proc = await asyncio.create_subprocess_exec(
-            "powershell.exe", "-NoProfile", "-Command", ps_script,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
-        return stdout.decode("utf-8", errors="replace").strip()
+            *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=20)
+        out = stdout.decode("utf-8", errors="replace").strip()
+        return out or stderr.decode("utf-8", errors="replace").strip()

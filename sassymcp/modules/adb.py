@@ -12,6 +12,7 @@ import ipaddress
 import shutil
 import os
 
+from sassymcp import _platform
 from sassymcp.modules._security import (
     detect_delete_intent,
     validate_adb_device,
@@ -24,8 +25,7 @@ from sassymcp.modules import audit as _audit
 def _adb_path() -> str:
     path = shutil.which("adb")
     if path: return path
-    for c in [os.path.expandvars(r"%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe"),
-              r"C:\Android\platform-tools\adb.exe"]:
+    for c in _platform.adb_candidates():
         if os.path.isfile(c): return c
     return "adb"
 

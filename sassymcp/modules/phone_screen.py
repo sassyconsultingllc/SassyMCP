@@ -16,6 +16,8 @@ import shutil
 import time
 import xml.etree.ElementTree as ET
 
+from sassymcp import _platform
+
 # ── Autonomous Pause/Resume State ────────────────────────────
 # When paused, all interaction tools (tap/swipe/type) refuse to execute.
 # Observation tools (ui/state/glance/watch) still work so the AI can see
@@ -29,8 +31,7 @@ def _adb_path() -> str:
     path = shutil.which("adb")
     if path:
         return path
-    for c in [os.path.expandvars(r"%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe"),
-              r"C:\Android\platform-tools\adb.exe"]:
+    for c in _platform.adb_candidates():
         if os.path.isfile(c):
             return c
     return "adb"
@@ -254,7 +255,13 @@ def _find_scrcpy():
     path = shutil.which("scrcpy")
     if path:
         return path
-    for c in [r"C:\scrcpy\scrcpy.exe", os.path.expandvars(r"%USERPROFILE%\scrcpy\scrcpy.exe")]:
+    candidates = _platform.pick(
+        windows=[r"C:\scrcpy\scrcpy.exe", os.path.expandvars(r"%USERPROFILE%\scrcpy\scrcpy.exe")],
+        macos=["/opt/homebrew/bin/scrcpy", "/usr/local/bin/scrcpy"],
+        linux=["/usr/bin/scrcpy", "/usr/local/bin/scrcpy", "/snap/bin/scrcpy"],
+        default=[],
+    )
+    for c in candidates:
         if os.path.isfile(c):
             return c
     return None

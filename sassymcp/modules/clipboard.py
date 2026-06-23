@@ -1,15 +1,20 @@
-"""Clipboard - Cross-device clipboard (Windows <-> Android).
+"""Clipboard - Cross-device clipboard (host <-> Android).
+
+The host clipboard is read/written via the OS-native tool resolved at the
+head (see _platform): Get-Clipboard/Set-Clipboard on Windows, pbpaste/pbcopy
+on macOS, xclip/xsel on Linux.
 
 Security:
 - ADB device identifiers validated
 - Android clipboard uses base64 encoding only (no shell escaping fallback)
-- Windows clipboard uses stdin piping (no string interpolation)
+- Host clipboard uses stdin piping (no string interpolation)
 """
 
 import asyncio
 import base64
 import re
 
+from sassymcp import _platform
 from sassymcp.modules._security import validate_adb_device
 
 
@@ -51,9 +56,9 @@ def _validated_device_args(device: str) -> list[str] | str:
 def register(server):
     @server.tool()
     async def sassy_clipboard_get() -> str:
-        """Get Windows clipboard text."""
+        """Get the system clipboard text."""
         proc = await asyncio.create_subprocess_exec(
-            "powershell.exe", "-NoProfile", "-Command", "Get-Clipboard",
+            *_platform.clipboard_get_argv(),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         try:
             stdout, _ = await _safe_wait(proc)
@@ -63,10 +68,9 @@ def register(server):
 
     @server.tool()
     async def sassy_clipboard_set(text: str) -> str:
-        """Set Windows clipboard text."""
-        ps_script = "$input | Set-Clipboard"
+        """Set the system clipboard text."""
         proc = await asyncio.create_subprocess_exec(
-            "powershell.exe", "-NoProfile", "-Command", ps_script,
+            *_platform.clipboard_set_argv(),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         try:
@@ -77,13 +81,13 @@ def register(server):
 
     @server.tool()
     async def sassy_clipboard_to_android(device: str = "") -> str:
-        """Send Windows clipboard to Android via base64 encoding."""
+        """Send the host clipboard to Android via base64 encoding."""
         dev = _validated_device_args(device)
         if isinstance(dev, str):
             return f"Error: {dev}"
 
         proc = await asyncio.create_subprocess_exec(
-            "powershell.exe", "-NoProfile", "-Command", "Get-Clipboard",
+            *_platform.clipboard_get_argv(),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         try:
             stdout, _ = await _safe_wait(proc)
@@ -91,7 +95,7 @@ def register(server):
             return "Timed out reading clipboard"
         text = stdout.decode("utf-8", errors="replace").strip()
         if not text:
-            return "Windows clipboard is empty"
+            return "Host clipboard is empty"
 
         # Base64 encode — safe for shell interpolation (alphanumeric + /+=)
         b64 = base64.b64encode(text.encode("utf-8")).decode("ascii")
@@ -110,7 +114,7 @@ def register(server):
 
     @server.tool()
     async def sassy_clipboard_from_android(device: str = "") -> str:
-        """Get Android clipboard to Windows."""
+        """Get Android clipboard to the host."""
         dev = _validated_device_args(device)
         if isinstance(dev, str):
             return f"Error: {dev}"

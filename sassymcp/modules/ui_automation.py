@@ -1,18 +1,56 @@
-"""UIAutomation - Windows UI control with lean output.
+"""UIAutomation - UI control with lean output (cross-platform).
 
 IMPORTANT: All text input operations use ctrl-a + backspace to clear
-the field before typing, ensuring clean output every time.
+the field before typing, ensuring clean output every time. Mouse/keyboard
+and screenshots go through pyautogui, which works on Windows, macOS, and
+Linux (macOS requires Accessibility + Screen Recording permission for the
+app running SassyMCP).
 
-Multi-monitor and DPI-aware: sassy_screen_info reports all monitors
-with resolution, position, scaling, and primary status.
+Multi-monitor and DPI-aware: sassy_screen_info reports all monitors with
+resolution, position, scaling, and primary status — via win32 on Windows,
+AppKit (NSScreen) on macOS, with a pyautogui single-monitor fallback.
 """
 
+import asyncio
 import json
 
+from sassymcp import _platform
 from sassymcp.modules._security import validate_path as _validate_path, is_protected_path as _is_protected_path
 
 
 def _get_monitors():
+    """Get all monitors with position, size, and DPI scaling, host-appropriate.
+    Returns a list of dicts, or None to signal the pyautogui fallback."""
+    if _platform.IS_WINDOWS:
+        return _win_monitors()
+    if _platform.IS_MACOS:
+        return _mac_monitors()
+    return None
+
+
+def _mac_monitors():
+    """macOS monitors via AppKit NSScreen (needs pyobjc). None if unavailable."""
+    try:
+        from AppKit import NSScreen
+        mons = []
+        for i, s in enumerate(NSScreen.screens()):
+            f = s.frame()
+            try:
+                scale = round(float(s.backingScaleFactor()) * 100)
+            except Exception:
+                scale = 100
+            left, top = int(f.origin.x), int(f.origin.y)
+            w, h = int(f.size.width), int(f.size.height)
+            mons.append({
+                "left": left, "top": top, "right": left + w, "bottom": top + h,
+                "width": w, "height": h, "scale_percent": scale, "primary": i == 0,
+            })
+        return mons or None
+    except Exception:
+        return None
+
+
+def _win_monitors():
     """Get all monitors with position, size, DPI scaling via ctypes.
     Returns list of dicts. Falls back to pyautogui single-monitor if ctypes fails."""
     try:
@@ -67,6 +105,44 @@ def _get_monitors():
         return None
 
 
+async def _mac_desktop_state():
+    """Enumerate visible app windows on macOS via System Events (osascript)."""
+    script = (
+        "set out to \"\"\n"
+        "tell application \"System Events\"\n"
+        "  repeat with proc in (every process whose background only is false)\n"
+        "    repeat with w in (every window of proc)\n"
+        "      try\n"
+        "        set p to position of w\n        set s to size of w\n"
+        "        set out to out & (name of w) & \"\\t\" & (item 1 of p) & \"\\t\" & (item 2 of p) & \"\\t\" & (item 1 of s) & \"\\t\" & (item 2 of s) & linefeed\n"
+        "      end try\n"
+        "    end repeat\n"
+        "  end repeat\n"
+        "end tell\n"
+        "return out\n"
+    )
+    proc = await asyncio.create_subprocess_exec(
+        "osascript", "-e", script,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=20)
+    raw = stdout.decode("utf-8", errors="replace").strip()
+    if not raw:
+        err = stderr.decode("utf-8", errors="replace").strip()
+        return json.dumps({"error": err or "no windows",
+                           "hint": "Grant Accessibility permission to the app running SassyMCP."})
+    windows = []
+    for line in raw.splitlines():
+        parts = line.split("\t")
+        if len(parts) != 5 or not parts[0].strip():
+            continue
+        try:
+            windows.append({"title": parts[0], "left": int(parts[1]), "top": int(parts[2]),
+                            "width": int(parts[3]), "height": int(parts[4])})
+        except ValueError:
+            continue
+    return json.dumps(windows, indent=2)
+
+
 def register(server):
     @server.tool()
     async def sassy_screen_info() -> str:
@@ -85,7 +161,13 @@ def register(server):
     @server.tool()
     async def sassy_desktop_state(include_taskbar: bool = False) -> str:
         """Get desktop state: open windows and positions. Lean output.
-        Coordinates are absolute across all monitors."""
+        Coordinates are absolute across all monitors. Windows: pywinauto.
+        macOS: System Events (needs Accessibility permission)."""
+        if _platform.IS_MACOS:
+            return await _mac_desktop_state()
+        if not _platform.IS_WINDOWS:
+            return json.dumps({"error": _platform.unsupported(
+                "desktop window enumeration on Linux (needs wmctrl)")})
         try:
             from pywinauto import Desktop
         except ImportError:

@@ -1,5 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for SassyMCP — single-file .exe with all modules."""
+"""PyInstaller spec for SassyMCP — single-file binary with all modules.
+
+Cross-platform: the same spec builds a Windows `sassymcp.exe`, a macOS
+`sassymcp` Mach-O, or a Linux ELF. PyInstaller cannot cross-compile — build
+each artifact on its own OS (or CI runner). Platform-only dependencies
+(pywinauto on Windows, pyobjc on macOS) are added/excluded per build host
+below so a Mac build doesn't try to bundle the Windows-only UIA stack.
+"""
 
 import os
 import sys
@@ -7,6 +14,24 @@ from pathlib import Path
 
 block_cipher = None
 project_root = os.path.dirname(os.path.abspath(SPEC))
+
+_IS_WIN = sys.platform == 'win32'
+_IS_MAC = sys.platform == 'darwin'
+
+# Window control / screen grab stacks differ by OS. Windows uses pywinauto
+# (UIA) + PIL.ImageGrab; macOS drives System Events via osascript at runtime
+# and reads displays through pyobjc (AppKit/Quartz). _platform is the routing
+# head every module imports.
+if _IS_WIN:
+    _PLATFORM_HIDDEN = ['pywinauto', 'PIL.ImageGrab']
+    _PLATFORM_EXCLUDES = []
+elif _IS_MAC:
+    _PLATFORM_HIDDEN = ['PIL.ImageGrab', 'AppKit', 'Quartz', 'objc',
+                        'Foundation', 'CoreFoundation']
+    _PLATFORM_EXCLUDES = ['pywinauto']
+else:
+    _PLATFORM_HIDDEN = []
+    _PLATFORM_EXCLUDES = ['pywinauto']
 
 a = Analysis(
     [os.path.join(project_root, 'sassymcp', 'server.py')],
@@ -19,6 +44,7 @@ a = Analysis(
         'sassymcp._lemonsqueezy',
         'sassymcp._cli_wizard',
         'sassymcp._paths',
+        'sassymcp._platform',
         'sassymcp._atomic',
         # Process supervisor (v1.8) — lazy-imported by the `supervise`
         # subcommand, so PyInstaller can't see them without these entries.
@@ -111,9 +137,7 @@ a = Analysis(
         'psutil',
         'PIL',
         'PIL.Image',
-        'PIL.ImageGrab',
         'pyautogui',
-        'pywinauto',
         'pydantic',
         'pydantic.main',
         'cryptography',
@@ -123,7 +147,7 @@ a = Analysis(
         'cryptography.hazmat.primitives.serialization',
         'cryptography.hazmat.primitives.hashes',
         'cryptography.hazmat.backends',
-    ],
+    ] + _PLATFORM_HIDDEN,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -136,7 +160,7 @@ a = Analysis(
         'playwright', 'playwright.sync_api', 'playwright.async_api',
         'pytesseract',
         'watchdog',          # SASSYMCP_DEV=1 live-reload only
-    ],
+    ] + _PLATFORM_EXCLUDES,
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,

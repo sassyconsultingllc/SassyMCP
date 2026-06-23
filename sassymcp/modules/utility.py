@@ -12,6 +12,7 @@ import shutil
 import zipfile
 from pathlib import Path
 
+from sassymcp import _platform
 from sassymcp.modules._security import validate_url as _validate_url
 
 
@@ -63,13 +64,50 @@ def register(server):
 
     @server.tool()
     async def sassy_toast(title: str, message: str, duration: str = "short") -> str:
-        """Show a Windows toast notification. duration: short or long.
+        """Show a desktop notification. duration: short or long.
 
-        Useful for alerting when a long-running task completes.
-        Falls back to a BurntToast PowerShell module, then to msg.exe.
+        Useful for alerting when a long-running task completes. Routed at the
+        head: Windows toast (BurntToast -> .NET -> msg.exe), macOS osascript
+        notification, Linux notify-send.
         """
         if duration not in ("short", "long"):
             duration = "short"
+
+        # ── macOS / Linux native notifications ────────────────────────
+        if not _platform.IS_WINDOWS:
+            if _platform.IS_MACOS:
+                # Pass title/message as AppleScript run-args so no escaping is
+                # needed regardless of quotes/newlines in the content.
+                argv = ["osascript",
+                        "-e", "on run argv",
+                        "-e", "display notification (item 1 of argv) with title (item 2 of argv)",
+                        "-e", "end run",
+                        message, title]
+                method = "osascript"
+            elif _platform.which("notify-send"):
+                argv = ["notify-send",
+                        "-u", "normal" if duration == "short" else "critical",
+                        title, message]
+                method = "notify-send"
+            else:
+                return json.dumps({"status": "failed",
+                                   "error": "No notifier found (install libnotify / notify-send)."})
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                _, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+                if proc.returncode == 0:
+                    return json.dumps({"status": "sent", "method": method, "title": title})
+                return json.dumps({"status": "failed", "method": method,
+                                   "error": stderr.decode("utf-8", errors="replace").strip()})
+            except asyncio.TimeoutError:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                return json.dumps({"status": "failed", "method": method, "error": "timed out"})
+
+        # ── Windows toast ─────────────────────────────────────────────
         # Sanitize inputs for XML/PowerShell safety
         import xml.sax.saxutils
         safe_title = title.replace(chr(39), chr(39)+chr(39))  # PS single-quote escape

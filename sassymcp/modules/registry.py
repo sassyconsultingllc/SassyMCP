@@ -1,9 +1,34 @@
-"""Registry - Windows Registry read/write for forensics."""
+"""Registry - Windows Registry read/write for forensics.
+
+The raw registry tools (sassy_reg_read/write/export) are Windows-only by
+nature. The high-value forensic tool sassy_autorun_entries IS cross-platform:
+it reports boot/login persistence the host way — Run keys on Windows,
+LaunchAgents/LaunchDaemons + login items on macOS, systemd/cron/autostart on
+Linux.
+"""
 
 import asyncio
 
+from sassymcp import _platform
 from sassymcp.modules._security import validate_path as _validate_path, is_protected_path as _is_protected_path
 from pathlib import Path
+
+
+# macOS / Linux persistence inventories (run via /bin/sh -c; no user input).
+_MAC_AUTORUNS = (
+    'echo "=== User LaunchAgents ==="; ls -la ~/Library/LaunchAgents 2>/dev/null; '
+    'echo "=== Global LaunchAgents ==="; ls -la /Library/LaunchAgents 2>/dev/null; '
+    'echo "=== LaunchDaemons ==="; ls -la /Library/LaunchDaemons 2>/dev/null; '
+    'echo "=== Loaded agents (launchctl) ==="; launchctl list 2>/dev/null | head -60; '
+    'echo "=== Login items ==="; '
+    'osascript -e \'tell application "System Events" to get the name of every login item\' 2>/dev/null'
+)
+_LINUX_AUTORUNS = (
+    'echo "=== Enabled systemd units ==="; systemctl list-unit-files --state=enabled --no-pager 2>/dev/null | head -60; '
+    'echo "=== User systemd units ==="; systemctl --user list-unit-files --state=enabled --no-pager 2>/dev/null | head -40; '
+    'echo "=== crontab ==="; crontab -l 2>/dev/null; '
+    'echo "=== XDG autostart ==="; ls -la ~/.config/autostart /etc/xdg/autostart 2>/dev/null'
+)
 
 
 def _register_hooks():
@@ -79,17 +104,35 @@ async def _reg(*args, timeout=15):
         return "Error: reg.exe not found"
 
 
+def _reg_unsupported(native_hint: str) -> str:
+    return (f"{_platform.unsupported('the Windows Registry')}. "
+            f"On {_platform.OS_LABEL}, use {native_hint}.")
+
+
+async def _sh(script: str, timeout: int = 20) -> str:
+    proc = await asyncio.create_subprocess_exec(
+        "/bin/sh", "-c", script,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    out = stdout.decode("utf-8", errors="replace").strip()
+    return out or stderr.decode("utf-8", errors="replace").strip()
+
+
 def register(server):
     @server.tool()
     async def sassy_reg_read(key_path: str, value_name: str = "") -> str:
-        """Read a Windows registry key or value."""
+        """Read a Windows registry key or value (Windows only)."""
+        if not _platform.IS_WINDOWS:
+            return _reg_unsupported("`defaults read <domain>` (macOS) or the relevant config file")
         if value_name:
             return await _reg("query", key_path, "/v", value_name)
         return await _reg("query", key_path)
 
     @server.tool()
     async def sassy_reg_write(key_path: str, value_name: str, value_data: str, value_type: str = "REG_SZ") -> str:
-        """Write a Windows registry value."""
+        """Write a Windows registry value (Windows only)."""
+        if not _platform.IS_WINDOWS:
+            return _reg_unsupported("`defaults write <domain> <key> <value>` (macOS)")
         valid_types = {"REG_SZ", "REG_DWORD", "REG_QWORD", "REG_EXPAND_SZ", "REG_MULTI_SZ", "REG_BINARY"}
         if value_type not in valid_types:
             return f"Error: invalid type. Use: {', '.join(sorted(valid_types))}"
@@ -97,7 +140,9 @@ def register(server):
 
     @server.tool()
     async def sassy_reg_export(key_path: str, output_file: str) -> str:
-        """Export registry key to .reg file."""
+        """Export registry key to .reg file (Windows only)."""
+        if not _platform.IS_WINDOWS:
+            return _reg_unsupported("`defaults export <domain> <file>` (macOS)")
         ok, err = _validate_path(output_file)
         if not ok:
             return f"Error: {err}"
@@ -111,7 +156,13 @@ def register(server):
 
     @server.tool()
     async def sassy_autorun_entries() -> str:
-        """List common autorun/startup registry entries."""
+        """List boot/login persistence the host way. Windows: Run/RunOnce
+        registry keys. macOS: LaunchAgents/LaunchDaemons + login items. Linux:
+        enabled systemd units + crontab + XDG autostart."""
+        if _platform.IS_MACOS:
+            return await _sh(_MAC_AUTORUNS)
+        if _platform.IS_LINUX:
+            return await _sh(_LINUX_AUTORUNS)
         keys = [
             r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
             r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce",

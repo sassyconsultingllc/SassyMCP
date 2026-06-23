@@ -16,6 +16,7 @@ import logging
 import os
 import re
 import socket
+import sys
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -669,6 +670,22 @@ def _sensitive_read_roots() -> list[Path]:
             Path("C:/Windows/System32/config/SAM"),
             Path("C:/Windows/System32/config/SECURITY"),
             Path("C:/Windows/System32/config/SYSTEM"),
+        ]
+    elif sys.platform == "darwin":
+        roots += [
+            # macOS Keychain stores (login + system)
+            home / "Library" / "Keychains",
+            Path("/Library/Keychains"),
+            # Browser credential databases on macOS
+            home / "Library" / "Application Support" / "Google" / "Chrome" / "Default" / "Login Data",
+            home / "Library" / "Application Support" / "Microsoft Edge" / "Default" / "Login Data",
+            home / "Library" / "Application Support" / "BraveSoftware" / "Brave-Browser" / "Default" / "Login Data",
+            home / "Library" / "Application Support" / "Firefox" / "Profiles",
+            home / "Library" / "Cookies",
+            # Unix credential files still apply on macOS
+            Path("/etc/sudoers"),
+            Path("/etc/sudoers.d"),
+            Path("/var/db/shadow"),
         ]
     else:
         roots += [

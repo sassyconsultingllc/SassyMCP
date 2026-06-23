@@ -16,6 +16,7 @@ import secrets
 import time
 from pathlib import Path
 
+from sassymcp import _platform
 from sassymcp._atomic import atomic_write_json, atomic_write_text
 
 logger = logging.getLogger("sassymcp.setup")
@@ -576,15 +577,18 @@ def register(server):
 
         config = _load_config()
 
-        # Find plink
-        plink = (os.environ.get("PLINK_PATH")
-                 or shutil.which("plink")
-                 or next((p for p in [
-                     os.path.expandvars(r"%LOCALAPPDATA%\Temp\plink.exe"),
-                     r"C:\Program Files\PuTTY\plink.exe",
-                     r"C:\Program Files (x86)\PuTTY\plink.exe",
-                     r"C:\ProgramData\chocolatey\bin\plink.exe",
-                 ] if os.path.isfile(p)), None))
+        # Find the SSH client (plink on Windows, native ssh on macOS/Linux).
+        if _platform.IS_WINDOWS:
+            plink = (os.environ.get("PLINK_PATH")
+                     or shutil.which("plink")
+                     or next((p for p in [
+                         os.path.expandvars(r"%LOCALAPPDATA%\Temp\plink.exe"),
+                         r"C:\Program Files\PuTTY\plink.exe",
+                         r"C:\Program Files (x86)\PuTTY\plink.exe",
+                         r"C:\ProgramData\chocolatey\bin\plink.exe",
+                     ] if os.path.isfile(p)), None))
+        else:
+            plink = os.environ.get("SSH_CLIENT_PATH") or shutil.which("ssh")
 
         if action == "check":
             ssh_host = os.environ.get("SSH_HOST")
@@ -755,48 +759,49 @@ def register(server):
             },
             "tesseract": {
                 "search": ["tesseract"],
-                "extra_paths": [
-                    r"C:\Program Files\Tesseract-OCR\tesseract.exe",
-                    r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
-                ],
+                "extra_paths": _platform.pick(
+                    windows=[r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+                             r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"],
+                    macos=["/opt/homebrew/bin/tesseract", "/usr/local/bin/tesseract"],
+                    linux=["/usr/bin/tesseract"], default=[]),
                 "url": "https://github.com/tesseract-ocr/tesseract",
                 "used_by": "sassy_screen_ocr, sassy_find_text_on_screen",
                 "required": True,
             },
             "adb": {
                 "search": ["adb"],
-                "extra_paths": [
-                    os.path.expandvars(r"%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe"),
-                    r"C:\Android\platform-tools\adb.exe",
-                ],
+                "extra_paths": _platform.adb_candidates(),
                 "url": "https://developer.android.com/tools/releases/platform-tools",
                 "used_by": "all sassy_adb_* tools",
             },
             "scrcpy": {
                 "search": ["scrcpy"],
-                "extra_paths": [
-                    r"C:\scrcpy\scrcpy.exe",
-                    os.path.expandvars(r"%USERPROFILE%\scrcpy\scrcpy.exe"),
-                ],
+                "extra_paths": _platform.pick(
+                    windows=[r"C:\scrcpy\scrcpy.exe", os.path.expandvars(r"%USERPROFILE%\scrcpy\scrcpy.exe")],
+                    macos=["/opt/homebrew/bin/scrcpy", "/usr/local/bin/scrcpy"],
+                    linux=["/usr/bin/scrcpy", "/snap/bin/scrcpy"], default=[]),
                 "url": "https://github.com/Genymobile/scrcpy/releases",
                 "used_by": "sassy_scrcpy_start, sassy_scrcpy_record",
             },
             "plink": {
-                "search": ["plink"],
-                "extra_paths": [
-                    r"C:\Program Files\PuTTY\plink.exe",
-                    r"C:\Program Files (x86)\PuTTY\plink.exe",
-                    r"C:\ProgramData\chocolatey\bin\plink.exe",
-                ],
+                "search": _platform.pick(windows=["plink"], default=["ssh"]),
+                "extra_paths": _platform.pick(
+                    windows=[r"C:\Program Files\PuTTY\plink.exe",
+                             r"C:\Program Files (x86)\PuTTY\plink.exe",
+                             r"C:\ProgramData\chocolatey\bin\plink.exe"],
+                    default=["/usr/bin/ssh"]),
                 "url": "https://www.chiark.greenend.org.uk/~sgtatham/putty/latest.html",
                 "used_by": "sassy_linux_exec",
             },
             "chrome": {
-                "search": ["chrome", "chromium"],
-                "extra_paths": [
-                    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-                    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-                ],
+                "search": ["chrome", "chromium", "google-chrome"],
+                "extra_paths": _platform.pick(
+                    windows=[r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                             r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"],
+                    macos=["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                           "/Applications/Chromium.app/Contents/MacOS/Chromium"],
+                    linux=["/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser"],
+                    default=[]),
                 "url": "https://www.google.com/chrome/",
                 "used_by": "sassy_url_screenshot (via playwright)",
             },

@@ -13,45 +13,83 @@ import asyncio
 from pathlib import Path
 from typing import Optional
 
+from sassymcp import _platform
+
 logger = logging.getLogger("sassymcp.tools_manager")
 
 _REQUIRED_TOOLS = {"tesseract"}
 
+# Per-tool install IDs for each host package manager (Windows winget /
+# macOS Homebrew / Linux apt) and the host-specific extra path hints used as
+# a fallback when the binary is not already on PATH.
 _TOOL_DEFS = {
     "tesseract": {
-        "binary": "tesseract", "subdir": "tesseract", "winget": "UB-Mannheim.TesseractOCR",
-        "extra_paths": [r"C:\Program Files\Tesseract-OCR\tesseract.exe", r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"],
+        "binary": "tesseract", "subdir": "tesseract",
+        "pkg": {"windows": "UB-Mannheim.TesseractOCR", "macos": "tesseract", "linux": "tesseract-ocr"},
+        "extra_paths": _platform.pick(
+            windows=[r"C:\Program Files\Tesseract-OCR\tesseract.exe", r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"],
+            macos=["/opt/homebrew/bin/tesseract", "/usr/local/bin/tesseract"],
+            linux=["/usr/bin/tesseract", "/usr/local/bin/tesseract"], default=[]),
         "description": "OCR engine (REQUIRED) -- used by sassy_screen_ocr / sassy_find_text_on_screen",
     },
     "adb": {
-        "binary": "adb", "subdir": "adb", "winget": "Google.PlatformTools",
-        "extra_paths": [os.path.expandvars(r"%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe"), r"C:\Android\platform-tools\adb.exe"],
+        "binary": "adb", "subdir": "adb",
+        "pkg": {"windows": "Google.PlatformTools", "macos": "android-platform-tools", "linux": "android-tools-adb"},
+        "extra_paths": _platform.pick(
+            windows=[os.path.expandvars(r"%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe"), r"C:\Android\platform-tools\adb.exe"],
+            macos=[os.path.expanduser("~/Library/Android/sdk/platform-tools/adb"), "/opt/homebrew/bin/adb", "/usr/local/bin/adb"],
+            linux=[os.path.expanduser("~/Android/Sdk/platform-tools/adb"), "/usr/bin/adb"], default=[]),
         "description": "Android Debug Bridge -- required for all sassy_adb_* tools",
         "optional_for": "android",
     },
     "scrcpy": {
-        "binary": "scrcpy", "subdir": "scrcpy", "winget": "Genymobile.scrcpy",
-        "extra_paths": [r"C:\scrcpy\scrcpy.exe", os.path.expandvars(r"%USERPROFILE%\scrcpy\scrcpy.exe")],
+        "binary": "scrcpy", "subdir": "scrcpy",
+        "pkg": {"windows": "Genymobile.scrcpy", "macos": "scrcpy", "linux": "scrcpy"},
+        "extra_paths": _platform.pick(
+            windows=[r"C:\scrcpy\scrcpy.exe", os.path.expandvars(r"%USERPROFILE%\scrcpy\scrcpy.exe")],
+            macos=["/opt/homebrew/bin/scrcpy", "/usr/local/bin/scrcpy"],
+            linux=["/usr/bin/scrcpy", "/snap/bin/scrcpy"], default=[]),
         "description": "Android screen mirror -- sassy_scrcpy_start, sassy_scrcpy_record",
         "optional_for": "android",
     },
     "nmap": {
-        "binary": "nmap", "subdir": "nmap", "winget": "Insecure.Nmap",
-        "extra_paths": [r"C:\Program Files (x86)\Nmap\nmap.exe", r"C:\Program Files\Nmap\nmap.exe"],
+        "binary": "nmap", "subdir": "nmap",
+        "pkg": {"windows": "Insecure.Nmap", "macos": "nmap", "linux": "nmap"},
+        "extra_paths": _platform.pick(
+            windows=[r"C:\Program Files (x86)\Nmap\nmap.exe", r"C:\Program Files\Nmap\nmap.exe"],
+            macos=["/opt/homebrew/bin/nmap", "/usr/local/bin/nmap"],
+            linux=["/usr/bin/nmap"], default=[]),
         "description": "Network scanner -- required for sassy_port_scan",
     },
     "plink": {
-        "binary": "plink", "subdir": "putty", "winget": "PuTTY.PuTTY",
-        "extra_paths": [r"C:\Program Files\PuTTY\plink.exe", r"C:\Program Files (x86)\PuTTY\plink.exe", r"C:\ProgramData\chocolatey\bin\plink.exe"],
-        "description": "PuTTY plink -- required for sassy_linux_exec and SSH tools",
+        # POSIX hosts have native ssh; plink is the Windows/PuTTY stand-in.
+        "binary": _platform.pick(windows="plink", default="ssh"), "subdir": "putty",
+        "pkg": {"windows": "PuTTY.PuTTY", "macos": "putty", "linux": "putty-tools"},
+        "extra_paths": _platform.pick(
+            windows=[r"C:\Program Files\PuTTY\plink.exe", r"C:\Program Files (x86)\PuTTY\plink.exe", r"C:\ProgramData\chocolatey\bin\plink.exe"],
+            default=["/usr/bin/ssh"]),
+        "description": "SSH client (plink on Windows, native ssh on macOS/Linux) -- sassy_linux_exec and SSH tools",
         "optional_for": "linux",
     },
     "cloudflared": {
-        "binary": "cloudflared", "subdir": "cloudflared", "winget": "Cloudflare.cloudflared",
-        "extra_paths": [],
+        "binary": "cloudflared", "subdir": "cloudflared",
+        "pkg": {"windows": "Cloudflare.cloudflared", "macos": "cloudflared", "linux": "cloudflared"},
+        "extra_paths": _platform.pick(
+            macos=["/opt/homebrew/bin/cloudflared", "/usr/local/bin/cloudflared"],
+            linux=["/usr/local/bin/cloudflared", "/usr/bin/cloudflared"], default=[]),
         "description": "Cloudflare Tunnel -- exposes MCP server over the internet",
     },
 }
+
+
+def _pkg_id(info: dict) -> Optional[str]:
+    """Host package-manager id for a tool def, or None if not packaged here."""
+    return (info.get("pkg") or {}).get(_platform.OS)
+
+
+def _pkg_manager() -> str:
+    """Name of the host package manager used by _pkg_install."""
+    return _platform.pick(windows="winget", macos="brew", linux="apt-get", default="(none)")
 
 
 def _get_exe_dir() -> Optional[Path]:
@@ -108,21 +146,42 @@ def bootstrap() -> dict:
 _spawn = getattr(__import__("asyncio"), "create_subprocess_" + "exec")
 
 
-async def _winget_install(winget_id: str, timeout: int = 120) -> dict:
+def _install_argv(pkg_id: str) -> list[str]:
+    """argv for installing `pkg_id` via the host package manager."""
+    return _platform.pick(
+        windows=["winget", "install", "--id", pkg_id, "--silent",
+                 "--accept-source-agreements", "--accept-package-agreements"],
+        macos=["brew", "install", pkg_id],
+        linux=["sudo", "apt-get", "install", "-y", pkg_id],
+        default=["true"],
+    )
+
+
+async def _pkg_install(pkg_id: str, timeout: int = 180) -> dict:
+    """Install a package via the host manager (winget / brew / apt-get)."""
+    mgr = _pkg_manager()
+    if not pkg_id:
+        return {"error": f"no {mgr} package id for this tool on {_platform.OS_LABEL}", "success": False}
     try:
         proc = await _spawn(
-            "winget", "install", "--id", winget_id,
-            "--silent", "--accept-source-agreements", "--accept-package-agreements",
+            *_install_argv(pkg_id),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
         out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         o = out.decode("utf-8", errors="replace").strip()
         e = err.decode("utf-8", errors="replace").strip()
-        return {"exit_code": proc.returncode, "success": proc.returncode == 0, "stdout": o[-500:], "stderr": e[-300:]}
+        return {"manager": mgr, "exit_code": proc.returncode, "success": proc.returncode == 0,
+                "stdout": o[-500:], "stderr": e[-300:]}
     except asyncio.TimeoutError:
-        return {"error": f"winget timed out after {timeout}s", "success": False}
+        return {"error": f"{mgr} timed out after {timeout}s", "success": False}
     except FileNotFoundError:
-        return {"error": "winget not found", "hint": "Install App Installer from Microsoft Store.", "success": False}
+        hint = _platform.pick(
+            windows="Install App Installer (winget) from Microsoft Store.",
+            macos="Install Homebrew from https://brew.sh.",
+            linux="apt-get not found; use your distro package manager.",
+            default="No package manager available.",
+        )
+        return {"error": f"{mgr} not found", "hint": hint, "success": False}
     except Exception as ex:
         return {"error": str(ex), "success": False}
 
@@ -149,7 +208,8 @@ def register(server):
                 f = _which_tool(n)
                 res[n] = {
                     "found": f is not None, "path": f, "required": n in _REQUIRED_TOOLS,
-                    "description": info["description"], "winget_id": info["winget"],
+                    "description": info["description"],
+                    "package_manager": _pkg_manager(), "package_id": _pkg_id(info),
                     "optional_for": info.get("optional_for"),
                 }
             mreq = [n for n, v in res.items() if not v["found"] and v["required"]]
@@ -169,18 +229,19 @@ def register(server):
                 return json.dumps({"status": "ok", "message": "All required tools already installed."})
             r = {}
             for n in miss:
-                r[n] = await _winget_install(_TOOL_DEFS[n]["winget"])
+                r[n] = await _pkg_install(_pkg_id(_TOOL_DEFS[n]))
             return json.dumps({
-                "action": "install_required", "results": r,
+                "action": "install_required", "package_manager": _pkg_manager(), "results": r,
                 "next_step": "Restart SassyMCP or call sassy_setup_tools(action=add_to_path) to pick up new binaries.",
             }, indent=2)
 
         elif action == "install":
             if not tool_name or tool_name not in _TOOL_DEFS:
                 return json.dumps({"error": f"Unknown tool: {tool_name!r}", "valid_names": list(_TOOL_DEFS.keys())})
-            r = await _winget_install(_TOOL_DEFS[tool_name]["winget"])
+            r = await _pkg_install(_pkg_id(_TOOL_DEFS[tool_name]))
             return json.dumps({
-                "tool": tool_name, "winget_id": _TOOL_DEFS[tool_name]["winget"], **r,
+                "tool": tool_name, "package_manager": _pkg_manager(),
+                "package_id": _pkg_id(_TOOL_DEFS[tool_name]), **r,
                 "next_step": "Restart SassyMCP or call sassy_setup_tools(action=add_to_path) to pick up the new binary.",
             }, indent=2)
 

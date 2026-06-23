@@ -5,9 +5,49 @@ All notable changes to SassyMCP. Newest first. Versions follow semver:
 for new tier-visible features, PATCH for fixes that don't move buyer-
 facing surfaces.
 
-## [Unreleased] — Control Panel (loopback web UI)
+## [Unreleased] — Cross-platform (macOS / Linux) + Control Panel
 
-### Added
+### Added — Cross-platform support (one source, routed at the head)
+
+- SassyMCP now runs natively on macOS and Linux as well as Windows, from the
+  *same* source (no per-OS forks). A new routing head, `sassymcp._platform`,
+  resolves the host OS once at import and hands every module the correct
+  command for that host. The workhorse is
+  `_platform.pick(windows=…, macos=…, linux=…)`, which keeps each command's
+  platform variants together at the call site, plus named helpers
+  (`default_shell`, `clipboard_get/set_argv`, `adb_candidates`,
+  `open_path_argv`, …) for the routings that recur.
+  - **Shell** (`sassy_shell`) — adds `bash`/`zsh`/`sh`; the default shell is
+    now the host's native shell (PowerShell on Windows, the login shell on
+    macOS/Linux). PowerShell `&&`→`;` normalization runs only for PowerShell;
+    POSIX shells run verbatim.
+  - **System info** — clipboard (`pbcopy`/`pbpaste`), event log
+    (`log show` / `journalctl`), firewall (`socketfilterfw` / `ufw`),
+    endpoint protection (Gatekeeper + SIP + XProtect in place of Defender),
+    Wi-Fi scan (`airport`/`system_profiler` / `nmcli`), ACLs (`ls -le` /
+    `getfacl`), Bluetooth (`blueutil`/`system_profiler` / `bluetoothctl`),
+    and notifications (`osascript` / `notify-send`) all route per host.
+  - **Window control** (`sassy_focus_window`, `sassy_resize_window`,
+    `sassy_snap_window`, `sassy_close_window`, `sassy_list_windows`,
+    `sassy_desktop_state`) — macOS uses AppleScript via System Events (needs
+    Accessibility permission); Linux is best-effort via wmctrl/xdotool.
+    Multi-monitor + DPI via AppKit (NSScreen) on macOS.
+  - **Port scan** (`sassy_port_scan`) — the PowerShell fallback is replaced by
+    a portable async TCP scanner that runs on every OS when nmap is absent.
+  - **Remote SSH** (`sassy_linux_exec`) — native OpenSSH `ssh` on macOS/Linux
+    (with `sshpass`/agent/key support) alongside PuTTY `plink` on Windows.
+  - **Tooling** (`sassy_setup_tools`) — installs via the host package manager
+    (winget / Homebrew / apt) and resolves adb/scrcpy/tesseract/nmap/ssh from
+    host-appropriate locations.
+  - **Hardening** — the sensitive-read denylist now covers macOS Keychain and
+    browser-credential stores.
+  - **Build/packaging** — `sassymcp.spec` is platform-aware (pyobjc on macOS,
+    pywinauto excluded off-Windows); `pywinauto` is a Windows-only dependency
+    and pyobjc macOS-only (environment markers); `build.sh` mirrors
+    `build.bat` for macOS/Linux. PyInstaller can't cross-compile — build each
+    artifact on its own OS.
+
+### Added — Control Panel (loopback web UI)
 
 - **SassyMCP Control Panel** (`sassymcp.control_panel`) — a localhost-only,
   token-gated web UI served from its own daemon-thread HTTP server,

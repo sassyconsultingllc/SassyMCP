@@ -630,8 +630,32 @@ Run `sassy_setup_check_tools` to verify all tools are detected.
 
 ## Requirements
 
-- Windows 10/11
-- Python 3.11+ (only if running from source; exe is self-contained)
+- Windows 10/11, macOS 12+, or Linux — one source, routed at the head
+  (`sassymcp._platform`) to the right command per host. See
+  [Cross-platform](#cross-platform) below.
+- Python 3.11+ (only if running from source; the standalone binary is
+  self-contained — built per OS, since PyInstaller can't cross-compile)
+
+## Cross-platform
+
+The same SassyMCP source runs on Windows, macOS, and Linux. The host OS is
+resolved once at import; every tool then routes to the host-appropriate
+command — shells (PowerShell / zsh|bash), clipboard (Get-Clipboard / pbpaste),
+event log (Get-WinEvent / `log show` / journald), firewall (netsh /
+socketfilterfw / ufw), Wi-Fi, Bluetooth, window control (pywinauto /
+AppleScript System Events / wmctrl), SSH (plink / native ssh), package
+installs (winget / brew / apt), and more.
+
+- **Build:** `build.bat` (Windows) or `build.sh` (macOS/Linux). Build each
+  binary on its own OS.
+- **macOS permissions:** window-control and screenshot tools need
+  Accessibility and Screen Recording permission for the app running SassyMCP
+  (System Settings → Privacy & Security).
+- A handful of concepts are Windows-only by nature (raw Registry
+  read/write/export); those report a clear message and point to the native
+  equivalent (`defaults`, launchd). Forensic persistence
+  (`sassy_autorun_entries`) IS cross-platform (Run keys / LaunchAgents /
+  systemd+cron).
 
 ## License
 

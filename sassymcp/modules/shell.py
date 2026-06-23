@@ -1,9 +1,17 @@
-"""Shell - Execute PowerShell, CMD, and WSL commands.
+"""Shell - Execute commands in the host's native shells.
 
-Includes automatic syntax normalization:
+Cross-platform by design. The available shells are resolved at the head
+(see sassymcp._platform.SHELL_MAP):
+  - Windows: powershell, cmd, wsl
+  - macOS / Linux: bash, zsh, sh (and "wsl" aliases bash)
+When the caller does not name a shell, it defaults to the host's native
+shell — powershell on Windows, the login shell (zsh/bash) on POSIX.
+
+Includes automatic syntax normalization (PowerShell only):
 - Converts && chains to PowerShell-compatible ; separators
 - Converts cd/pushd to Set-Location for PowerShell
-- Passes CMD and WSL commands through unchanged
+- Passes CMD, WSL, and POSIX (bash/zsh/sh) commands through unchanged
+  (those shells handle &&, ||, and cd natively)
 
 Security:
 - Enforces blockedCommands from runtime config
@@ -29,6 +37,7 @@ import sys
 import uuid
 from pathlib import Path
 
+from sassymcp import _platform
 from sassymcp.modules._security import (
     detect_delete_intent,
     is_protected_path,
@@ -57,11 +66,9 @@ def _cfg(key: str, default):
         return default
 
 
-_SHELL_MAP = {
-    "powershell": ["powershell.exe", "-NoProfile", "-Command"],
-    "cmd":        ["cmd.exe", "/c"],
-    "wsl":        ["wsl", "--", "bash", "-c"],
-}
+# Shell dispatch table — defined once in _platform per host. On Windows this
+# is {powershell, cmd, wsl}; on macOS/Linux it is {bash, zsh, sh, wsl->bash}.
+_SHELL_MAP = _platform.SHELL_MAP
 
 # CMD flag allowlist — only these short /X tokens are treated as flags.
 # Everything else starting with "/" is a POSIX-style path target.
@@ -454,12 +461,16 @@ def register(server):
     @server.tool()
     async def sassy_shell(
         command: str,
-        shell: str = "powershell",
+        shell: str = "",
         timeout_seconds: int = 30,
         allow_pattern: str = "",
     ) -> str:
-        """Execute a shell command. shell: powershell, cmd, or wsl.
-        Automatically normalizes syntax (e.g. && to ; for PowerShell).
+        """Execute a shell command in the host's native shell.
+
+        shell: Windows -> powershell (default), cmd, wsl. macOS/Linux ->
+        zsh/bash (default is the login shell), sh. Leave empty to use the
+        host default. Automatically normalizes syntax (e.g. && to ; for
+        PowerShell); POSIX shells run the command verbatim.
 
         timeout_seconds > 120: auto-promoted to a background session and
         returns a JSON handle ({"auto_detached": true, "session_name": ...}).
@@ -484,8 +495,10 @@ def register(server):
         phrase) to actually run the command. LOW-tier matches always run
         after a log entry. The default action remains "block".
         """
+        if not shell:
+            shell = _platform.default_shell()
         if shell not in _SHELL_MAP:
-            return "Error: unknown shell. Use: powershell, cmd, wsl"
+            return f"Error: unknown shell {shell!r}. Use one of: {', '.join(_SHELL_MAP)}"
 
         # Block-list scan with tier awareness — words inside string literals
         # are reported as 'low' so generated scripts containing risky

@@ -1,6 +1,7 @@
 """Session - Persistent terminal sessions with input/output tracking.
 
-Spawn named terminals (PowerShell, CMD, WSL) that persist across tool calls.
+Spawn named terminals that persist across tool calls — PowerShell/CMD/WSL on
+Windows, bash/zsh/sh on macOS/Linux (selected at the head via _platform).
 Send input, read new output, list active sessions, stop them cleanly.
 Essential for long-running processes like cargo build, wrangler dev, npm start.
 """
@@ -11,6 +12,7 @@ import logging
 import time
 from typing import Optional
 
+from sassymcp import _platform
 from sassymcp.modules._security import detect_delete_intent, validate_command
 from sassymcp.modules import audit as _audit
 
@@ -83,11 +85,22 @@ logger = logging.getLogger("sassymcp.session")
 _sessions: dict[str, dict] = {}
 _OUTPUT_LIMIT = 50000  # Max chars kept per session buffer
 
-_SHELL_MAP_SESSION = {
-    "powershell": ["powershell.exe", "-NoProfile", "-NoExit", "-Command", "-"],
-    "cmd": ["cmd.exe", "/k"],
-    "wsl": ["wsl", "--", "bash"],
-}
+# Persistent (interactive) shell invocations — stay open reading stdin so the
+# session keeps taking commands over time. Windows uses the -NoExit/-k flavors;
+# POSIX shells reading from the stdin pipe stay alive until EOF.
+if _platform.IS_WINDOWS:
+    _SHELL_MAP_SESSION = {
+        "powershell": ["powershell.exe", "-NoProfile", "-NoExit", "-Command", "-"],
+        "cmd": ["cmd.exe", "/k"],
+        "wsl": ["wsl", "--", "bash"],
+    }
+else:
+    _SHELL_MAP_SESSION = {
+        "bash": ["bash"],
+        "zsh": ["zsh"],
+        "sh": ["sh"],
+        "wsl": ["bash"],
+    }
 
 # Alias for asyncio's argv-list subprocess spawner. Argv-list form (no shell=True)
 # is the safe-by-default option — no shell interpretation, no injection surface.
@@ -151,7 +164,7 @@ class _Session:
                 self.proc.kill()
 
 
-async def start_session_impl(name: str, shell: str = "powershell", command: str = "") -> dict:
+async def start_session_impl(name: str, shell: str = "", command: str = "") -> dict:
     """Spawn a persistent terminal session and register it. Returns a dict.
 
     Module-level so callers outside the MCP tool registration (e.g. shell.py's
@@ -176,8 +189,10 @@ async def start_session_impl(name: str, shell: str = "powershell", command: str 
                 )
             }
 
+    if not shell:
+        shell = _platform.default_shell()
     if shell not in _SHELL_MAP_SESSION:
-        return {"error": f"Unknown shell: {shell}. Use: powershell, cmd, wsl"}
+        return {"error": f"Unknown shell: {shell}. Use one of: {', '.join(_SHELL_MAP_SESSION)}"}
 
     try:
         proc = await _spawn_argv(
@@ -209,11 +224,12 @@ async def start_session_impl(name: str, shell: str = "powershell", command: str 
 def register(server):
 
     @server.tool()
-    async def sassy_session_start(name: str, shell: str = "powershell", command: str = "") -> str:
+    async def sassy_session_start(name: str, shell: str = "", command: str = "") -> str:
         """Start a persistent terminal session.
 
         name: unique session identifier (e.g. 'build', 'dev-server')
-        shell: powershell, cmd, or wsl
+        shell: Windows -> powershell/cmd/wsl; macOS/Linux -> bash/zsh/sh.
+               Leave empty for the host's native shell.
         command: optional initial command to run immediately
         """
         result = await start_session_impl(name, shell, command)

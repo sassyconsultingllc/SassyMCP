@@ -15,7 +15,50 @@ import json
 import time
 from pathlib import Path
 
+from sassymcp import _platform
 from sassymcp.modules._security import validate_path as _validate_path, is_protected_path as _is_protected_path
+
+
+async def _mac_list_windows(include_hidden: bool = False):
+    """List app windows on macOS via System Events (title, process, pid, rect)."""
+    script = (
+        "set out to \"\"\n"
+        "tell application \"System Events\"\n"
+        "  repeat with proc in (every process whose background only is false)\n"
+        "    set pn to name of proc\n    set pid to unix id of proc\n"
+        "    repeat with w in (every window of proc)\n"
+        "      try\n"
+        "        set p to position of w\n        set s to size of w\n"
+        "        set out to out & (name of w) & \"\\t\" & pn & \"\\t\" & pid & \"\\t\" & (item 1 of p) & \"\\t\" & (item 2 of p) & \"\\t\" & (item 1 of s) & \"\\t\" & (item 2 of s) & linefeed\n"
+        "      end try\n"
+        "    end repeat\n"
+        "  end repeat\n"
+        "end tell\n"
+        "return out\n"
+    )
+    proc = await asyncio.create_subprocess_exec(
+        "osascript", "-e", script,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=20)
+    raw = stdout.decode("utf-8", errors="replace").strip()
+    if not raw:
+        err = stderr.decode("utf-8", errors="replace").strip()
+        return json.dumps({"error": err or "no windows",
+                           "hint": "Grant Accessibility permission to the app running SassyMCP."})
+    windows = []
+    for line in raw.splitlines():
+        parts = line.split("\t")
+        if len(parts) != 7 or not parts[0].strip():
+            continue
+        try:
+            windows.append({
+                "title": parts[0], "process": parts[1], "pid": int(parts[2]),
+                "left": int(parts[3]), "top": int(parts[4]),
+                "width": int(parts[5]), "height": int(parts[6]), "visible": True,
+            })
+        except ValueError:
+            continue
+    return json.dumps(windows, indent=2)
 
 
 def _find_window_rect(title_substring: str):
@@ -579,8 +622,14 @@ def register(server):
     async def sassy_list_windows(include_hidden: bool = False) -> str:
         """List all visible windows with title, process, position, and size.
 
-        Enhanced version of desktop_state with process info.
+        Enhanced version of desktop_state with process info. Windows: pywinauto.
+        macOS: System Events (needs Accessibility permission).
         """
+        if _platform.IS_MACOS:
+            return await _mac_list_windows(include_hidden)
+        if not _platform.IS_WINDOWS:
+            return json.dumps({"error": _platform.unsupported(
+                "window enumeration on Linux (needs wmctrl)")})
         try:
             from pywinauto import Desktop
             import psutil

@@ -1,4 +1,4 @@
-"""SassyMCP - Unified MCP server for Windows + Android automation and security auditing.
+"""SassyMCP - Unified MCP server for Windows/macOS/Linux + Android automation and security auditing.
 
 This module is the canonical source of truth for the SassyMCP version
 string. pyproject.toml reads it via hatchling's dynamic-version hook,
