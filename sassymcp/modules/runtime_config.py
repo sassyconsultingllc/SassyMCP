@@ -319,7 +319,8 @@ def register(server):
         """
         from sassymcp import control_panel as cp
         action = (action or "status").strip().lower()
-        port = int(get("panel.port", cp.DEFAULT_PORT) or cp.DEFAULT_PORT)
+        # coerce_port tolerates a hand-edited / non-numeric panel.port.
+        port = cp.coerce_port(get("panel.port", cp.DEFAULT_PORT))
 
         if action == "start":
             info = cp.start_panel(port=port)
@@ -330,11 +331,12 @@ def register(server):
             set_val("panel.enabled", False)
             return json.dumps({"running": cp.is_running(), "note": "auto-start disabled"})
         if action == "url":
+            # panel_info reports the actual bound port when running, else `port`.
             return json.dumps(cp.panel_info(port=port), indent=2)
         # status
         return json.dumps({"running": cp.is_running(),
                            "enabled_at_startup": get("panel.enabled", False),
-                           **(cp.panel_info(port=port) if cp.is_running() else {"token": cp.panel_token()})},
+                           **cp.panel_info(port=port)},
                           indent=2)
 
     @server.tool()

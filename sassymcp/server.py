@@ -1143,7 +1143,9 @@ def main():
                      or bool(_cfg_get("panel.enabled", False)))
         if _panel_on:
             from sassymcp import control_panel as _panel
-            _pinfo = _panel.start_panel(port=int(_cfg_get("panel.port", _panel.DEFAULT_PORT) or _panel.DEFAULT_PORT))
+            # Pass the raw config value — start_panel() coerces a bad/non-int
+            # panel.port to the default rather than raising.
+            _pinfo = _panel.start_panel(port=_cfg_get("panel.port", _panel.DEFAULT_PORT))
             if _pinfo.get("url"):
                 logger.info(f"Control Panel: {_pinfo['url']}")
     except Exception as _pe:
