@@ -5,6 +5,27 @@ All notable changes to SassyMCP. Newest first. Versions follow semver:
 for new tier-visible features, PATCH for fixes that don't move buyer-
 facing surfaces.
 
+## [Unreleased] — Control Panel (loopback web UI)
+
+### Added
+
+- **SassyMCP Control Panel** (`sassymcp.control_panel`) — a localhost-only,
+  token-gated web UI served from its own daemon-thread HTTP server,
+  independent of the MCP transport (works under stdio and HTTP alike).
+  Three panes:
+  - **Event log** — tails `audit.jsonl` (tool calls, intercepts, policy
+    decisions), with optional 5s auto-refresh.
+  - **Settings** — permission mode, sandbox roots, legacy
+    `interceptor.destructiveAction`, live tier display.
+  - **Classifiers & rules** — read-only view of the built-in destructive
+    classifiers (delete keywords, catastrophic always-blocks, tiered regex
+    patterns) plus an editor for the allow/ask/deny rules layer.
+- **`sassy_panel` tool** — `status` / `start` / `stop` / `url`. Opt-in:
+  the panel starts at server boot only when `panel.enabled` is set (or
+  `SASSYMCP_PANEL=1`), so stdio installs never open a port unasked. Binds
+  `127.0.0.1` and requires the per-install token in
+  `~/.sassymcp/control_panel.token`.
+
 ## [1.9.0] — 2026-06-23 — Permission engine (modes + sandbox jail + rules)
 
 ### Added

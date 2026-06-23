@@ -50,6 +50,13 @@ _DEFAULTS = {
     #   {"action": "allow"|"ask"|"deny", "tool": <glob>, "path": <glob>,
     #    "command": <regex>}  (omitted fields match anything)
     "permission.rules": [],
+    # ── Control Panel (sassymcp.control_panel) ───────────────────────
+    # panel.enabled: start the loopback web UI at server startup. Opt-in
+    #   (default off) so stdio installs don't open a port unexpectedly;
+    #   `sassy_panel start` flips it on and launches immediately.
+    "panel.enabled": False,
+    # panel.port: preferred loopback port (auto-increments if taken).
+    "panel.port": 8765,
 }
 
 _config: dict = {}
@@ -294,6 +301,41 @@ def register(server):
 
         return (f"Unknown action {action!r}. Use: status, set_mode, add_root, "
                 "remove_root, add_rule, clear_rules")
+
+    @server.tool()
+    async def sassy_panel(action: str = "status") -> str:
+        """Control the SassyMCP Control Panel — the loopback web UI for the
+        permission engine, settings, event log, and classifiers.
+
+        action:
+          status (default) — running state + URL (with token) if up
+          start            — launch the panel and enable it at future startups
+          stop             — shut the panel down and disable auto-start
+          url              — print the tokenized URL (does not start it)
+
+        The panel binds 127.0.0.1 only and requires the per-install token
+        (stored owner-only in ~/.sassymcp/control_panel.token). Open the
+        printed URL in a browser on this machine.
+        """
+        from sassymcp import control_panel as cp
+        action = (action or "status").strip().lower()
+        port = int(get("panel.port", cp.DEFAULT_PORT) or cp.DEFAULT_PORT)
+
+        if action == "start":
+            info = cp.start_panel(port=port)
+            set_val("panel.enabled", True)
+            return json.dumps({"started": cp.is_running(), **info}, indent=2)
+        if action == "stop":
+            cp.stop_panel()
+            set_val("panel.enabled", False)
+            return json.dumps({"running": cp.is_running(), "note": "auto-start disabled"})
+        if action == "url":
+            return json.dumps(cp.panel_info(port=port), indent=2)
+        # status
+        return json.dumps({"running": cp.is_running(),
+                           "enabled_at_startup": get("panel.enabled", False),
+                           **(cp.panel_info(port=port) if cp.is_running() else {"token": cp.panel_token()})},
+                          indent=2)
 
     @server.tool()
     async def sassy_recent_tool_calls(

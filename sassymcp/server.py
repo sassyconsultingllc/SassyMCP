@@ -1134,6 +1134,21 @@ def main():
         f"{tool_count} tools | groups: {sorted(get_allowed_groups())}"
     )
 
+    # Control Panel — loopback web UI. Opt-in (config panel.enabled or
+    # SASSYMCP_PANEL=1) so stdio installs don't open a port unless asked.
+    # Runs in its own daemon thread, independent of the MCP transport.
+    try:
+        from sassymcp.modules.runtime_config import get as _cfg_get
+        _panel_on = (os.environ.get("SASSYMCP_PANEL", "").strip() in ("1", "true", "yes")
+                     or bool(_cfg_get("panel.enabled", False)))
+        if _panel_on:
+            from sassymcp import control_panel as _panel
+            _pinfo = _panel.start_panel(port=int(_cfg_get("panel.port", _panel.DEFAULT_PORT) or _panel.DEFAULT_PORT))
+            if _pinfo.get("url"):
+                logger.info(f"Control Panel: {_pinfo['url']}")
+    except Exception as _pe:
+        logger.warning(f"Control Panel did not start: {_pe}")
+
     # Startup update check (opt-out: SASSYMCP_NO_UPDATE_CHECK=1).
     # Logged in both modes; printed in HTTP banner only — stdio uses stdout
     # for the JSON-RPC stream so the banner cannot print to it.

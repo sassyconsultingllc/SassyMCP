@@ -238,6 +238,32 @@ For complex flows where the user needs to take over:
 5. User says "done" → AI calls `sassy_phone_resume`
 6. AI continues, now aware the user logged into a specific account
 
+## Permission Engine & Control Panel
+
+SassyMCP gates the shell and file tools through one policy engine
+(`sassymcp.policy`) with four modes, set via `sassy_permission set_mode` or
+the Control Panel:
+
+| Mode | Behavior |
+|------|----------|
+| `strict` | Block destructive patterns everywhere (default) |
+| `confirm` | Destructive patterns return a confirm token |
+| `sandbox` | Relaxed gating *inside* the project roots; anything resolving *outside* the jail is refused — run an ungated model, confined to a folder |
+| `bypass` | Allow everything except protected paths (explicit, audited) |
+
+A Claude-style **allow / ask / deny rules layer** (tool-glob + path-glob +
+command-regex; first match wins) overrides the mode default. The
+catastrophic block-list (`format`, `mkfs`, …) and the protected-path
+invariant (the SassyMCP source tree + `~/.sassymcp`) hold in **every** mode,
+including bypass.
+
+The **Control Panel** is a localhost web UI for all of the above — a live
+event log, the settings/mode editor, and a classifier + rules editor. It
+binds `127.0.0.1` only and needs the per-install token in
+`~/.sassymcp/control_panel.token`. Start it with `sassy_panel start` (or set
+`panel.enabled` / `SASSYMCP_PANEL=1` to launch it at boot), then open the
+printed `http://127.0.0.1:8765/?token=…` URL.
+
 ## Guided Setup
 
 On first launch (no `~/.sassymcp/persona.md`), the wizard tools are prominently available and the AI is given an onboarding playbook via the registered hook. The flow is conversational — the AI asks, you answer, it calls the tools.
