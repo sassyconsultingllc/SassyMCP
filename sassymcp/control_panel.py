@@ -88,16 +88,32 @@ def _token_ok(provided: str | None) -> bool:
 
 # ── Data access ───────────────────────────────────────────────────────
 
+_TAIL_BYTES = 262144  # ~256 KB — enough for a few thousand recent events
+
+
 def _audit_events(limit: int = 100) -> list[dict]:
-    """Return the most recent audit.jsonl entries, newest first."""
+    """Return the most recent audit.jsonl entries, newest first.
+
+    Reads only the last ~256 KB of the file rather than the whole thing, so
+    the 5s auto-refresh stays cheap as the log grows (it rotates at 10 MB).
+    The partial first line of the tail window is dropped.
+    """
     from sassymcp._paths import HOME
     jsonl = HOME / "audit.jsonl"
     if not jsonl.exists():
         return []
     try:
-        lines = jsonl.read_text(encoding="utf-8", errors="replace").splitlines()
+        size = jsonl.stat().st_size
+        read_bytes = min(size, _TAIL_BYTES)
+        with jsonl.open("rb") as f:
+            if size > read_bytes:
+                f.seek(size - read_bytes)
+            chunk = f.read()
     except OSError:
         return []
+    lines = chunk.decode("utf-8", errors="replace").splitlines()
+    if size > read_bytes and lines:
+        lines = lines[1:]  # the first line is almost certainly truncated
     out: list[dict] = []
     for line in reversed(lines):
         line = line.strip()
@@ -309,26 +325,47 @@ class _PanelHandler(BaseHTTPRequestHandler):
 
 # ── Lifecycle ─────────────────────────────────────────────────────────
 
-def start_panel(host: str = "127.0.0.1", port: int = DEFAULT_PORT) -> dict:
+# Loopback is non-negotiable: bearer-style token over plain HTTP is only
+# safe when the packets never leave the host. start_panel always binds here.
+_LOOPBACK = "127.0.0.1"
+
+
+def coerce_port(val, default: int = DEFAULT_PORT) -> int:
+    """Best-effort int port from possibly-bad config (string, None, junk)."""
+    try:
+        p = int(val)
+    except (TypeError, ValueError):
+        return default
+    return p if 1 <= p <= 65535 else default
+
+
+def current_port() -> int | None:
+    """The actual bound port if the panel is running, else None."""
+    return _server.server_address[1] if _server is not None else None
+
+
+def start_panel(port: int = DEFAULT_PORT) -> dict:
     """Start the panel in a daemon thread (idempotent). Returns {url, token}.
 
-    Bound to loopback only. Safe to call once at server startup. If the
-    port is taken, tries the next few ports before giving up.
+    Always binds loopback (127.0.0.1) — never an externally reachable
+    interface, regardless of config. If the preferred port is taken, tries
+    the next few before giving up.
     """
     global _server, _thread
     if _server is not None:
-        return panel_info(port=_server.server_address[1])
+        return panel_info()  # reports the actual bound port
+    port = coerce_port(port)
     last_err = None
     for p in range(port, port + 10):
         try:
-            srv = ThreadingHTTPServer((host, p), _PanelHandler)
+            srv = ThreadingHTTPServer((_LOOPBACK, p), _PanelHandler)
         except OSError as e:
             last_err = e
             continue
         _server = srv
         _thread = threading.Thread(target=srv.serve_forever, name="sassymcp-panel", daemon=True)
         _thread.start()
-        info = panel_info(port=p)
+        info = panel_info()
         logger.info(f"Control Panel on {info['url']}")
         return info
     logger.warning(f"Control Panel could not bind a port: {last_err}")
@@ -347,9 +384,13 @@ def stop_panel() -> None:
     _thread = None
 
 
-def panel_info(port: int = DEFAULT_PORT) -> dict:
+def panel_info(port: int | None = None) -> dict:
+    """URL + token. When the panel is running, reports the ACTUAL bound
+    port (which may differ from `port` if the preferred one was taken);
+    otherwise falls back to `port` (or the default) as a best guess."""
     tok = panel_token()
-    return {"url": f"http://127.0.0.1:{port}/?token={tok}", "token": tok, "port": port}
+    p = current_port() or coerce_port(DEFAULT_PORT if port is None else port)
+    return {"url": f"http://{_LOOPBACK}:{p}/?token={tok}", "token": tok, "port": p}
 
 
 def is_running() -> bool:
