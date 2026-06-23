@@ -33,6 +33,23 @@ _DEFAULTS = {
     # found ONLY inside quoted strings are reported as low-tier and allowed
     # by sassy_shell after a log entry. Set True to restore strict scanning.
     "interceptor.scanStringLiterals": False,
+    # ── Permission engine (sassymcp.policy) ──────────────────────────
+    # permission.mode: "" (default — derive from interceptor.destructiveAction
+    #   for back-compat: block->strict, confirm->confirm) or one of:
+    #   "strict"  — block destructive patterns everywhere (today's behavior)
+    #   "confirm" — destructive patterns return a confirm token
+    #   "sandbox" — relaxed gating INSIDE sandboxRoots; any path resolving
+    #               OUTSIDE every root is denied (ungated-LLM-but-jailed mode)
+    #   "bypass"  — allow everything except protected paths (explicit, audited)
+    "permission.mode": "",
+    # permission.sandboxRoots: absolute paths that bound sandbox mode. Empty
+    # = use the process CWD (the "project folder") as the single root.
+    "permission.sandboxRoots": [],
+    # permission.rules: Claude-Code-style allow/ask/deny rules evaluated
+    # before the mode default; first match wins. Each rule is a dict:
+    #   {"action": "allow"|"ask"|"deny", "tool": <glob>, "path": <glob>,
+    #    "command": <regex>}  (omitted fields match anything)
+    "permission.rules": [],
 }
 
 _config: dict = {}
@@ -184,6 +201,99 @@ def register(server):
         old = _config.get(key)
         set_val(key, parsed)
         return json.dumps({"key": key, "old": old, "new": parsed})
+
+    @server.tool()
+    async def sassy_permission(
+        action: str = "status",
+        mode: str = "",
+        path: str = "",
+        rule: str = "",
+    ) -> str:
+        """View and control the permission engine (sassymcp.policy).
+
+        Single front door for the four-mode safety system that gates the
+        shell and file tools. The future Control Panel UI writes the same
+        config keys this tool does.
+
+        action:
+          status        (default) show effective mode, how it was derived,
+                        the sandbox roots, and the active allow/ask/deny rules.
+          set_mode      set permission.mode. mode= one of:
+                          strict  — block destructive patterns everywhere
+                          confirm — destructive patterns need a confirm token
+                          sandbox — relaxed gating INSIDE the sandbox roots;
+                                    anything resolving outside is refused
+                          bypass  — allow all except protected paths
+                          ""      — clear the override; derive from the legacy
+                                    interceptor.destructiveAction setting
+          add_root      add path= to permission.sandboxRoots (the jail)
+          remove_root   remove path= from permission.sandboxRoots
+          add_rule      append rule= (JSON: {"action","tool","path","command"})
+                        to permission.rules; first match wins, evaluated before
+                        the mode default
+          clear_rules   remove all rules
+        """
+        from sassymcp import policy
+
+        def _status() -> dict:
+            return {
+                "effective_mode": policy.current_mode(),
+                "permission.mode": get("permission.mode", "") or "(unset — derived)",
+                "derived_from": ("interceptor.destructiveAction="
+                                 f"{get('interceptor.destructiveAction', 'block')}"
+                                 if not (get('permission.mode', '') or '').strip()
+                                 else "explicit permission.mode"),
+                "sandbox_roots": [str(r) for r in policy.sandbox_roots()],
+                "sandbox_roots_configured": get("permission.sandboxRoots", []),
+                "rules": get("permission.rules", []),
+                "valid_modes": list(policy.VALID_MODES),
+            }
+
+        action = (action or "status").strip().lower()
+
+        if action == "status":
+            return json.dumps(_status(), indent=2)
+
+        if action == "set_mode":
+            m = (mode or "").strip().lower()
+            if m and m not in policy.VALID_MODES:
+                return f"Invalid mode {mode!r}. Valid: {list(policy.VALID_MODES)} (or '' to clear)"
+            set_val("permission.mode", m)
+            return json.dumps({"set": "permission.mode", "value": m or "(cleared)",
+                               "effective_mode": policy.current_mode()}, indent=2)
+
+        if action in ("add_root", "remove_root"):
+            if not path.strip():
+                return "Error: path= is required for add_root/remove_root"
+            roots = list(get("permission.sandboxRoots", []) or [])
+            if action == "add_root":
+                if path not in roots:
+                    roots.append(path)
+            else:
+                roots = [r for r in roots if r != path]
+            set_val("permission.sandboxRoots", roots)
+            return json.dumps({"sandboxRoots": roots,
+                               "resolved": [str(r) for r in policy.sandbox_roots()]}, indent=2)
+
+        if action == "add_rule":
+            try:
+                parsed = json.loads(rule)
+            except (json.JSONDecodeError, TypeError):
+                return ('Error: rule= must be JSON, e.g. '
+                        '{"action":"deny","tool":"sassy_shell","command":"rm"}')
+            if not isinstance(parsed, dict) or str(parsed.get("action", "")).lower() not in ("allow", "ask", "deny"):
+                return 'Error: rule must be a dict with action in allow|ask|deny'
+            rules = list(get("permission.rules", []) or [])
+            rules.append(parsed)
+            set_val("permission.rules", rules)
+            return json.dumps({"added": parsed, "rules": rules}, indent=2)
+
+        if action == "clear_rules":
+            set_val("permission.rules", [])
+            return json.dumps({"cleared": True, "rules": []})
+
+        return (f"Unknown action {action!r}. Use: status, set_mode, add_root, "
+                "remove_root, add_rule, clear_rules")
 
     @server.tool()
     async def sassy_recent_tool_calls(

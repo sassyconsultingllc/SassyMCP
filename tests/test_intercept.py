@@ -65,7 +65,7 @@ cases = [
 
     # v1.1.2 NEW cases
     ("Out-File -Force target.txt", True),                           # D1
-    ("type foo > bar.txt", True),                                   # D2 mid-command redirect
+    ("type foo > bar.dll", True),                                   # D2 mid-command redirect (non-exempt ext; .txt/.log are exempt)
     ("Get-Content foo | Out-File -Force bar", True),                # D3 pipeline to Out-File
     ("New-Item -Force existing.txt", True),                         # D4 was previously False
     ("robocopy V:\\src V:\\dst /MIR", True),                        # C3 tree-wipe
@@ -468,12 +468,13 @@ quoted_cases = [
     # The classic v1.2.0 false positive: `>` lives inside a parameter value.
     ('Start-Process -RedirectStandardOutput "V:\\logs\\bridge.out.log"', False),
     # Even a literal `>` character inside a quoted string is data, not a redirect.
-    # Use a non-/tmp target so the temp-redirect exemption doesn't kick in.
-    ('echo "a > b" > C:\\Users\\me\\out.log', True),   # the SECOND `>` is real
+    # Use a non-/tmp, non-exempt-extension target (the .log/.txt/.csv/.out/
+    # .err/.json redirect exemptions would otherwise suppress the match).
+    ('echo "a > b" > C:\\Users\\me\\out.dat', True),   # the SECOND `>` is real
     ('echo "a > b"',                False),  # only the quoted `>` exists
     ("echo 'a > b'",                False),
-    # Bare redirect must still trip.
-    ('command > target.txt',        True),
+    # Bare redirect must still trip (non-exempt ext; .txt/.log are exempt).
+    ('command > target.dll',        True),
     # Redirect inside backticks (PS subexpression syntax) still data.
     ('Write-Host `> data`',         False),
 ]
@@ -531,13 +532,17 @@ async def test_allow_pattern():
         check("allow_pattern: wrong-label file NOT created",
               not Path(target_m2).exists())
 
-        # Wildcard '*' bypasses any pattern.
+        # Wildcard '*' is no longer accepted — it used to bypass every safety
+        # regex in one call (a foot-gun). It must be refused, and the file
+        # must NOT be created. Callers name the exact pattern label instead.
         target3 = (td_path / "out3.log").as_posix()
         cmd3 = f'"hi" | Out-File -Force {target3}'
         r = await sassy_shell(cmd3, "powershell", 10, allow_pattern="*")
-        check("allow_pattern: wildcard executes",
-              "[exit:" in r,
+        check("allow_pattern: wildcard refused (no longer accepted)",
+              "no longer accepted" in r.lower(),
               f"r={r[:200]}")
+        check("allow_pattern: wildcard file NOT created",
+              not Path(target3).exists())
 
         # KEYWORD matches must NEVER be bypassable via allow_pattern —
         # rm/del/ri only ever go through the staging mover.
@@ -596,6 +601,15 @@ tiered_cases = [
     # Block-list word inside a string literal — low tier (allowed by default).
     ('echo "format the disk later"',                    False, "low"),
     ("Set-Content readme.txt 'see also: diskpart'",     False, "low"),
+    # Regression: PowerShell verb-Noun and -Flag forms must NOT trip the
+    # bare 'format'/'shutdown'/'reboot' word blocks. A stale build that did
+    # naive substring matching blocked `Get-Date -Format ...`, `Format-Table`,
+    # etc. everywhere — effectively killing shell access. The word-boundary
+    # matcher (_WORD_MATCH_BLOCKS) must let these through while still blocking
+    # the bare destructive verbs (`format c:`, `shutdown /s`) above.
+    ("Get-Date -Format HHmmss",                        True,  ""),
+    ("Get-Process | Format-Table",                     True,  ""),
+    ("Get-Service | Format-List",                      True,  ""),
     # Clean commands.
     ("Get-ChildItem foo",                              True,  ""),
     ("echo hello",                                     True,  ""),

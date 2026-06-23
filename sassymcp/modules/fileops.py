@@ -27,6 +27,24 @@ def _check_path(path: str) -> str | None:
     ok, err = validate_path(path)
     if not ok:
         return err
+    # Permission engine: sandbox jail + allow/ask/deny rules. In the
+    # default (strict) mode with no sandbox configured this is a no-op —
+    # a path with no command always resolves to "allow" — so existing
+    # behaviour is unchanged until the operator opts into sandbox/rules.
+    # The engine must never crash a tool, so failures fall through to
+    # the pre-existing protected/sensitive-path floor below.
+    try:
+        from sassymcp import policy
+        d = policy.evaluate(path=path)
+        # The protected-path floor is already enforced downstream by each
+        # tool's own is_protected_path check (with its established message
+        # and audit entry) and by _check_write_path. Don't pre-empt it here
+        # — that would also start blocking protected-path *reads*. Surface
+        # only the NEW engine verdicts: the sandbox jail and explicit rules.
+        if d.action != "allow" and not d.reason.startswith("protected path"):
+            return f"refused by permission policy ({d.mode}): {d.reason}"
+    except Exception:
+        pass
     return None
 
 

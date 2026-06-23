@@ -84,6 +84,16 @@ try {
     & npx -y "@anthropic-ai/mcpb@latest" info $output
 
     Write-Host "Built: $output ($([math]::Round((Get-Item $output).Length / 1MB, 1)) MB)"
+
+    # Future-/back-compat: an .mcpb IS a .dxt — identical zip + manifest
+    # format; Anthropic only renamed the extension. Older Claude Desktop
+    # builds (and any client still keyed to the old name) won't recognize
+    # .mcpb but will install the exact same bytes as .dxt. Emit both so a
+    # single build covers every client, old and new. Attach both to the
+    # GitHub release.
+    $dxt = Join-Path $distDir "sassymcp-v$version.dxt"
+    Copy-Item $output $dxt -Force
+    Write-Host "Also emitted (compat): $dxt"
 } finally {
     Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
 }

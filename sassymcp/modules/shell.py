@@ -75,6 +75,12 @@ _PS_SKIP_FLAGS = {"-include", "-exclude", "-filter", "-depth", "-recurse", "-for
 # PowerShell flags whose next token IS the target path
 _PS_PATH_FLAGS = {"-path", "-literalpath"}
 
+# Pipeline / statement-boundary tokens. Target parsing must stop here: the
+# tokens after a pipe or chain operator belong to a different command, not
+# to the delete invocation, and staging them treats command names and
+# operators as files (the "command is treated as a file" class of bug).
+_STMT_OPERATORS = {"|", "||", "&&", ";", "&", ">", ">>", "2>", "2>&1"}
+
 
 def _split_preserve_paths(command: str) -> list[str]:
     """Split a command preserving Windows paths.
@@ -105,6 +111,8 @@ def _parse_delete_targets(command: str) -> list[str]:
         # Strip quotes that posix=False leaves behind.
         clean = part.strip("'\"")
         lower = clean.lower()
+        if clean in _STMT_OPERATORS:         # pipeline/statement boundary — stop
+            break
         if lower in _PS_SKIP_FLAGS:          # flag that consumes the next token
             skip_next = True
             continue
@@ -131,6 +139,64 @@ def _parse_delete_targets(command: str) -> list[str]:
         else:
             expanded.append(t)
     return expanded
+
+
+def _leading_delete_segment(command: str, kw_root: str) -> str | None:
+    """Return the first statement of `command` iff it is a bare delete
+    invocation whose leading token is `kw_root` (e.g. `rm -rf dist`,
+    `del foo.txt`, `Remove-Item bar`).
+
+    Auto-staging is only safe when the delete keyword's own arguments are
+    literal paths sitting right after it. When the keyword is embedded in a
+    pipeline or compound command (`Get-ChildItem *.log | Remove-Item`,
+    `dir | del`, `cd x; rm y`), the targets are produced by the upstream
+    command at runtime — there are no literal path args to stage, and the
+    old whole-command parser scooped up the pipe, the command name, and even
+    script-block fragments as "files to move". Those cases return None so
+    the caller routes them to the block/confirm path instead.
+    """
+    first_seg = re.split(r"[;&|\n]+", command, maxsplit=1)[0]
+    toks = _split_preserve_paths(first_seg)
+    if not toks:
+        return None
+    first = toks[0].strip("'\"").lower()
+    return first_seg if first == kw_root else None
+
+
+def _sandbox_check_shell(command: str) -> str | None:
+    """Best-effort spatial confinement for sandbox mode.
+
+    A raw shell command is opaque — we can't perfectly jail an arbitrary
+    process to a folder. But the common destructive case (a bare leading
+    `rm`/`del`/`Remove-Item` with literal path args) DOES expose its
+    targets, so we confine those to the configured sandbox roots: if any
+    identifiable delete target resolves outside the jail, refuse. Other
+    commands run unchecked here; the fileops jail and the always-on
+    protected-path floor remain the backstop for those.
+
+    Returns an error string if a target escapes the jail, else None.
+    """
+    from sassymcp import policy
+    from sassymcp.modules._security import _DELETE_KEYWORDS
+
+    is_del, kw = detect_delete_intent(command)
+    if not is_del:
+        return None
+    kw_root = kw.split(":", 1)[-1]
+    if kw_root not in _DELETE_KEYWORDS:
+        return None
+    seg = _leading_delete_segment(command, kw_root)
+    if seg is None:
+        return None
+    for t in _parse_delete_targets(seg):
+        if not policy.is_within_sandbox(t):
+            roots = ", ".join(str(r) for r in policy.sandbox_roots())
+            return (
+                f"Refused (sandbox): delete target {t!r} is outside the project "
+                f"jail ({roots}). Add it to permission.sandboxRoots, or change "
+                f"permission.mode."
+            )
+    return None
 
 
 async def _safe_move_to_staging(targets: list[str], keyword: str, raw_command: str) -> str:
@@ -436,20 +502,71 @@ def register(server):
             else:
                 return f"Error: {err}"
 
+        # Permission engine. The catastrophic block-list above ALWAYS runs
+        # (even bypass can't format a disk). Here the mode decides the rest:
+        #   - an explicit allow/ask/deny rule overrides everything below
+        #   - bypass: run, skipping the destructive-pattern interceptor
+        #   - sandbox: run, but confine identifiable delete targets to the jail
+        #   - strict/confirm (the default-derived modes): fall through to the
+        #     existing interceptor, which owns the block/stage/confirm UX
+        from sassymcp import policy
+        _decision = policy.evaluate(tool="sassy_shell", command=command)
+        if _decision.rule is not None:
+            if _decision.action == "deny":
+                _audit.log_pattern_event(
+                    "policy_rule_deny", "sassy_shell", _decision.reason, command,
+                    {"mode": _decision.mode},
+                )
+                return f"Command blocked by permission rule ({_decision.mode}): {_decision.reason}"
+            if _decision.action == "ask":
+                return _confirm_response(
+                    command, shell, "high", "policy_rule_ask",
+                    timeout_seconds, source="sassy_shell",
+                )
+            _audit.log_pattern_event(
+                "policy_rule_allow", "sassy_shell", _decision.reason, command,
+                {"mode": _decision.mode},
+            )
+            return await _run_subprocess(shell, command, timeout_seconds)
+        if _decision.mode == "bypass":
+            _audit.log_pattern_event(
+                "policy_bypass", "sassy_shell", "bypass mode", command, {},
+            )
+            return await _run_subprocess(shell, command, timeout_seconds)
+        if _decision.mode == "sandbox":
+            jail_err = _sandbox_check_shell(command)
+            if jail_err:
+                _audit.log_pattern_event(
+                    "policy_sandbox_deny", "sassy_shell", jail_err, command, {},
+                )
+                return jail_err
+            _audit.log_pattern_event(
+                "policy_sandbox_allow", "sassy_shell", "within jail", command, {},
+            )
+            return await _run_subprocess(shell, command, timeout_seconds)
+
         # Intercept delete commands — move targets to staging folder
         is_delete, keyword = detect_delete_intent(command)
         if is_delete:
-            # Only auto-stage when we matched a KEYWORD (rm/del/remove-item/etc.).
-            # Regex pattern matches (e.g. "truncate-by-redirect", "new-item -force")
-            # cannot reliably identify which token is the target, so staging every
-            # space-separated word is actively destructive. Block-only for those.
+            # Auto-stage ONLY a bare leading delete invocation (rm/del/
+            # remove-item/etc. as the first token of the first statement),
+            # parsing targets from that statement alone. Two cases must NOT
+            # auto-stage, because the target tokens can't be identified from
+            # literal args and staging them moves operators/command-names as
+            # "files":
+            #   - regex pattern matches (truncate-by-redirect, new-item -force)
+            #   - a delete keyword embedded in a pipeline/compound command
+            #     (Get-ChildItem | Remove-Item, dir | del, cd x; rm y)
+            # Both fall through to the block/confirm path below.
             from sassymcp.modules._security import _DELETE_KEYWORDS
             kw_root = keyword.split(":", 1)[-1]  # strips "encodedcommand:" prefix
-            if kw_root in _DELETE_KEYWORDS:
-                targets = _parse_delete_targets(command)
+            seg = _leading_delete_segment(command, kw_root) if kw_root in _DELETE_KEYWORDS else None
+            if seg is not None:
+                targets = _parse_delete_targets(seg)
                 return await _safe_move_to_staging(targets, keyword, command)
 
-            # Pattern match. allow_pattern with a SPECIFIC label is the
+            # Pattern match, or an embedded delete keyword. allow_pattern with
+            # a SPECIFIC label is the
             # explicit opt-in bypass (logged as pattern_bypass). The legacy
             # '*' wildcard let an LLM bypass the entire pattern blocklist
             # in one call, which defeated the gate it was meant to provide
