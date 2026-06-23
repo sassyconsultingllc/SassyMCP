@@ -37,7 +37,7 @@ Guide new users through setup in THIS order. Each step can be skipped.
 
 ### Step 0: License (sassy_setup_license)
 1. action="status" — check current tier
-2. If free: mention upgrade at sassyconsultingllc.com/sassymcp ($29/mo)
+2. If free: mention upgrade at sassyconsultingllc.com/store (one-time perpetual license)
 3. If they have a key: action="activate" with their key
 4. Don't push — just inform what Pro unlocks and move on
 
@@ -895,7 +895,7 @@ def register(server):
                     pass
             if tier == "free" and not result.get("valid"):
                 info["upgrade"] = {
-                    "url": "https://sassyconsultingllc.com/sassymcp",
+                    "url": "https://sassyconsultingllc.com/store",
                     "what_you_get": "255 tools, persistent memory, dynamic vision, phone control, "
                                     "GitHub full API, operational hooks, self-modification, and more.",
                 }
@@ -906,11 +906,11 @@ def register(server):
                 return json.dumps({
                     "error": "Provide the key parameter with your LemonSqueezy license key.",
                     "format_hint": "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX",
-                    "get_key": "https://sassyconsultingllc.com/sassymcp",
+                    "get_key": "https://sassyconsultingllc.com/store",
                 })
             result = activate_via_lemonsqueezy(key)
             if result.get("valid"):
-                return json.dumps({
+                out = {
                     "status": "activated",
                     "tier": result["tier"],
                     "addons": result.get("addons", []),
@@ -918,7 +918,12 @@ def register(server):
                     "expires": result.get("expires"),
                     "ls_instance_id": result.get("ls_instance_id"),
                     "note": "Restart the server to load Pro tools, or call sassy_selfmod_restart().",
-                }, indent=2)
+                }
+                # Surface the unmapped-variant misconfiguration (paid purchase
+                # that resolved to free) so the buyer doesn't silently get nothing.
+                if result.get("warning"):
+                    out["warning"] = result["warning"]
+                return json.dumps(out, indent=2)
             return json.dumps({
                 "status": "failed",
                 "reason": result.get("reason"),

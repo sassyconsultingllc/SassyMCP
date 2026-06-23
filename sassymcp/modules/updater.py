@@ -32,7 +32,6 @@ from sassymcp import __version__
 logger = logging.getLogger("sassymcp.updater")
 
 GITHUB_API = "https://api.github.com/repos/sassyconsultingllc/SassyMCP/releases"
-GATED_BASE = "https://sassyconsultingllc.com/download/sassymcp/windows"
 CACHE_TTL_SECONDS = 300
 USER_AGENT = f"sassymcp/{__version__} (+https://github.com/sassyconsultingllc/SassyMCP)"
 
@@ -235,10 +234,11 @@ class Updater:
                 "available": [a["name"] for a in info["assets"]],
             }
 
-        license_key = os.environ.get("SASSYMCP_LICENSE_KEY", "").strip()
+        # One binary for everyone: the GitHub release asset is the free
+        # build, and the license unlocks paid groups at runtime. (The old
+        # license-gated download mirror is retired — there is no separate
+        # paid binary to fetch.)
         url = asset["download_url"]
-        if license_key:
-            url = f"{GATED_BASE}/{asset_name}?key={license_key}"
 
         dest_root = Path(dest_dir) if dest_dir else Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "SassyMCP" / "updates"
         dest_root.mkdir(parents=True, exist_ok=True)

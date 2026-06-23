@@ -224,6 +224,8 @@ def _action_license(info: dict):
         print()
         if result.get("valid"):
             print(_green(f"Activated: tier={result['tier']} addons={result.get('addons')}"))
+            if result.get("warning"):
+                print(_yellow(result["warning"]))
         else:
             print(_red(f"Failed: {result.get('reason')} — {result.get('detail') or ''}"))
         _pause()
@@ -257,7 +259,7 @@ def _action_license(info: dict):
         _pause()
     elif sel == "5":
         import webbrowser
-        webbrowser.open("https://sassyconsultingllc.com/sassymcp")
+        webbrowser.open("https://sassyconsultingllc.com/store")
     elif sel == "6":
         return
 

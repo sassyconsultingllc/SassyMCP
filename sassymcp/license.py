@@ -269,6 +269,20 @@ def activate_via_lemonsqueezy(
     meta = ls.extract_meta(resp)
     entitlement = ls.variant_to_entitlement(meta.get("variant_id"))
 
+    # A successful LS activation that resolves to the free tier almost
+    # always means this variant_id isn't in the entitlement map yet (a
+    # deployment gap, not a buyer error). The seat still gets registered so
+    # we don't strand the purchase, but the buyer would otherwise silently
+    # receive nothing — surface it loudly so it's caught immediately.
+    unmapped = entitlement["tier"] == "free" and not entitlement["addons"]
+    if unmapped:
+        logger.error(
+            f"LS activation resolved to FREE for a purchase: variant_id="
+            f"{meta.get('variant_id')} is not in the entitlement map. The "
+            f"buyer paid but gets no paid groups. Add this variant_id to "
+            f"DEFAULT_VARIANT_MAP or SASSYMCP_LS_VARIANT_MAP."
+        )
+
     # Mint our internal HMAC key with the resolved tier+addons. The
     # expires window here is independent of LS's own expires_at — we
     # always issue a short-lived internal key (days_valid) so that even
@@ -304,7 +318,7 @@ def activate_via_lemonsqueezy(
         f"addons={entitlement['addons']} variant_id={meta.get('variant_id')} "
         f"instance_id={meta.get('instance_id')}"
     )
-    return {
+    result = {
         "valid": True,
         "tier": entitlement["tier"],
         "addons": entitlement["addons"],
@@ -312,6 +326,13 @@ def activate_via_lemonsqueezy(
         "expires": key["raw"]["expires"],
         "ls_instance_id": meta.get("instance_id"),
     }
+    if unmapped:
+        result["warning"] = (
+            f"Purchase activated but variant_id={meta.get('variant_id')} maps to "
+            f"the FREE tier — the entitlement map is missing this variant. "
+            f"Contact support so your paid tier can be unlocked."
+        )
+    return result
 
 
 def deactivate_via_lemonsqueezy() -> dict:

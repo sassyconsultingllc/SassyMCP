@@ -50,7 +50,7 @@ SassyMCP replaces **75+ individual MCP servers** — including [Desktop Commande
 
 ## Licensing & Tiers
 
-SassyMCP is sold through [LemonSqueezy](https://sassyconsultingllc.com/sassymcp) as a **one-time perpetual license** (no subscriptions). Free tier runs out of the box with no key required — paid tiers unlock additional tool groups. Buy once, own forever; refunds revoke automatically.
+SassyMCP is sold through [LemonSqueezy](https://sassyconsultingllc.com/store) as a **one-time perpetual license** (no subscriptions). Free tier runs out of the box with no key required — paid tiers unlock additional tool groups. Buy once, own forever; refunds revoke automatically.
 
 | Tier | What unlocks | What you get |
 |---|---|---|
@@ -59,7 +59,7 @@ SassyMCP is sold through [LemonSqueezy](https://sassyconsultingllc.com/sassymcp)
 | **Forensics** *(add-on)* | `forensics` group: `security_audit`, `registry` | Stacks additively on top of Free or Pro. APK inspection, certificate validation, hash + permission audit, Defender / firewall status, registry read/write/export, autorun forensics. |
 
 **Activation flow:**
-1. Purchase at `https://sassyconsultingllc.com/sassymcp` — LemonSqueezy emails you a key (`XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX`).
+1. Purchase at `https://sassyconsultingllc.com/store` — LemonSqueezy emails you a key (`XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX`).
 2. Activate from your AI agent: `sassy_setup_license action=activate key=...`
 3. Or from a terminal: `sassymcp.exe setup` opens the interactive menu.
 4. SassyMCP calls LS to register this machine as an instance, mints a local HMAC-signed payload, and unlocks the paid groups on the next server restart.
@@ -383,26 +383,23 @@ If you don't need the bundled `nmap` / `adb` / `cloudflared` (or you have them o
 
 **First-run wizard:** Double-click `sassymcp.exe` (or run it from a terminal with no flags) on a fresh machine and you'll get an interactive menu — auto-detect AI agents and register SassyMCP, activate a LemonSqueezy license key, generate / list bearer tokens, or start the HTTP server. Run `sassymcp.exe setup` anytime to re-open the menu. Once a persona is configured, bare invocation falls back to starting the HTTP server (the v1.5 behavior) so existing setups are unchanged.
 
-### One-line PowerShell (license-gated)
+### Activating a paid tier
 
-For licensed users — pulls the standalone exe through the gated mirror:
+There is no separate "licensed download" — everyone runs the same binary from
+the [GitHub releases](https://github.com/sassyconsultingllc/SassyMCP/releases/latest).
+Buy a license at **[sassyconsultingllc.com/store](https://sassyconsultingllc.com/store)**,
+then activate it on top of the free install — paid groups unlock on the next
+server restart:
 
 ```powershell
-$key = "SASSY-XXXX-XXXX-XXXX"   # from https://sassyconsultingllc.com/pricing.html
-$dst = "$env:LOCALAPPDATA\SassyMCP"
-New-Item -Force -ItemType Directory $dst | Out-Null
-Invoke-WebRequest "https://sassyconsultingllc.com/download/sassymcp/windows/sassymcp.exe?key=$key" -OutFile "$dst\sassymcp.exe"
-Write-Host "Installed: $dst\sassymcp.exe"
+# from your AI agent:
+sassy_setup_license action=activate key=XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+# or from a terminal — interactive menu, choose "Activate license":
+sassymcp.exe setup
 ```
 
-### License-gated downloads
-
-**[Get a license →](https://sassyconsultingllc.com/pricing.html)**. After checkout you receive a `SASSY-...` key; paste it into the download URL:
-
-- `https://sassyconsultingllc.com/download/sassymcp/windows/sassymcp.exe?key=SASSY-...` — standalone exe, ~35 MB
-- `https://sassyconsultingllc.com/download/sassymcp/windows/sassymcp-v1.3.1-portable.zip?key=SASSY-...` — full portable bundle, ~123 MB
-
-No Python required for either.
+The license registers this machine as a LemonSqueezy instance (seat);
+`sassy_setup_license action=deactivate` frees the seat to move to another machine.
 
 ### From source
 

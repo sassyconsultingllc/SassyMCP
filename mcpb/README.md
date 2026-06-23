@@ -17,7 +17,7 @@ One MCP server replacing 75+. After installing, sassymcp will automatically dete
 - **Pro** — adds Android phone control, dynamic vision, OCR, web inspector, crosslink, remote Linux SSH, system monitoring, clipboard sync, full GitHub API.
 - **Forensics add-on** — stacks additively. APK inspection, cert validation, registry forensics, Defender / firewall status.
 
-Get a key at [sassyconsultingllc.com/sassymcp](https://sassyconsultingllc.com/sassymcp) — one-time purchase via LemonSqueezy. No subscription; pay once, the key works forever (refunds revoke).
+Get a key at [sassyconsultingllc.com/store](https://sassyconsultingllc.com/store) — one-time purchase via LemonSqueezy. No subscription; pay once, the key works forever (refunds revoke).
 
 ## After install
 

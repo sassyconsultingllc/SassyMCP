@@ -98,6 +98,8 @@ def test_activate_happy_path_writes_local_file_with_correct_entitlement(tmp_path
     assert result["addons"] == []
     assert result["email"] == "buyer@example.com"
     assert result["ls_instance_id"] == "inst-uuid-abc"
+    # a correctly-mapped paid purchase must NOT carry the misconfig warning
+    assert "warning" not in result
 
     # File on disk has full LS-side identifiers
     on_disk = json.loads(lic.LICENSE_FILE.read_text())
@@ -151,6 +153,10 @@ def test_unmapped_variant_defaults_to_free(tmp_path, monkeypatch):
     assert result["valid"] is True
     assert result["tier"] == "free"
     assert result["addons"] == []
+    # a paid purchase that resolved to free must surface the misconfig warning
+    # so the buyer isn't silently shortchanged
+    assert "warning" in result
+    assert "999999" in result["warning"]
 
 
 # ── Activation: failure modes ─────────────────────────────────────────
