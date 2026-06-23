@@ -5,6 +5,48 @@ All notable changes to SassyMCP. Newest first. Versions follow semver:
 for new tier-visible features, PATCH for fixes that don't move buyer-
 facing surfaces.
 
+## [1.9.0] — 2026-06-23 — Permission engine (modes + sandbox jail + rules)
+
+### Added
+
+- **Permission policy engine (`sassymcp.policy`)** — one `evaluate()` is now
+  the single decision point for "may this operation proceed?", folding the
+  destructive-command classifier, the protected-path guard, and runtime
+  config into four modes:
+  - `strict` — block destructive patterns everywhere (the prior default)
+  - `confirm` — destructive patterns return a confirm token
+  - `sandbox` — relaxed gating *inside* the configured project roots; any
+    path resolving *outside* the jail is refused (incl. `..`/symlink escapes).
+    The "run an ungated LLM, but confined to the project folder" mode.
+  - `bypass` — allow everything except protected paths (explicit, audited)
+  - A Claude-style allow/ask/deny **rules layer** (tool-glob + path-glob +
+    command-regex; first match wins) overrides the mode default.
+  - The catastrophic block-list (format/mkfs/etc.) and the protected-path
+    invariant (the SassyMCP source tree + `~/.sassymcp`) hold in **every**
+    mode, including bypass.
+- **`sassy_permission` tool** — view/set the mode, manage sandbox roots, and
+  add/clear rules from chat (`status` / `set_mode` / `add_root` /
+  `remove_root` / `add_rule` / `clear_rules`).
+- Back-compat: with `permission.mode` unset, the mode is derived from the
+  existing `interceptor.destructiveAction`, so installs are byte-for-byte
+  unchanged until they opt in.
+
+### Fixed
+
+- **Shell interceptor treated piped/compound deletes' command names as files.**
+  `_parse_delete_targets` ignored pipeline/statement boundaries, so
+  `Get-ChildItem … | Remove-Item`, `dir | del`, and `cd x; rm y` scooped up
+  the command name, operators (`|`, `&&`), and script-block fragments as
+  "files to move to `_DELETE_`" — and sometimes moved the wrong files. Now
+  only a bare leading delete invocation auto-stages (parsing targets from its
+  own statement); embedded deletes route to the normal block/confirm path.
+
+### Build
+
+- `build-mcpb.ps1` now emits a `.dxt` copy alongside the `.mcpb` (identical
+  format) so older Claude Desktop builds — and any client still keyed to the
+  old extension — can install the same bundle. Attach both to releases.
+
 ## [1.8.1] — 2026-06-18 — Dependency maintenance
 
 ### Maintenance
