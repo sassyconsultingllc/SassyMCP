@@ -23,6 +23,12 @@ dependencies = [
     # for the AppKit import in ui_automation._mac_monitors.
     "pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'",
     "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
+    # pyautogui's X11 backend on Linux needs python-xlib (import: Xlib). It was
+    # a transitive pin until uv 0.8.x stopped resolving it from pyautogui's
+    # metadata; declare it explicitly so the Linux UI-automation path keeps
+    # working and security re-locks (e.g. the pydantic-settings bump) don't
+    # silently drop it.
+    "python-xlib>=0.33; sys_platform == 'linux'",
 ]
 
 [project.optional-dependencies]
@@ -57,6 +63,13 @@ packages = ["sassymcp"]
 
 [tool.uv]
 # python managed by .python-version file
+
+# Security floor for a transitive dep (pulled in via mcp): pydantic-settings
+# < 2.14.2 has a symlink-traversal flaw in NestedSecretsSettingsSource that
+# reads files outside secrets_dir and bypasses secrets_dir_max_size
+# (Dependabot #38, GHSA medium). It's not a direct dependency, so constrain
+# the resolution floor rather than adding it to [project].dependencies.
+constraint-dependencies = ["pydantic-settings>=2.14.2"]
 
 [tool.pytest.ini_options]
 markers = [
