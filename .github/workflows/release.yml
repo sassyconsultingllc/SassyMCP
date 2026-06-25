@@ -199,10 +199,128 @@ jobs:
           path: dist/sassymcp-*.vsix
           if-no-files-found: error
 
+  build-macos:
+    name: Build sassymcp (macOS ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    # Build each arch on a native runner — PyInstaller can't cross-compile, and
+    # building x86_64 on an Intel runner + arm64 on an Apple Silicon runner is
+    # what lets us lipo a true universal2 binary in build-macos-universal.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-13   # Intel (x86_64)
+            arch: x86_64
+          - runner: macos-14   # Apple Silicon (arm64)
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Verify tag matches __version__
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          src=$(python3 -c 'import re,sys; m=re.search(r"__version__\s*=\s*\"([^\"]+)\"", open("sassymcp/__init__.py").read()); print(m.group(1)) if m else sys.exit("could not parse __version__")')
+          if [ "$tag" != "$src" ]; then
+            echo "Tag $tag does not match __version__ $src. Bump sassymcp/__init__.py before tagging."
+            exit 1
+          fi
+
+      - name: Install dependencies + PyInstaller
+        # Base deps only — the [all] extras (playwright/pytesseract/watchdog)
+        # are lazy-imported with graceful fallbacks, mirroring build-exe. The
+        # spec is platform-aware: pyobjc is pulled on macOS via sys_platform
+        # markers, pywinauto is excluded.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller
+          python -m pip install -e .
+
+      - name: Confirm runner arch
+        run: |
+          set -euo pipefail
+          echo "uname -m: $(uname -m) (expected ${{ matrix.arch }})"
+          test "$(uname -m)" = "${{ matrix.arch }}"
+
+      - name: Build sassymcp via PyInstaller
+        run: pyinstaller --clean --noconfirm sassymcp.spec
+
+      - name: Verify + smoke-test
+        run: |
+          set -euo pipefail
+          test -f dist/sassymcp || { echo "PyInstaller did not produce dist/sassymcp"; exit 1; }
+          chmod +x dist/sassymcp
+          file dist/sassymcp
+          # argparse exits 0 after --help — the success signal.
+          ./dist/sassymcp --help >/dev/null
+          echo "OK (${{ matrix.arch }})"
+
+      - name: Upload per-arch artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sassymcp-macos-${{ matrix.arch }}
+          path: dist/sassymcp
+          if-no-files-found: error
+
+  build-macos-universal:
+    name: Merge macOS universal2 binary
+    runs-on: macos-latest
+    needs: build-macos
+    steps:
+      - name: Download x86_64 build
+        uses: actions/download-artifact@v4
+        with:
+          name: sassymcp-macos-x86_64
+          path: x86_64
+
+      - name: Download arm64 build
+        uses: actions/download-artifact@v4
+        with:
+          name: sassymcp-macos-arm64
+          path: arm64
+
+      - name: lipo into a universal2 binary
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          lipo -create -output dist/sassymcp-macos x86_64/sassymcp arm64/sassymcp
+          chmod +x dist/sassymcp-macos
+          echo "=== archs ==="
+          lipo -archs dist/sassymcp-macos
+          file dist/sassymcp-macos
+          lipo -archs dist/sassymcp-macos | grep -q x86_64
+          lipo -archs dist/sassymcp-macos | grep -q arm64
+          echo "universal2 OK ($(du -h dist/sassymcp-macos | cut -f1))"
+
+      - name: Smoke-test universal binary
+        # macos-latest is arm64; the binary runs its arm64 slice natively.
+        run: |
+          set -euo pipefail
+          ./dist/sassymcp-macos --help >/dev/null
+          echo "universal --help OK"
+
+      # NOTE: this binary is UNSIGNED. On download, Gatekeeper quarantines it
+      # ("unidentified developer"); users clear it with `xattr -dr
+      # com.apple.quarantine sassymcp-macos` or right-click → Open. To ship
+      # signed+notarized, add an Apple Developer ID cert + notarytool step here
+      # (needs an Apple Developer account + secrets).
+      - name: Upload universal artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sassymcp-macos
+          path: dist/sassymcp-macos
+          if-no-files-found: error
+
   release:
     name: GitHub Release
     runs-on: ubuntu-latest
-    needs: [build-exe, build-dxt, build-vsix]
+    needs: [build-exe, build-dxt, build-vsix, build-macos-universal]
     # Only fire on real tag pushes; workflow_dispatch builds the artifacts
     # for verification but never publishes a release.
     if: startsWith(github.ref, 'refs/tags/')
@@ -239,6 +357,7 @@ jobs:
           if [ -n "${{ steps.notes.outputs.notes_file }}" ]; then
             gh release create "${{ github.ref_name }}" \
               release-artifacts/sassymcp-exe/sassymcp.exe \
+              release-artifacts/sassymcp-macos/sassymcp-macos \
               release-artifacts/sassymcp-dxt/*.dxt \
               release-artifacts/sassymcp-vsix/*.vsix \
               --title "${{ github.ref_name }}" \
@@ -246,6 +365,7 @@ jobs:
           else
             gh release create "${{ github.ref_name }}" \
               release-artifacts/sassymcp-exe/sassymcp.exe \
+              release-artifacts/sassymcp-macos/sassymcp-macos \
               release-artifacts/sassymcp-dxt/*.dxt \
               release-artifacts/sassymcp-vsix/*.vsix \
               --title "${{ github.ref_name }}" \
