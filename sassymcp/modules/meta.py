@@ -18,6 +18,8 @@ logger = logging.getLogger("sassymcp.meta")
 from sassymcp.modules._tool_loader import (
     get_tracker,
     get_group_info,
+    get_default_modules,
+    get_pruned_tools,
     TOOL_GROUPS,
     estimate_tool_context_tokens,
     minify_github_response,
@@ -105,6 +107,108 @@ def register(server):
         """
         info = get_group_info()
         return json.dumps(info, indent=2)
+
+    @server.tool()
+    async def sassy_self_check() -> str:
+        """Proprioceptive self-check: reconcile the declared module manifest
+        against the live tool registry and surface any module that FAILED to
+        import — the silent drop _load_modules()'s try/except otherwise hides.
+
+        Answers "am I whole?" with a real readout instead of phantom limbs.
+        A tool can be legitimately absent for three reasons, all reported
+        separately so none is mistaken for a regression:
+          * dormant   — in an on-demand group (always_load=False) not yet
+                         toggled on or usage-boosted. Absent BY DESIGN; appears
+                         after sassy_tool_group_toggle or a usage boost.
+          * pruned    — low usage score dropped it from the default load
+                         (see _tool_loader.get_pruned_tools).
+          * unsupported — module import raises on THIS platform, but it was
+                         never in the default load, so the failure is non-fatal.
+        The one real regression is:
+          * BROKEN    — an expected-loaded module whose import raises, so its
+                         tools never register and the loss is silent.
+
+        Every BROKEN module is logged at ERROR (server log / audit substrate)
+        so the amputation is loud, not silent. verdict='whole' == every
+        expected module imports cleanly.
+        """
+        import importlib
+        import traceback
+
+        live_tools: set[str] = set()
+        if hasattr(server, "_tool_manager"):
+            live_tools = set(server._tool_manager._tools.keys())
+
+        try:
+            default_modules = set(get_default_modules())
+        except Exception:
+            default_modules = set()
+        try:
+            pruned_tools = get_pruned_tools()
+        except Exception:
+            pruned_tools = set()
+        try:
+            from sassymcp import __version__ as _ver
+        except Exception:
+            _ver = "unknown"
+
+        broken: list[dict] = []
+        dormant: list[str] = []
+        report: dict[str, Any] = {}
+
+        for group_name, ginfo in TOOL_GROUPS.items():
+            for mod in ginfo["modules"]:
+                expected_loaded = mod in default_modules
+                entry: dict[str, Any] = {
+                    "group": group_name,
+                    "always_load": ginfo["always_load"],
+                    "expected_in_default_load": expected_loaded,
+                }
+                # import != register, but an import that RAISES is exactly the
+                # silent drop the loader hides — this is where we catch it.
+                # Re-importing an already-loaded module is a cheap no-op.
+                try:
+                    importlib.import_module(f"sassymcp.modules.{mod}")
+                    entry["import"] = "ok"
+                    if not expected_loaded:
+                        dormant.append(mod)
+                except Exception as e:
+                    entry["import"] = "FAILED"
+                    entry["error"] = f"{type(e).__name__}: {e}"
+                    entry["traceback"] = traceback.format_exc().splitlines()[-3:]
+                    if expected_loaded:
+                        broken.append({
+                            "module": mod, "group": group_name, "error": entry["error"],
+                        })
+                    else:
+                        entry["note"] = (
+                            "unsupported/optional — not in default load, "
+                            "failure is non-fatal (would surface on toggle)"
+                        )
+                report[mod] = entry
+
+        for b in broken:
+            logger.error(
+                f"self_check: module '{b['module']}' (group {b['group']}) failed "
+                f"to import — its tools are NOT registered: {b['error']}"
+            )
+
+        return json.dumps({
+            "verdict": "whole" if not broken else "DEGRADED",
+            "version": _ver,
+            "live_tool_count": len(live_tools),
+            "modules_total": sum(len(g["modules"]) for g in TOOL_GROUPS.values()),
+            "broken": broken,
+            "dormant_by_design": sorted(set(dormant)),
+            "pruned_low_usage": sorted(pruned_tools),
+            "modules": report,
+            "hint": (
+                "verdict=whole means every expected module imports. "
+                "dormant_by_design tools are absent by the loader's smart-load "
+                "design, not a fault — they appear after sassy_tool_group_toggle "
+                "or once usage boosts them."
+            ),
+        }, indent=2, default=str)
 
     @server.tool()
     async def sassy_tool_group_toggle(group: str, enable: bool = True) -> str:

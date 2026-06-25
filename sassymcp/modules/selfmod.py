@@ -781,17 +781,31 @@ def register(server):
             f.name for f in _PKG_DIR.glob("*.py")
         ])
 
-        # Git status of sassymcp/ (porcelain + ignore untracked to avoid hangs on large repos)
+        # Git status of sassymcp/ (porcelain + ignore untracked to avoid hangs
+        # on large repos). Guarded by a fast rev-parse probe: in a packaged
+        # build _PROJECT_ROOT is a PyInstaller extraction dir, NOT a git repo,
+        # and an unguarded `git status` there walks the tree and can out-live
+        # the MCP client's request timeout (the cause of selfmod_status
+        # hanging). Timeouts are kept well under typical client deadlines so
+        # this tool can never wedge the session.
         git_status = ""
         try:
-            result = subprocess.run(
-                ["git", "status", "--porcelain", "--untracked-files=no", "--", "sassymcp/"],
+            probe = subprocess.run(
+                ["git", "rev-parse", "--is-inside-work-tree"],
                 cwd=str(_PROJECT_ROOT),
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, text=True, timeout=3,
             )
-            git_status = result.stdout.strip() if result.returncode == 0 else "(git error)"
+            if probe.returncode != 0 or probe.stdout.strip() != "true":
+                git_status = "(not a git repo — packaged/standalone build)"
+            else:
+                result = subprocess.run(
+                    ["git", "status", "--porcelain", "--untracked-files=no", "--", "sassymcp/"],
+                    cwd=str(_PROJECT_ROOT),
+                    capture_output=True, text=True, timeout=3,
+                )
+                git_status = result.stdout.strip() if result.returncode == 0 else "(git error)"
         except subprocess.TimeoutExpired:
-            git_status = "(git status timed out)"
+            git_status = "(git timed out)"
         except Exception:
             git_status = "(git not available)"
 
