@@ -187,15 +187,25 @@ OBSERVABILITY = """
 
 **Self-modification** (sassy_selfmod_status):
   Pending restarts, reload history, editable file index, git status.
+  Source-only — in a packaged (frozen) build these are inert stubs.
 
 **Cross-session** (sassy_crosslink_status):
   Active sessions, message queues, channels, auth status.
 
-### Recommended first-call sequence for any new session:
-1. sassy_persona_full — load operating parameters
-2. sassy_get_config — understand the environment
-3. sassy_context_estimate — know your token budget
-4. sassy_selfmod_status — check for pending changes
+**Capability map** (sassy_self_check, sassy_tool_catalog):
+  sassy_self_check — am I whole? Reconciles the module manifest against the
+  live registry, flags any BROKEN (failed-import) module, and reports which
+  runtime you're on (source vs frozen) + pid. sassy_tool_catalog — the live
+  name->purpose->group list of every registered tool. Use these instead of
+  guessing from by-name lookups: lazy-loading makes legitimately-absent
+  tools look missing.
+
+### Recommended first-call sequence for any task:
+1. sassy_self_check — am I whole, which runtime, any BROKEN modules?
+2. sassy_tool_catalog — what can this server actually do right now?
+3. sassy_persona_full — load operating parameters + user context
+4. sassy_hooks_suggest("<the user's request>") — match a domain playbook;
+   if one fits, sassy_hooks_activate it and follow it
 """
 
 CAPABILITIES = """

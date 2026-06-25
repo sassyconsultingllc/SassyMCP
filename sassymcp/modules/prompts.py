@@ -165,5 +165,41 @@ def register(server):
             "returning users."
         )
 
-    logger.info("prompts: 6 MCP prompts registered (pr-review, phone-status, "
-                "resume, codebase-grep, brain-status, setup-sassy)")
+    @server.prompt(
+        name="discover",
+        description=(
+            "Orient in the SassyMCP toolset before acting: confirm the server "
+            "is whole and which runtime it is, list what it can actually do, "
+            "and match the task to a domain playbook. Run at the start of any "
+            "task on an unfamiliar or just-connected server."
+        ),
+    )
+    def discover(task: str = "") -> str:
+        """Slash-shortcut: /sassymcp:discover task='audit my site'"""
+        step4 = (
+            f"4. `sassy_hooks_suggest user_text='{task}'` — if a domain "
+            f"playbook matches, `sassy_hooks_activate` it and follow it.\n"
+            if task else
+            "4. Once you know the task, `sassy_hooks_suggest "
+            "user_text='<the request>'` — activate any matching playbook and "
+            "follow it.\n"
+        )
+        return (
+            "Orient before acting. Run these in order:\n\n"
+            "1. `sassy_self_check` — am I whole? Note `runtime` (source vs "
+            "frozen), `version`, and any `broken` modules. If anything is "
+            "BROKEN, surface it before proceeding.\n"
+            "2. `sassy_tool_catalog` — the live name->purpose->group map of "
+            "every registered tool. Ground truth for what's available; don't "
+            "infer capability from by-name guesses (lazy-loading hides "
+            "on-demand tools).\n"
+            "3. If a needed tool seems absent, it's likely a dormant on-demand "
+            "group — `sassy_tool_groups` shows them, `sassy_tool_group_toggle` "
+            "loads one.\n"
+            f"{step4}"
+            "\nThen state in one line what the server offers that's relevant to "
+            "the task, and proceed."
+        )
+
+    logger.info("prompts: 7 MCP prompts registered (pr-review, phone-status, "
+                "resume, codebase-grep, brain-status, setup-sassy, discover)")
