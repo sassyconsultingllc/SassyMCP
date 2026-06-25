@@ -107,18 +107,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Download exe artifact
         uses: actions/download-artifact@v4
         with:
           name: sassymcp-exe
           path: .
 
-      - name: Build DXT
-        # We're already in pwsh from defaults.run.shell, so just invoke the
-        # script directly instead of nesting another pwsh process. The script
-        # auto-syncs dxt/manifest.json's version to sassymcp/__init__.py's.
+      - name: Build MCPB (+ byte-identical .dxt)
+        # build-mcpb.ps1 packs the bundle via the official @anthropic-ai/mcpb
+        # CLI (needs npx, hence setup-node above) and emits BOTH dist\*.mcpb and
+        # a byte-identical dist\*.dxt. It auto-syncs mcpb/manifest.json's version
+        # to sassymcp/__init__.py. Renamed from the old build-dxt.ps1 (now in
+        # scripts/_DELETE_/), which this job still referenced — so every release
+        # since the rename failed at "scripts/build-dxt.ps1 not recognized".
         run: |
-          & scripts/build-dxt.ps1
+          & scripts/build-mcpb.ps1
 
       - name: Verify DXT exists
         run: |
