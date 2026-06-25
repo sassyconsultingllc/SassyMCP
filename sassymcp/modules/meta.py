@@ -20,6 +20,7 @@ from sassymcp.modules._tool_loader import (
     get_group_info,
     get_default_modules,
     get_pruned_tools,
+    get_group_for_tool,
     TOOL_GROUPS,
     estimate_tool_context_tokens,
     minify_github_response,
@@ -193,9 +194,19 @@ def register(server):
                 f"to import — its tools are NOT registered: {b['error']}"
             )
 
+        import sys as _sys
+        import os as _os
+        # Runtime self-identification so ANY client can tell which instance it
+        # is talking to (the opaque-UUID namespace problem solves itself if
+        # each server says who it is). 'frozen' == packaged PyInstaller build;
+        # 'source' == running from a checkout (self-modification works here).
+        runtime = "frozen" if (getattr(_sys, "frozen", False) or hasattr(_sys, "_MEIPASS")) else "source"
         return json.dumps({
             "verdict": "whole" if not broken else "DEGRADED",
             "version": _ver,
+            "runtime": runtime,
+            "package_root": str(getattr(_sys, "_MEIPASS", "") or ""),
+            "pid": _os.getpid(),
             "live_tool_count": len(live_tools),
             "modules_total": sum(len(g["modules"]) for g in TOOL_GROUPS.values()),
             "broken": broken,
@@ -208,6 +219,43 @@ def register(server):
                 "design, not a fault — they appear after sassy_tool_group_toggle "
                 "or once usage boosts them."
             ),
+        }, indent=2, default=str)
+
+    @server.tool()
+    async def sassy_tool_catalog(group: str = "", query: str = "") -> str:
+        """Catalog every registered tool: name, one-line purpose, group.
+
+        Client-agnostic capability map for ANY MCP wrapper — enumerate what
+        this server can actually do without loading each tool's schema.
+        Derived live from the registry, so it never drifts from reality the
+        way hand-written capability prose does (the drift that makes absent
+        lazy-loaded tools look like missing ones).
+
+        group: filter to one tool group (see sassy_tool_groups). Empty = all.
+        query: case-insensitive substring match on tool name or purpose.
+        """
+        rows = []
+        if hasattr(server, "_tool_manager"):
+            for name, tool in server._tool_manager._tools.items():
+                desc = (getattr(tool, "description", "") or "").strip()
+                purpose = desc.splitlines()[0] if desc else ""
+                g = get_group_for_tool(name) or "?"
+                if group and g != group:
+                    continue
+                if query:
+                    q = query.lower()
+                    if q not in name.lower() and q not in purpose.lower():
+                        continue
+                rows.append((g, name, purpose))
+        rows.sort(key=lambda r: (r[0], r[1]))
+        by_group: dict[str, Any] = {}
+        for g, name, purpose in rows:
+            by_group.setdefault(g, []).append({"name": name, "purpose": purpose})
+        return json.dumps({
+            "total": len(rows),
+            "group_counts": {g: len(v) for g, v in by_group.items()},
+            "filtered_by": {"group": group or None, "query": query or None},
+            "tools": by_group,
         }, indent=2, default=str)
 
     @server.tool()

@@ -110,6 +110,13 @@ _MODULES_DIR = _PKG_DIR / "modules"
 # Files that CAN be hot-reloaded (modules with register())
 _HOT_RELOADABLE_DIR = _MODULES_DIR
 
+# In a packaged (PyInstaller) build the .py sources live in the bundle's PYZ,
+# not on disk — _PROJECT_ROOT points at the _MEIxxxx extraction temp dir. Every
+# selfmod operation (read/edit/write/reload) is therefore inert, and the git/
+# glob calls in selfmod_status only flail (and can out-live the client timeout).
+# Self-modification is intrinsically a run-from-source capability.
+_FROZEN = getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS")
+
 # Track core edits that need a restart
 _pending_restart: list[dict] = []
 
@@ -362,8 +369,69 @@ def _hot_reload_module(server, module_name: str) -> dict:
         return {"reloaded": False, "module": module_name, "error": str(e)}
 
 
+def _register_frozen_stubs(server):
+    """Packaged-build stand-ins for the selfmod tools.
+
+    In a frozen build there are no source files to read or patch, so instead
+    of hanging (selfmod_status) or returning a confusing 'file not found'
+    (read/edit/write), every tool answers instantly and honestly: this is a
+    source-only capability. Keeps the tool surface identical across runtimes
+    so any client gets a clear reason rather than a dead call.
+    """
+    _MSG = {
+        "error": "selfmod unavailable in packaged build",
+        "reason": (
+            "This SassyMCP is a frozen PyInstaller build with no source files "
+            "on disk; self-modification requires running from a source checkout."
+        ),
+        "runtime": "frozen",
+        "fix": "Launch SassyMCP from source (python -m sassymcp.server) to self-modify.",
+    }
+
+    @server.tool()
+    async def sassy_selfmod_status() -> str:
+        """Self-modification status. Disabled in packaged builds (source-only)."""
+        return json.dumps({**_MSG, "pending_restart": [], "restart_required": False}, indent=2)
+
+    @server.tool()
+    async def sassy_selfmod_read(path: str) -> str:
+        """Read a SassyMCP source file. Disabled in packaged builds (source-only)."""
+        return json.dumps(_MSG)
+
+    @server.tool()
+    async def sassy_selfmod_edit(path: str, old_text: str, new_text: str, confirm: str = "") -> str:
+        """Surgical self-edit. Disabled in packaged builds (source-only)."""
+        return json.dumps(_MSG)
+
+    @server.tool()
+    async def sassy_selfmod_write(path: str, content: str, confirm: str = "") -> str:
+        """Full file replacement. Disabled in packaged builds (source-only)."""
+        return json.dumps(_MSG)
+
+    @server.tool()
+    async def sassy_selfmod_reload(module_name: str) -> str:
+        """Hot-reload a module. Disabled in packaged builds (source-only)."""
+        return json.dumps(_MSG)
+
+    @server.tool()
+    async def sassy_selfmod_restart(delay_seconds: float = 1.0) -> str:
+        """Graceful self-restart. Disabled in packaged builds (source-only)."""
+        return json.dumps(_MSG)
+
+    @server.tool()
+    async def sassy_selfmod_rollback(path: str, confirm: str = "") -> str:
+        """Revert a file. Disabled in packaged builds (source-only)."""
+        return json.dumps(_MSG)
+
+    logger.info("Self-modification: frozen build — registered source-only stubs.")
+
+
 def register(server):
     """Register self-modification tools."""
+
+    if _FROZEN:
+        _register_frozen_stubs(server)
+        return
 
     @server.tool()
     async def sassy_selfmod_read(path: str) -> str:
