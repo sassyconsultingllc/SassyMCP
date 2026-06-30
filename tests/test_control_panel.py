@@ -150,6 +150,78 @@ def test_token_roundtrip(monkeypatch, tmp_path):
     assert not cp._token_ok(None)
 
 
+# ── Cockpit (read-only tool visualizers) ─────────────────────────────
+
+def test_classify_text():
+    assert cp._classify_result("Proto  Local  State\nTCP 0.0.0.0:445 LISTEN")["kind"] == "text"
+
+
+def test_classify_table_array():
+    out = cp._classify_result(json.dumps([{"pid": 1, "name": "init"}]))
+    assert out["kind"] == "table"
+    assert out["rows"][0]["pid"] == 1
+
+
+def test_classify_table_wrapped_list():
+    out = cp._classify_result(json.dumps({"count": 1, "top_10": [{"tool": "x", "score": 9}]}))
+    assert out["kind"] == "table"
+    assert out["label"] == "top_10"
+    assert out["meta"]["count"] == 1  # scalar siblings preserved as metadata
+
+
+def test_classify_keyvals():
+    out = cp._classify_result(json.dumps({"hostname": "PC", "cpu_percent": 9.0}))
+    assert out["kind"] == "keyvals"
+    assert out["pairs"]["hostname"] == "PC"
+
+
+def test_classify_raw_dict():
+    # observability tools return a dict, not a json string
+    assert cp._classify_result({"status": "healthy", "uptime_seconds": 12})["kind"] == "keyvals"
+
+
+def test_classify_image():
+    out = cp._classify_result(json.dumps({"image_base64": "A" * 200, "format": "jpeg", "bytes": 99}))
+    assert out["kind"] == "image"
+    assert out["image"] == "A" * 200
+    assert out["meta"]["bytes"] == 99  # scalar metadata kept, image key stripped
+
+
+def test_classify_error_envelope():
+    assert cp._classify_result(json.dumps({"error": "not installed"}))["kind"] == "error"
+
+
+def test_cockpit_allowlist_blocks_mutating_tools():
+    # the panel must never be able to invoke a mutating/dangerous tool
+    for danger in ("sassy_shell", "sassy_write_file", "sassy_selfmod_write", "sassy_safe_delete"):
+        assert danger not in cp._COCKPIT_TOOLS
+        _, err = cp._run_tool(danger, {})
+        assert err and "not permitted" in err
+
+
+def test_cockpit_catalog_shape():
+    s, o = cp.handle_api("GET", "/api/cockpit", {}, None)
+    assert s == 200
+    assert "netstat" in o["views"] and "metrics" in o["views"]
+    # every view names a concrete tool and reports availability
+    for v in o["views"].values():
+        assert v["tool"].startswith("sassy_")
+        assert isinstance(v["available"], bool)
+
+
+def test_cockpit_unknown_view():
+    s, o = cp.handle_api("GET", "/api/cockpit", {"view": ["does-not-exist"]}, None)
+    assert s == 404
+
+
+def test_cockpit_view_unloaded_tool_is_graceful():
+    # with no server assembled, the tool isn't loaded -> error kind, not a crash
+    s, o = cp.handle_api("GET", "/api/cockpit", {"view": ["netstat"]}, None)
+    assert s == 200
+    assert o["kind"] == "error"
+    assert "not loaded" in o["error"]
+
+
 if __name__ == "__main__":
     import pytest
     raise SystemExit(pytest.main([__file__, "-q"]))

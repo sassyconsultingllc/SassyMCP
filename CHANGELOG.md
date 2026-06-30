@@ -66,6 +66,33 @@ facing surfaces.
   `127.0.0.1` and requires the per-install token in
   `~/.sassymcp/control_panel.token`.
 
+## [1.10.2] — 2026-06-30 — Control Panel cockpit: read-only tool visualizers
+
+### Added
+
+- **Full-stack visibility in the server-served Control Panel.** Five new tabs
+  turn the operational tools an LLM rarely calls into a live dashboard:
+  - **Server** — health, live metrics, tool usage/stats, recent tool calls
+    (visible on every tier, no license needed).
+  - **Network** — `sassy_netstat`, `sassy_open_ports`, `sassy_arp_table`.
+  - **Processes** — `sassy_system_info`, `sassy_processes`, `sassy_autorun_entries`.
+  - **Security** — `sassy_defender_status`, `sassy_firewall_status`, `sassy_eventlog`.
+  - **Screen** — `sassy_screen_glance` (image), `sassy_list_windows`, `sassy_screen_ocr`.
+- **Generic result renderer.** One endpoint runs a view's tool and the backend
+  auto-detects how to draw it — table (process list), image (screenshot),
+  key/value card (system info), or text (netstat) — so new read-only tools are a
+  one-line `_COCKPIT_VIEWS` entry with no bespoke UI.
+- The catalog reports per-view availability, so tools gated behind the
+  `system` / `v020` / `forensics` groups show "not in this tier" instead of
+  failing when they aren't loaded.
+
+### Security
+
+- The cockpit can invoke only a hard allowlist of **read-only** tools
+  (`_COCKPIT_TOOLS`). There is no code path from a panel request to `sassy_shell`,
+  fileops writes, selfmod, or any mutating tool. Calls reuse the registered
+  tools, so each one is still recorded in the audit trail.
+
 ## [1.10.1] — 2026-06-25 — Fix: concurrent clients no longer wedge each other
 
 ### Fixed

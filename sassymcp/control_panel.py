@@ -221,6 +221,171 @@ def _apply_rules(body: dict) -> tuple[int, dict]:
     return 200, _rules()
 
 
+# ── Cockpit: read-only tool visualizers ───────────────────────────────
+#
+# The cockpit turns the operational tools that an LLM almost never calls
+# (network sockets, process tables, screen captures, defender/firewall
+# status, server self-metrics) into a live dashboard. It runs each tool
+# THROUGH the registered MCP tool (reusing all the real logic + the audit
+# trail) and auto-detects how to render the result.
+#
+# Safety: only the tools in _COCKPIT_TOOLS may be invoked from the panel,
+# and every one is read-only. The panel never reaches sassy_shell,
+# fileops writes, selfmod, github mutations, etc. — there is no code path
+# from a cockpit request to a mutating tool.
+
+# view-key -> (tool_name, default_kwargs). The view-key is the stable name
+# the UI asks for; the tool may or may not be loaded depending on the
+# licensed tool groups, which the catalog reports per-view.
+_COCKPIT_VIEWS: dict[str, tuple[str, dict]] = {
+    # Network
+    "netstat":        ("sassy_netstat", {}),
+    "open_ports":     ("sassy_open_ports", {}),
+    "arp":            ("sassy_arp_table", {}),
+    # Processes / autostart
+    "processes":      ("sassy_processes", {}),
+    "autoruns":       ("sassy_autorun_entries", {}),
+    # Security posture
+    "defender":       ("sassy_defender_status", {}),
+    "firewall":       ("sassy_firewall_status", {}),
+    "eventlog":       ("sassy_eventlog", {}),
+    # System
+    "system":         ("sassy_system_info", {}),
+    # Screen (vision)
+    "screen":         ("sassy_screen_glance", {}),
+    "ocr":            ("sassy_screen_ocr", {}),
+    "windows":        ("sassy_list_windows", {}),
+    # Server self-observability ("full stack" view of SassyMCP itself)
+    "metrics":        ("sassy_observability_metrics", {}),
+    "health":         ("sassy_observability_health", {}),
+    "tool_stats":     ("sassy_observability_tool_stats", {}),
+    "recent_calls":   ("sassy_recent_tool_calls", {}),
+    "tool_usage":     ("sassy_tool_usage", {}),
+}
+
+# Hard allowlist — the only tools the panel may execute. Derived from the
+# views above; kept as a set for O(1) membership and as the single source
+# of truth a reviewer can audit.
+_COCKPIT_TOOLS: frozenset[str] = frozenset(t for t, _ in _COCKPIT_VIEWS.values())
+
+
+def _loaded_tools() -> dict:
+    """Map of registered tool name -> Tool object, or {} if the server
+    isn't assembled yet. Imported lazily so the panel module stays
+    importable in isolation (e.g. unit tests)."""
+    try:
+        from sassymcp.server import mcp
+        return getattr(getattr(mcp, "_tool_manager", None), "_tools", {}) or {}
+    except Exception:
+        return {}
+
+
+def _run_tool(name: str, kwargs: dict):
+    """Invoke an allowlisted read-only tool and return (result, error).
+
+    Runs the registered MCP tool — i.e. tool.fn, which is the async audit
+    wrapper — on a fresh event loop in this panel thread. The wrapper
+    swallows rate-limiter loop-binding errors (limiter failure = allow
+    through), so running it off the main server loop is safe. Reusing the
+    real tool means the cockpit shows exactly what the LLM would get, and
+    the call still lands in the audit trail.
+    """
+    if name not in _COCKPIT_TOOLS:
+        return None, f"tool {name!r} is not permitted in the cockpit"
+    tool = _loaded_tools().get(name)
+    if tool is None:
+        return None, f"{name} is not loaded — enable its tool group / tier"
+    fn = getattr(tool, "fn", None)
+    if fn is None:
+        return None, f"{name} has no callable"
+    import asyncio
+    import inspect
+    try:
+        if inspect.iscoroutinefunction(fn):
+            result = asyncio.run(fn(**kwargs))
+        else:
+            result = fn(**kwargs)
+    except Exception as e:
+        return None, f"{type(e).__name__}: {e}"
+    return result, None
+
+
+_IMAGE_KEYS = ("image_base64", "screenshot_base64", "image", "b64", "png_base64")
+
+
+def _classify_result(result) -> dict:
+    """Auto-detect how to render a tool result.
+
+    Returns a dict with a 'kind' the UI knows how to draw:
+      image   — base64 image + scalar metadata
+      table   — list of flat row dicts (+ optional scalar metadata)
+      keyvals — a flat key/value object
+      error   — the tool reported an error
+      text    — anything else, as preformatted text
+    """
+    parsed = result
+    if isinstance(result, str):
+        s = result.strip()
+        if s[:1] in "[{":
+            try:
+                parsed = json.loads(s)
+            except (ValueError, json.JSONDecodeError):
+                parsed = result
+
+    def _scalars(d: dict) -> dict:
+        return {k: v for k, v in d.items() if not isinstance(v, (list, dict))}
+
+    if isinstance(parsed, dict):
+        # image payload?
+        for k in _IMAGE_KEYS:
+            v = parsed.get(k)
+            if isinstance(v, str) and len(v) > 100:
+                return {"kind": "image", "image": v, "meta": _scalars(
+                    {kk: vv for kk, vv in parsed.items() if kk != k})}
+        # explicit error envelope?
+        if "error" in parsed and len([k for k in parsed if k != "error"]) <= 2:
+            return {"kind": "error", "error": str(parsed.get("error"))}
+        # object wrapping exactly one list-of-rows -> table
+        list_fields = [k for k, v in parsed.items()
+                       if isinstance(v, list) and v and all(isinstance(x, dict) for x in v)]
+        if len(list_fields) == 1:
+            lf = list_fields[0]
+            return {"kind": "table", "label": lf, "rows": parsed[lf],
+                    "meta": _scalars({k: v for k, v in parsed.items() if k != lf})}
+        # otherwise a flat status card
+        return {"kind": "keyvals", "pairs": parsed}
+
+    if isinstance(parsed, list):
+        if parsed and all(isinstance(x, dict) for x in parsed):
+            return {"kind": "table", "rows": parsed, "meta": {}}
+        return {"kind": "text", "text": "\n".join(str(x) for x in parsed)}
+
+    return {"kind": "text", "text": result if isinstance(result, str)
+            else json.dumps(parsed, indent=2, default=str)}
+
+
+def _cockpit_catalog() -> dict:
+    """Which cockpit views are available right now (tool loaded or not)."""
+    loaded = _loaded_tools()
+    views = {}
+    for key, (tool, _kw) in _COCKPIT_VIEWS.items():
+        views[key] = {"tool": tool, "available": tool in loaded}
+    return {"views": views}
+
+
+def _cockpit_view(key: str) -> tuple[int, dict]:
+    spec = _COCKPIT_VIEWS.get(key)
+    if not spec:
+        return 404, {"error": f"unknown cockpit view {key!r}"}
+    tool, kwargs = spec
+    result, err = _run_tool(tool, dict(kwargs))
+    if err:
+        return 200, {"tool": tool, "view": key, "kind": "error", "error": err}
+    out = _classify_result(result)
+    out.update({"tool": tool, "view": key})
+    return 200, out
+
+
 # ── Pure router (unit-testable) ───────────────────────────────────────
 
 def handle_api(method: str, path: str, query: dict, body: dict | None) -> tuple[int, dict]:
@@ -240,6 +405,11 @@ def handle_api(method: str, path: str, query: dict, body: dict | None) -> tuple[
             return 200, _settings()
         if method == "POST":
             return _apply_settings(body)
+    if path == "/api/cockpit" and method == "GET":
+        view = (query.get("view") or [None])[0]
+        if view:
+            return _cockpit_view(view)
+        return 200, _cockpit_catalog()
     if path == "/api/classifiers" and method == "GET":
         return 200, _classifiers()
     if path == "/api/rules":
@@ -442,6 +612,24 @@ INDEX_HTML = r"""<!doctype html>
   .toast{position:fixed;right:1rem;bottom:1rem;background:var(--panel);border:1px solid var(--line);padding:.6rem .9rem;border-radius:8px;font-size:.85rem;opacity:0;transition:opacity .2s}
   .toast.show{opacity:1}
   .toast.err{border-color:var(--bad);color:var(--bad)}
+  /* cockpit */
+  main.wide{max-width:1400px}
+  .cards{display:grid;gap:.75rem;grid-template-columns:repeat(auto-fit,minmax(330px,1fr))}
+  .card{border:1px solid var(--line);border-radius:8px;background:var(--panel);overflow:hidden}
+  .card.wide{grid-column:1/-1}
+  .card .chead{display:flex;align-items:center;gap:.5rem;padding:.45rem .7rem;border-bottom:1px solid var(--line)}
+  .card .chead h3{margin:0;font-size:.85rem;font-weight:600}
+  .card .chead .tool{color:var(--muted);font-size:.68rem;font-family:ui-monospace,monospace;margin-left:auto}
+  .card .cbody{padding:.55rem .7rem;max-height:440px;overflow:auto}
+  .card.na{opacity:.5}
+  .mini{background:var(--accent);color:#04101f;border:none;border-radius:5px;padding:.2rem .55rem;cursor:pointer;font-size:.72rem;font-weight:600}
+  pre.out{margin:0;font-family:ui-monospace,Consolas,monospace;font-size:.74rem;white-space:pre-wrap;word-break:break-word;color:var(--fg)}
+  img.shot{max-width:100%;border:1px solid var(--line);border-radius:6px;display:block}
+  dl.kv{display:grid;grid-template-columns:auto 1fr;gap:.18rem .8rem;font-size:.78rem;margin:0}
+  dl.kv dt{color:var(--muted)} dl.kv dd{margin:0;font-family:ui-monospace,monospace;word-break:break-word}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .metarow{display:flex;flex-wrap:wrap;gap:.3rem;margin-bottom:.5rem}
+  .err{color:var(--bad)} .spin{color:var(--muted);font-size:.78rem}
 </style></head>
 <body>
 <header>
@@ -452,10 +640,15 @@ INDEX_HTML = r"""<!doctype html>
 </header>
 <nav>
   <button data-pane=events class=active>Event log</button>
+  <button data-pane=server>Server</button>
+  <button data-pane=network>Network</button>
+  <button data-pane=procs>Processes</button>
+  <button data-pane=security>Security</button>
+  <button data-pane=screen>Screen</button>
   <button data-pane=settings>Settings</button>
   <button data-pane=rules>Classifiers &amp; rules</button>
 </nav>
-<main>
+<main class=wide>
   <section class="pane active" id=events>
     <div class=row><button class=act id=refresh>Refresh</button>
       <label style="margin:0">auto every 5s <input type=checkbox id=auto style="width:auto"></label></div>
@@ -486,6 +679,12 @@ INDEX_HTML = r"""<!doctype html>
     <div class=row><button class=act id=addrule>Add rule</button>
       <button class=act id=saverules style="background:#238636;color:#fff">Save all rules</button></div>
   </section>
+
+  <section class=pane id=server><div class=cards id=cards-server></div></section>
+  <section class=pane id=network><div class=cards id=cards-network></div></section>
+  <section class=pane id=procs><div class=cards id=cards-procs></div></section>
+  <section class=pane id=security><div class=cards id=cards-security></div></section>
+  <section class=pane id=screen><div class=cards id=cards-screen></div></section>
 </main>
 <div class=toast id=toast></div>
 <script>
@@ -505,6 +704,7 @@ document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));
   document.querySelectorAll('.pane').forEach(x=>x.classList.remove('active'));
   b.classList.add('active');document.getElementById(b.dataset.pane).classList.add('active');
+  if(COCKPIT[b.dataset.pane])showPane(b.dataset.pane);
 });
 // header + status
 async function loadStatus(){const s=await api('/status');
@@ -560,6 +760,63 @@ document.getElementById('addrule').onclick=()=>{try{const r=JSON.parse(document.
   if(!['allow','ask','deny'].includes((r.action||'').toLowerCase())){toast('action must be allow|ask|deny',true);return;}
   RULES.push(r);renderRules();document.getElementById('newrule').value='';}catch(e){toast('rule must be valid JSON',true);}};
 document.getElementById('saverules').onclick=async()=>{await api('/rules','POST',{rules:RULES});toast('Rules saved');};
+// ── cockpit: read-only tool visualizers ──────────────────────────────
+const COCKPIT={
+  server:[{k:'health',l:'Health'},{k:'metrics',l:'Live metrics'},
+          {k:'tool_usage',l:'Tool usage',wide:1},{k:'tool_stats',l:'Tool stats',wide:1},
+          {k:'recent_calls',l:'Recent tool calls',wide:1}],
+  network:[{k:'netstat',l:'Connections',wide:1},{k:'open_ports',l:'Listening ports'},{k:'arp',l:'ARP table'}],
+  procs:[{k:'system',l:'System'},{k:'processes',l:'Processes',wide:1},{k:'autoruns',l:'Autostart entries',wide:1}],
+  security:[{k:'defender',l:'Endpoint protection'},{k:'firewall',l:'Firewall'},{k:'eventlog',l:'Event log',wide:1}],
+  screen:[{k:'screen',l:'Live screen glance'},{k:'windows',l:'Windows',wide:1},{k:'ocr',l:'Screen OCR',wide:1}],
+};
+const AUTORUN=new Set(['health','metrics','system','tool_usage','screen']);
+let CATALOG=null;
+async function ensureCatalog(){if(CATALOG===null){try{CATALOG=(await api('/cockpit')).views||{};}catch(e){CATALOG={};}}}
+function tableHTML(rows){
+  if(!rows||!rows.length)return '<p class=hint>empty</p>';
+  const cols=[...rows.reduce((s,r)=>{Object.keys(r).forEach(k=>s.add(k));return s;},new Set())];
+  const numc={};cols.forEach(c=>numc[c]=rows.every(r=>r[c]==null||typeof r[c]==='number'));
+  return '<table><thead><tr>'+cols.map(c=>'<th>'+esc(c)+'</th>').join('')+'</tr></thead><tbody>'+
+    rows.map(r=>'<tr>'+cols.map(c=>{const v=r[c];const cell=v==null?'':typeof v==='object'?JSON.stringify(v):String(v);
+      return '<td'+(numc[c]?' class=num':'')+'>'+esc(cell)+'</td>';}).join('')+'</tr>').join('')+'</tbody></table>';
+}
+function kvHTML(o){return '<dl class=kv>'+Object.entries(o).map(([k,v])=>
+  '<dt>'+esc(k)+'</dt><dd>'+esc(typeof v==='object'?JSON.stringify(v):String(v))+'</dd>').join('')+'</dl>';}
+function metaHTML(m){const e=Object.entries(m||{}).filter(([,v])=>v!=null&&v!=='');
+  return e.length?'<div class=metarow>'+e.map(([k,v])=>'<span class=chip>'+esc(k)+': '+esc(String(v))+'</span>').join('')+'</div>':'';}
+function renderResult(el,r){
+  if(!r){el.innerHTML='<p class="hint err">no response</p>';return;}
+  if(r.kind==='error'){el.innerHTML='<p class="hint err">'+esc(r.error||'error')+'</p>';return;}
+  if(r.kind==='image'){el.innerHTML=metaHTML(r.meta)+'<img class=shot src="data:image/jpeg;base64,'+esc(r.image)+'">';return;}
+  if(r.kind==='table'){el.innerHTML=metaHTML(r.meta)+tableHTML(r.rows);return;}
+  if(r.kind==='keyvals'){el.innerHTML=kvHTML(r.pairs||{});return;}
+  el.innerHTML='<pre class=out>'+esc(r.text||'(empty)')+'</pre>';
+}
+async function runView(key,bodyEl){
+  bodyEl.innerHTML='<span class=spin>running…</span>';
+  try{renderResult(bodyEl,await api('/cockpit?view='+encodeURIComponent(key)));}
+  catch(e){bodyEl.innerHTML='<p class="hint err">'+esc(e.message||'failed')+'</p>';}
+}
+function buildPane(pane){
+  const host=document.getElementById('cards-'+pane);
+  if(!host||host.dataset.built)return;
+  host.dataset.built='1';
+  COCKPIT[pane].forEach(c=>{
+    const info=CATALOG&&CATALOG[c.k];const avail=!info||info.available!==false;
+    const tool=info?info.tool:'';
+    const card=document.createElement('div');
+    card.className='card'+(c.wide?' wide':'')+(avail?'':' na');
+    card.innerHTML='<div class=chead><h3>'+esc(c.l)+'</h3><span class=tool>'+esc(tool)+'</span>'+
+      (avail?'<button class=mini>↻ run</button>':'<span class=chip>not in this tier</span>')+
+      '</div><div class=cbody><span class=hint>'+(avail?'click run':'tool not loaded')+'</span></div>';
+    host.appendChild(card);
+    if(avail){const body=card.querySelector('.cbody');
+      card.querySelector('.mini').onclick=()=>runView(c.k,body);
+      if(AUTORUN.has(c.k))runView(c.k,body);}
+  });
+}
+async function showPane(pane){await ensureCatalog();buildPane(pane);}
 // init
 loadStatus();loadEvents();loadSettings();loadClassifiers();loadRules();
 </script>
