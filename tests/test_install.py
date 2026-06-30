@@ -391,8 +391,17 @@ def test_main_auto_other_skips_claude(tmp_path: Path, monkeypatch):
     from sassymcp import install as inst_mod
     monkeypatch.setattr(inst_mod, "_claude_desktop_config", lambda: claude_cfg)
     monkeypatch.setattr(inst_mod, "_cursor_mcp", lambda: cursor_cfg)
+    # Hermetic: constrain the registry to the two clients this test asserts on.
+    # Without this, --auto-other walks the FULL registry and writes to the real
+    # machine's Windsurf/Continue/Cline/etc. configs (a real config on disk with
+    # bad JSON even made this test fail). --no-skills likewise stops the
+    # tool-playbook deployment from writing to real rules-file paths.
+    monkeypatch.setattr(inst_mod, "_CLIENT_REGISTRY", [
+        ("Claude Desktop", "claude", "_claude_desktop_config", "mcpServers", ""),
+        ("Cursor", "cursor", "_cursor_mcp", "mcpServers", ""),
+    ])
 
-    rc = main(["--exe-path", "C:/sassy/sassymcp.exe", "--auto-other"])
+    rc = main(["--exe-path", "C:/sassy/sassymcp.exe", "--auto-other", "--no-skills"])
     assert rc == 0
     # Claude untouched
     assert not claude_cfg.exists()
