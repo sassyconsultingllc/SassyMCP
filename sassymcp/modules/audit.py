@@ -256,7 +256,7 @@ def log_tool_call(tool_name: str, args: dict, elapsed_ms: int = 0, error: str = 
 
 def register(server):
     @server.tool()
-    async def sassy_audit_log(count: int = 50) -> str:
+    def sassy_audit_log(count: int = 50) -> str:
         """Read recent audit log entries."""
         if not _LOG_FILE.exists():
             return "No audit log entries yet"
@@ -270,7 +270,7 @@ def register(server):
         return "\n".join(recent)
 
     @server.tool()
-    async def sassy_audit_search(keyword: str, count: int = 50) -> str:
+    def sassy_audit_search(keyword: str, count: int = 50) -> str:
         """Search audit log for a keyword."""
         if not _LOG_FILE.exists():
             return "No audit log entries yet"
@@ -286,7 +286,7 @@ def register(server):
         return "\n".join(recent) if recent else f"No entries matching '{keyword}'"
 
     @server.tool()
-    async def sassy_audit_false_positives(count: int = 20, include_bypasses: bool = True) -> str:
+    def sassy_audit_false_positives(count: int = 20, include_bypasses: bool = True) -> str:
         """Show recent shell-interceptor pattern matches (blocks + bypasses).
 
         Surfaces the noisy-pattern events you'd otherwise have to grep for.
@@ -332,7 +332,7 @@ def register(server):
         return "\n".join(out)
 
     @server.tool()
-    async def sassy_audit_clear(confirm: str = "") -> str:
+    def sassy_audit_clear(confirm: str = "") -> str:
         """Rotate the audit log to a timestamped archive.
 
         The log is NEVER unlinked — always renamed to audit.cleared.<ts>.log

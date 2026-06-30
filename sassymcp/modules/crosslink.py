@@ -224,7 +224,7 @@ class _Handler(BaseHTTPRequestHandler):
 def register(server):
 
     @server.tool()
-    async def sassy_crosslink_start(port: int = DEFAULT_PORT, bind: str = "", token: str = "") -> str:
+    def sassy_crosslink_start(port: int = DEFAULT_PORT, bind: str = "", token: str = "") -> str:
         """Start the Crosslink HTTP API for LAN-accessible cross-device messaging.
 
         bind: '0.0.0.0' for LAN access (default), '127.0.0.1' for localhost only.
@@ -272,7 +272,7 @@ def register(server):
             return json.dumps({"error": str(e)})
 
     @server.tool()
-    async def sassy_crosslink_stop() -> str:
+    def sassy_crosslink_stop() -> str:
         """Stop the Crosslink HTTP API server."""
         global _server_thread, _server_instance, _auth_token
         if _server_instance is None: return json.dumps({"status": "not_running"})
@@ -280,7 +280,7 @@ def register(server):
         return json.dumps({"status": "stopped"})
 
     @server.tool()
-    async def sassy_crosslink_send(payload: str, channel: str = "default", session_id: str = "", ttl_seconds: int = 0) -> str:
+    def sassy_crosslink_send(payload: str, channel: str = "default", session_id: str = "", ttl_seconds: int = 0) -> str:
         """Send a message to the crosslink queue.
 
         payload: message content
@@ -292,13 +292,13 @@ def register(server):
         return json.dumps(_post_message(session_id, channel, payload, ttl_seconds))
 
     @server.tool()
-    async def sassy_crosslink_recv(session_id: str = "sassymcp", channel: str = "default", limit: int = 20, unread_only: bool = True) -> str:
+    def sassy_crosslink_recv(session_id: str = "sassymcp", channel: str = "default", limit: int = 20, unread_only: bool = True) -> str:
         """Read messages from the crosslink queue. Marks them as read for this session."""
         msgs = _read_messages(session_id, channel, limit, unread_only)
         return json.dumps({"messages": msgs, "count": len(msgs)})
 
     @server.tool()
-    async def sassy_crosslink_status() -> str:
+    def sassy_crosslink_status() -> str:
         """Check crosslink status: server running, sessions, message counts, channels."""
         _ensure_db()
         conn = open_db(DB_PATH)
@@ -308,13 +308,13 @@ def register(server):
         return json.dumps({"server_running": _server_instance is not None, "port": DEFAULT_PORT if _server_instance else None, "db": str(DB_PATH), "total_messages": total, "channels": channels, "sessions": _list_sessions()}, indent=2)
 
     @server.tool()
-    async def sassy_crosslink_register(session_id: str = "", name: str = "", platform: str = "") -> str:
+    def sassy_crosslink_register(session_id: str = "", name: str = "", platform: str = "") -> str:
         """Register a session. session_id auto-generated if empty. name/platform for identification."""
         if not session_id: session_id = f"session-{uuid.uuid4().hex[:8]}"
         return json.dumps(_register_session(session_id, name, platform))
 
     @server.tool()
-    async def sassy_crosslink_broadcast(payload: str, session_id: str = "sassymcp") -> str:
+    def sassy_crosslink_broadcast(payload: str, session_id: str = "sassymcp") -> str:
         """Broadcast a message to ALL known channels."""
         _ensure_db()
         conn = open_db(DB_PATH)

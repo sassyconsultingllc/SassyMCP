@@ -125,7 +125,7 @@ def _char_diff(expected: str, actual: str) -> str:
 
 def register(server):
     @server.tool()
-    async def sassy_edit_block(path: str, old_text: str, new_text: str) -> str:
+    def sassy_edit_block(path: str, old_text: str, new_text: str) -> str:
         """Surgical file edit: find old_text and replace with new_text.
 
         - Exact match preferred; fuzzy fallback with diff reporting
@@ -199,7 +199,7 @@ def register(server):
             return f"No match found for the search text in {path}."
 
     @server.tool()
-    async def sassy_edit_multi(path: str, edits: str) -> str:
+    def sassy_edit_multi(path: str, edits: str) -> str:
         """Apply multiple edits to a file in one call.
 
         edits format (JSON string):

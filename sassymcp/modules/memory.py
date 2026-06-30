@@ -21,6 +21,7 @@ import json
 import logging
 import sqlite3
 import time
+from contextlib import closing
 
 from sassymcp._db import open_db
 from sassymcp._paths import HOME as _SASSY_HOME
@@ -30,52 +31,71 @@ logger = logging.getLogger("sassymcp.memory")
 MEMORY_DB = _SASSY_HOME / "memory.db"
 
 
+def _open() -> sqlite3.Connection:
+    """Fresh WAL connection with Row factory. See MemoryStore docstring."""
+    conn = open_db(MEMORY_DB)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 class MemoryStore:
+    """Persistent cross-session memory.
+
+    Opens a fresh WAL connection per operation rather than holding one shared
+    connection. The memory tool handlers run inside asyncio.to_thread (the
+    audit wrapper offloads sync tools to a thread pool), so concurrent calls
+    land on *different* threads, and a single sqlite3.Connection is not safe
+    to share across threads. Per-call connections are cheap under WAL, keep
+    each call isolated, and — crucially — keep the blocking SQLite work off
+    the event loop so two chats never wedge each other.
+    """
+
     def __init__(self):
-        self.conn = open_db(MEMORY_DB)
-        self.conn.row_factory = sqlite3.Row
-        self.conn.execute("""CREATE TABLE IF NOT EXISTS memories (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL,
-            tags TEXT DEFAULT '',
-            priority TEXT DEFAULT 'normal',
-            project TEXT DEFAULT '',
-            created_at REAL NOT NULL,
-            updated_at REAL NOT NULL,
-            access_count INTEGER DEFAULT 0
-        )""")
-        self.conn.execute("""CREATE TABLE IF NOT EXISTS milestones (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event TEXT NOT NULL,
-            project TEXT DEFAULT '',
-            tags TEXT DEFAULT '',
-            timestamp REAL NOT NULL
-        )""")
-        self.conn.commit()
+        with closing(_open()) as conn:
+            conn.execute("""CREATE TABLE IF NOT EXISTS memories (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                tags TEXT DEFAULT '',
+                priority TEXT DEFAULT 'normal',
+                project TEXT DEFAULT '',
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                access_count INTEGER DEFAULT 0
+            )""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS milestones (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event TEXT NOT NULL,
+                project TEXT DEFAULT '',
+                tags TEXT DEFAULT '',
+                timestamp REAL NOT NULL
+            )""")
+            conn.commit()
 
     def remember(self, key: str, value: str, tags: list[str] = None,
                  priority: str = "normal", project: str = "") -> dict:
         now = time.time()
         tag_str = ",".join(tags) if tags else ""
-        existing = self.conn.execute("SELECT key FROM memories WHERE key=?", (key,)).fetchone()
-        if existing:
-            self.conn.execute(
-                "UPDATE memories SET value=?, tags=?, priority=?, project=?, updated_at=? WHERE key=?",
-                (value, tag_str, priority, project, now, key))
-        else:
-            self.conn.execute(
-                "INSERT INTO memories (key, value, tags, priority, project, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
-                (key, value, tag_str, priority, project, now, now))
-        self.conn.commit()
+        with closing(_open()) as conn:
+            existing = conn.execute("SELECT key FROM memories WHERE key=?", (key,)).fetchone()
+            if existing:
+                conn.execute(
+                    "UPDATE memories SET value=?, tags=?, priority=?, project=?, updated_at=? WHERE key=?",
+                    (value, tag_str, priority, project, now, key))
+            else:
+                conn.execute(
+                    "INSERT INTO memories (key, value, tags, priority, project, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+                    (key, value, tag_str, priority, project, now, now))
+            conn.commit()
         return {"key": key, "action": "updated" if existing else "created"}
 
     def recall(self, key: str) -> dict | None:
-        row = self.conn.execute("SELECT * FROM memories WHERE key=?", (key,)).fetchone()
-        if not row:
-            return None
-        self.conn.execute("UPDATE memories SET access_count = access_count + 1 WHERE key=?", (key,))
-        self.conn.commit()
-        return dict(row)
+        with closing(_open()) as conn:
+            row = conn.execute("SELECT * FROM memories WHERE key=?", (key,)).fetchone()
+            if not row:
+                return None
+            conn.execute("UPDATE memories SET access_count = access_count + 1 WHERE key=?", (key,))
+            conn.commit()
+            return dict(row)
 
     def search(self, query: str = "", tags: list[str] = None, project: str = "",
                priority: str = "", limit: int = 20) -> list[dict]:
@@ -96,32 +116,36 @@ class MemoryStore:
             params.append(priority)
 
         where = " AND ".join(conditions) if conditions else "1=1"
-        rows = self.conn.execute(
-            f"SELECT * FROM memories WHERE {where} ORDER BY updated_at DESC LIMIT ?",
-            params + [limit]).fetchall()
+        with closing(_open()) as conn:
+            rows = conn.execute(
+                f"SELECT * FROM memories WHERE {where} ORDER BY updated_at DESC LIMIT ?",
+                params + [limit]).fetchall()
         return [dict(r) for r in rows]
 
     def forget(self, key: str) -> bool:
-        cursor = self.conn.execute("DELETE FROM memories WHERE key=?", (key,))
-        self.conn.commit()
-        return cursor.rowcount > 0
+        with closing(_open()) as conn:
+            cursor = conn.execute("DELETE FROM memories WHERE key=?", (key,))
+            conn.commit()
+            return cursor.rowcount > 0
 
     def log_milestone(self, event: str, project: str = "", tags: list[str] = None):
         tag_str = ",".join(tags) if tags else ""
-        self.conn.execute(
-            "INSERT INTO milestones (event, project, tags, timestamp) VALUES (?,?,?,?)",
-            (event, project, tag_str, time.time()))
-        self.conn.commit()
+        with closing(_open()) as conn:
+            conn.execute(
+                "INSERT INTO milestones (event, project, tags, timestamp) VALUES (?,?,?,?)",
+                (event, project, tag_str, time.time()))
+            conn.commit()
 
     def get_milestones(self, project: str = "", limit: int = 20) -> list[dict]:
-        if project:
-            rows = self.conn.execute(
-                "SELECT * FROM milestones WHERE project LIKE ? ORDER BY timestamp DESC LIMIT ?",
-                (f"%{project}%", limit)).fetchall()
-        else:
-            rows = self.conn.execute(
-                "SELECT * FROM milestones ORDER BY timestamp DESC LIMIT ?",
-                (limit,)).fetchall()
+        with closing(_open()) as conn:
+            if project:
+                rows = conn.execute(
+                    "SELECT * FROM milestones WHERE project LIKE ? ORDER BY timestamp DESC LIMIT ?",
+                    (f"%{project}%", limit)).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM milestones ORDER BY timestamp DESC LIMIT ?",
+                    (limit,)).fetchall()
         return [dict(r) for r in rows]
 
     def context_load(self, project: str = "") -> dict:
@@ -152,13 +176,14 @@ class MemoryStore:
         }
 
     def stats(self) -> dict:
-        total = self.conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
-        by_priority = {}
-        for row in self.conn.execute("SELECT priority, COUNT(*) as cnt FROM memories GROUP BY priority"):
-            by_priority[row[0]] = row[1]
-        milestone_count = self.conn.execute("SELECT COUNT(*) FROM milestones").fetchone()[0]
-        projects = [r[0] for r in self.conn.execute(
-            "SELECT DISTINCT project FROM memories WHERE project != '' ORDER BY project")]
+        with closing(_open()) as conn:
+            total = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+            by_priority = {}
+            for row in conn.execute("SELECT priority, COUNT(*) as cnt FROM memories GROUP BY priority"):
+                by_priority[row[0]] = row[1]
+            milestone_count = conn.execute("SELECT COUNT(*) FROM milestones").fetchone()[0]
+            projects = [r[0] for r in conn.execute(
+                "SELECT DISTINCT project FROM memories WHERE project != '' ORDER BY project")]
         return {
             "total_memories": total,
             "by_priority": by_priority,
@@ -251,7 +276,7 @@ def register(server):
     """Register persistent memory tools."""
 
     @server.tool()
-    async def sassy_memory_remember(
+    def sassy_memory_remember(
         key: str,
         value: str,
         tags: str = "",
@@ -272,7 +297,7 @@ def register(server):
         return json.dumps(result)
 
     @server.tool()
-    async def sassy_memory_recall(key: str) -> str:
+    def sassy_memory_recall(key: str) -> str:
         """Recall a specific memory by key."""
         mem = _memory.recall(key)
         if not mem:
@@ -280,7 +305,7 @@ def register(server):
         return json.dumps(mem, default=str)
 
     @server.tool()
-    async def sassy_memory_search(
+    def sassy_memory_search(
         query: str = "",
         tags: str = "",
         project: str = "",
@@ -299,14 +324,14 @@ def register(server):
         return json.dumps({"results": results, "count": len(results)}, default=str)
 
     @server.tool()
-    async def sassy_memory_forget(key: str) -> str:
+    def sassy_memory_forget(key: str) -> str:
         """Delete a memory. Use when information is no longer relevant."""
         if _memory.forget(key):
             return json.dumps({"forgotten": key})
         return json.dumps({"error": f"No memory found for key: {key}"})
 
     @server.tool()
-    async def sassy_memory_context(project: str = "") -> str:
+    def sassy_memory_context(project: str = "") -> str:
         """Load full context for session startup. Returns critical memories,
         active tasks, blockers, recent milestones, and learned patterns.
 
@@ -319,7 +344,7 @@ def register(server):
         return json.dumps(ctx, default=str, indent=2)
 
     @server.tool()
-    async def sassy_memory_log(event: str, project: str = "", tags: str = "") -> str:
+    def sassy_memory_log(event: str, project: str = "", tags: str = "") -> str:
         """Log a milestone event. Use for significant completions, decisions, or changes.
 
         event: what happened (e.g. "deployed v1.0", "fixed TLS cert chain", "merged PR #42")
@@ -331,13 +356,13 @@ def register(server):
         return json.dumps({"logged": event, "project": project})
 
     @server.tool()
-    async def sassy_memory_milestones(project: str = "", limit: int = 20) -> str:
+    def sassy_memory_milestones(project: str = "", limit: int = 20) -> str:
         """View recent milestones, optionally filtered by project."""
         milestones = _memory.get_milestones(project, min(limit, 100))
         return json.dumps({"milestones": milestones, "count": len(milestones)}, default=str)
 
     @server.tool()
-    async def sassy_memory_handoff(
+    def sassy_memory_handoff(
         task: str,
         status: str = "in-progress",
         completed: str = "",
@@ -396,7 +421,7 @@ def register(server):
         }, indent=2)
 
     @server.tool()
-    async def sassy_memory_stats() -> str:
+    def sassy_memory_stats() -> str:
         """Memory system stats: total memories, priorities, projects, milestones."""
         return json.dumps(_memory.stats())
 

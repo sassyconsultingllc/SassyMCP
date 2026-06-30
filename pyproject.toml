@@ -62,3 +62,6 @@ packages = ["sassymcp"]
 markers = [
     "slow: long-running stress tests (use -m slow to run, deselected by default)"
 ]
+# _DELETE_ is the safe-delete staging area and _backups holds pre-edit
+# snapshots; both contain stale copies of real tests that must not be collected.
+norecursedirs = ["_DELETE_", "_backups", ".venv", "build", "dist"]

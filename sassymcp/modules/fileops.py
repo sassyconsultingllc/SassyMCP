@@ -74,7 +74,7 @@ _STAGING_FOLDER = "_DELETE_"
 def register(server):
 
     @server.tool()
-    async def sassy_safe_delete(path: str) -> str:
+    def sassy_safe_delete(path: str) -> str:
         """Move a file or directory to a _DELETE_ staging folder for review.
 
         Instead of permanent deletion, items are moved to a _DELETE_ folder
@@ -121,7 +121,7 @@ def register(server):
             return f"Error moving to staging: {e}"
 
     @server.tool()
-    async def sassy_read_file(path: str, offset: int = 0, length: int = 1000) -> str:
+    def sassy_read_file(path: str, offset: int = 0, length: int = 1000) -> str:
         """Read file contents with line-based pagination.
 
         offset >= 0 : start from that line (0-based)
@@ -157,7 +157,7 @@ def register(server):
         return header + "\n" + "\n".join(numbered)
 
     @server.tool()
-    async def sassy_read_multiple(paths: str) -> str:
+    def sassy_read_multiple(paths: str) -> str:
         """Read multiple files at once. paths = JSON array of file paths."""
         try:
             file_list = json.loads(paths)
@@ -182,7 +182,7 @@ def register(server):
         return "\n\n".join(results)
 
     @server.tool()
-    async def sassy_write_file(
+    def sassy_write_file(
         path: str,
         content: str,
         mode: str = "rewrite",
@@ -272,7 +272,7 @@ def register(server):
         return f"Written {lines} lines, {len(data)} bytes to {path} ({mode}, {encoding}, {le})"
 
     @server.tool()
-    async def sassy_list_dir(path: str, depth: int = 2) -> str:
+    def sassy_list_dir(path: str, depth: int = 2) -> str:
         """List directory contents. [FILE]/[DIR] prefixes. depth controls recursion."""
         err = _check_path(path)
         if err:
@@ -319,7 +319,7 @@ def register(server):
         return "\n".join(results[:1000])
 
     @server.tool()
-    async def sassy_search_files(
+    def sassy_search_files(
         path: str,
         pattern: str,
         search_type: str = "files",
@@ -378,7 +378,7 @@ def register(server):
         return "\n".join(results) if results else "No matches found"
 
     @server.tool()
-    async def sassy_move(source: str, destination: str) -> str:
+    def sassy_move(source: str, destination: str) -> str:
         """Move or rename a file/directory.
 
         Blocks moves from/to protected paths and refuses to overwrite an
@@ -415,7 +415,7 @@ def register(server):
             return f"Error moving: {e}"
 
     @server.tool()
-    async def sassy_copy(source: str, destination: str) -> str:
+    def sassy_copy(source: str, destination: str) -> str:
         """Copy a file or directory tree.
 
         Refuses protected src/dst and refuses to silently overwrite an
@@ -456,7 +456,7 @@ def register(server):
             return f"Error copying: {e}"
 
     @server.tool()
-    async def sassy_file_info(path: str) -> str:
+    def sassy_file_info(path: str) -> str:
         """Get detailed file/directory metadata.
 
         Includes: size, timestamps, line count (text), sheet info (Excel).
@@ -509,7 +509,7 @@ def register(server):
         return json.dumps(info, indent=2)
 
     @server.tool()
-    async def sassy_mkdir(path: str) -> str:
+    def sassy_mkdir(path: str) -> str:
         """Create a directory (and any missing parents)."""
         err = _check_path(path)
         if err:

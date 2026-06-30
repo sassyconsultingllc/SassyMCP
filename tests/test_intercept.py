@@ -187,13 +187,31 @@ class _FakeServer:
             return fn
         return deco
 
+import inspect as _inspect
+
+
+def _aw(fn):
+    """Adapt a captured tool so `await fn(...)` works whether the tool is
+    declared `def` or `async def`. fileops tools are now plain `def` (the
+    server's audit wrapper offloads them to a thread); the raw functions
+    captured here aren't wrapped, so awaiting them directly would fail.
+    """
+    if _inspect.iscoroutinefunction(fn):
+        return fn
+
+    async def _wrapped(*a, **k):
+        return fn(*a, **k)
+
+    return _wrapped
+
+
 from sassymcp.modules import fileops as fo
 _fake = _FakeServer()
 fo.register(_fake)
-sassy_safe_delete = _fake.tools["sassy_safe_delete"]
-sassy_write_file  = _fake.tools["sassy_write_file"]
-sassy_move        = _fake.tools["sassy_move"]
-sassy_copy        = _fake.tools["sassy_copy"]
+sassy_safe_delete = _aw(_fake.tools["sassy_safe_delete"])
+sassy_write_file  = _aw(_fake.tools["sassy_write_file"])
+sassy_move        = _aw(_fake.tools["sassy_move"])
+sassy_copy        = _aw(_fake.tools["sassy_copy"])
 
 async def test_fileops():
     with tempfile.TemporaryDirectory(prefix="sassy_fo_") as td:
@@ -266,8 +284,8 @@ print("\n[5b] editor.py guards — sandbox")
 from sassymcp.modules import editor as ed
 _fake = _FakeServer()
 ed.register(_fake)
-sassy_edit_block = _fake.tools["sassy_edit_block"]
-sassy_edit_multi = _fake.tools["sassy_edit_multi"]
+sassy_edit_block = _aw(_fake.tools["sassy_edit_block"])
+sassy_edit_multi = _aw(_fake.tools["sassy_edit_multi"])
 
 async def test_editor():
     with tempfile.TemporaryDirectory(prefix="sassy_ed_") as td:
@@ -382,7 +400,7 @@ print("\n[8] audit_clear — rotation not unlink")
 from sassymcp.modules import audit as audit_mod
 _fake = _FakeServer()
 audit_mod.register(_fake)
-sassy_audit_clear = _fake.tools["sassy_audit_clear"]
+sassy_audit_clear = _aw(_fake.tools["sassy_audit_clear"])
 
 async def test_audit():
     # Without confirm it must refuse.
@@ -564,7 +582,7 @@ import json as _json
 from sassymcp.modules import audit as audit_mod
 _fake = _FakeServer()
 audit_mod.register(_fake)
-sassy_audit_false_positives = _fake.tools["sassy_audit_false_positives"]
+sassy_audit_false_positives = _aw(_fake.tools["sassy_audit_false_positives"])
 
 async def test_audit_fp():
     # Run two MEDIUM-tier commands so audit.jsonl picks up a fresh
@@ -727,7 +745,7 @@ print("\n[18] sassy_write_file — encoding and line_endings")
 from sassymcp.modules import fileops as fo
 _fake = _FakeServer()
 fo.register(_fake)
-sassy_write_file = _fake.tools["sassy_write_file"]
+sassy_write_file = _aw(_fake.tools["sassy_write_file"])
 
 async def test_write_file_options():
     with tempfile.TemporaryDirectory(prefix="sassy_wf_") as td:

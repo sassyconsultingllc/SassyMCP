@@ -396,7 +396,14 @@ def audit_tool(fn):
             if asyncio.iscoroutinefunction(fn):
                 result = await fn(*args, **kwargs)
             else:
-                result = fn(*args, **kwargs)
+                # Sync tool bodies must never run inline on the event loop —
+                # one blocking call (SQLite, file I/O, screenshot/OCR) would
+                # freeze every other connected client's in-flight tool call,
+                # which is exactly the "two chats wedge each other" symptom.
+                # Offload to a worker thread so concurrent sessions interleave.
+                # _wrap_all_tools forces tool.is_async=True so FastMCP always
+                # awaits this (always-async) wrapper, even for def-declared tools.
+                result = await asyncio.to_thread(fn, *args, **kwargs)
             if obs:
                 obs.record_call(success=True)
             return result
@@ -456,6 +463,15 @@ def _wrap_all_tools():
                 validate_tool(tool.fn)
                 tool.fn = audit_tool(tool.fn)
                 tool.fn._audit_wrapped = True
+                # audit_tool's wrapper is ALWAYS a coroutine. FastMCP froze
+                # tool.is_async at registration from the original fn and uses
+                # it to decide whether to await (func_metadata: `if fn_is_async:
+                # await fn(...) else: fn(...)`). Force it True so a sync-declared
+                # tool (def, not async def) is still awaited — and therefore
+                # offloaded to a thread by the wrapper — instead of returning an
+                # un-awaited coroutine. Lets any blocking tool be written as a
+                # plain def and stay off the event loop.
+                tool.is_async = True
         logger.info(f"Audit middleware applied to {len(tools)} tools")
     except Exception as e:
         logger.warning(f"Audit middleware wiring failed (non-fatal): {e}")

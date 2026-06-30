@@ -149,7 +149,7 @@ except Exception:
 def register(server):
 
     @server.tool()
-    async def sassy_screen_capture(
+    def sassy_screen_capture(
         window_title: str = "",
         region: str = "",
         max_width: int = 1280,
@@ -210,7 +210,7 @@ def register(server):
             return json.dumps({"error": str(e)})
 
     @server.tool()
-    async def sassy_screen_ocr(
+    def sassy_screen_ocr(
         window_title: str = "",
         region: str = "",
         language: str = "eng",
@@ -257,7 +257,7 @@ def register(server):
             return json.dumps({"error": str(e)})
 
     @server.tool()
-    async def sassy_find_text_on_screen(
+    def sassy_find_text_on_screen(
         search_text: str,
         window_title: str = "",
         click: bool = False,
@@ -339,7 +339,7 @@ def register(server):
             return json.dumps({"error": str(e)})
 
     @server.tool()
-    async def sassy_screen_region(
+    def sassy_screen_region(
         x: int, y: int, width: int, height: int,
         max_width: int = 1024,
         quality: int = 80,
@@ -405,7 +405,7 @@ def register(server):
         return round(changed / total * 100, 1)
 
     @server.tool()
-    async def sassy_screen_glance(
+    def sassy_screen_glance(
         window_title: str = "",
         region: str = "",
         max_width: int = 640,

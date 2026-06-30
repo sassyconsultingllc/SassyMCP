@@ -66,6 +66,30 @@ facing surfaces.
   `127.0.0.1` and requires the per-install token in
   `~/.sassymcp/control_panel.token`.
 
+## [1.10.1] — 2026-06-25 — Fix: concurrent clients no longer wedge each other
+
+### Fixed
+
+- **Two MCP clients calling tools at the same time no longer freeze each
+  other.** Claude Desktop multiplexes every chat onto a *single* stdio server
+  process (one asyncio event loop) — it does not spawn a process per chat. Yet
+  nearly every tool body did synchronous blocking work (SQLite, file I/O,
+  screenshots/OCR) directly on that loop. With one chat this was invisible
+  (calls are sequential anyway); with two, any in-flight blocking call starved
+  the loop and froze the other chat until it timed out.
+  - The audit wrapper now runs synchronous tools via `asyncio.to_thread`, and
+    `_wrap_all_tools` forces `tool.is_async = True` so FastMCP awaits the
+    (always-async) wrapper even for `def`-declared tools. Net effect: **a
+    blocking tool written as a plain `def` is automatically offloaded to a
+    worker thread and can never block the event loop.**
+  - Converted the confirmed loop-blockers to plain `def`: `state_manager`,
+    `memory`, `fileops`, `vision` (single-shot capture/OCR), `crosslink`,
+    `editor`, `audit`. SQLite-backed modules (`state_manager`, `memory`) now
+    open a fresh per-call connection (`with closing(open_db(...))`) instead of
+    sharing one connection, which is required once calls run on worker threads.
+  - Registry / eventlog / web_inspector were already non-blocking (they offload
+    via `create_subprocess_exec` / `httpx.AsyncClient`) and were left as-is.
+
 ## [1.9.0] — 2026-06-23 — Permission engine (modes + sandbox jail + rules)
 
 ### Added
