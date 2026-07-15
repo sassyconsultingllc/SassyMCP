@@ -18,7 +18,7 @@ Two entry points share the same module-level helpers (single source of truth):
 Peers in practice: Claude Desktop, Cursor, Windsurf, the Hermes Ollama node
 (hermes_node.py), the VS Code cockpit itself, or a remote SassyMCP instance.
 
-Pro tier (registered in the `v020` group alongside crosslink).
+Registered in the `v020` group alongside crosslink.
 """
 
 import json

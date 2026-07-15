@@ -1,7 +1,16 @@
 # SassyMCP Launch + Sales Runbook
 
+> **⚠️ SUPERSEDED IN PART — 2026-07-15 (v1.13.0): tier gating removed.**
+> The product is now all-or-nothing: every tool group ships unlocked for
+> everyone; a license is a **supporter purchase** (seat + tier label), not a
+> feature unlock. Every claim below of the form "Pro unlocks X" / "Forensics
+> add-on unlocks Y" is **no longer true** and must be rewritten before any
+> copy in 01–08 is published. Pricing/AOV math assumed feature gating and
+> needs a fresh decision (supporter model, or re-gate only after the
+> LemonSqueezy buy→own loop actually works end-to-end).
+
 **Goal:** drive SassyMCP toward **$3,000/month**.
-**Model:** one-time perpetual license. Pro **$49**, Forensics add-on **+$29**, Team site license **$199**.
+**Model:** one-time perpetual license. Pro **$49**, Forensics add-on **+$29**, Team site license **$199**. *(see supersession note above)*
 **Author:** SaS + Claude · **Created:** 2026-06-05
 
 ---

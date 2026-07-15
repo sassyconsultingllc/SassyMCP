@@ -1,23 +1,20 @@
 # Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
 # Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
 # CodeMark: SCLLC1-SassyMCP-WZQWYCYTMYXW
-"""Tier-based group gating enforced by license.get_allowed_groups().
+"""Tier gating is GONE — license.get_allowed_groups() unlocks everything.
 
-These tests pin down what `get_allowed_groups()` must return under each
-license state. They were written before the beta-mode bypass was removed
-and assume the post-bypass semantics:
+v1.13.0 removed the pro/forensics gate: the release model is all-or-nothing,
+every tool group ships unlocked for everyone. These tests pin that contract
+so gating can't silently creep back in:
 
-  - no license file        → free tier groups only
-  - valid pro license      → free baseline + pro-only groups
-  - valid forensics addon  → tier groups + forensics-only group
-  - tampered signature     → silently downgrades to free (no crash)
-  - expired                → silently downgrades to free
-  - corrupt JSON           → silently downgrades to free
-  - SASSYMCP_LICENSE_BYPASS=1 → all known groups (dev escape hatch)
+  - every license state (none, free, pro, expired, tampered, corrupt)
+    → ALL known groups, exactly
+  - failure modes never raise, never crash a startup
+  - SASSYMCP_LICENSE_BYPASS is accepted-and-ignored (already everything)
 
-Tests build license payloads with the in-process signing secret rather
-than calling generate_license_key directly so they exercise the on-disk
-file path (LICENSE_FILE) the way a real activation would.
+The supporter-key machinery (generate / parse / validate) still works and
+still reports tier labels honestly — that's pinned here too, because the
+banner, control panel, and cockpit display it.
 """
 from __future__ import annotations
 
@@ -28,6 +25,11 @@ import time
 from pathlib import Path
 
 import pytest
+
+
+def _all_known_groups() -> set[str]:
+    from sassymcp.modules._tool_loader import TOOL_GROUPS
+    return set(TOOL_GROUPS.keys())
 
 
 def _fresh_license_module(monkeypatch, sassy_home: Path):
@@ -70,70 +72,26 @@ def _write_license_file(lic_module, payload: dict):
     }))
 
 
-# ── Baseline (no license) ──────────────────────────────────────────────
+# ── Everything unlocked, in every license state ────────────────────────
 
-def test_no_license_file_returns_free_groups_only(tmp_path, monkeypatch):
+def test_no_license_file_unlocks_all_groups(tmp_path, monkeypatch):
     lic = _fresh_license_module(monkeypatch, tmp_path / "h")
     allowed = lic.get_allowed_groups()
 
-    assert "core" in allowed
-    assert "github_quick" in allowed
-    assert "utility" in allowed
-    assert "android" not in allowed, "android is pro-only"
-    assert "system" not in allowed, "system is pro-only"
-    assert "github_full" not in allowed, "github_full is pro-only"
-    assert "forensics" not in allowed, "forensics is add-on only"
+    assert allowed == _all_known_groups()
+    # Spot-check the groups the old gate used to lock:
+    for grp in ("android", "system", "github_full", "linux", "v020", "forensics"):
+        assert grp in allowed, f"{grp} must be unlocked without a license"
 
 
-def test_free_tier_includes_always_load_infra_groups(tmp_path, monkeypatch):
-    """Updater, prompts, combos are infra that ship to every tier."""
-    lic = _fresh_license_module(monkeypatch, tmp_path / "h")
-    allowed = lic.get_allowed_groups()
-
-    for grp in ("updater", "prompts", "combos", "meta", "infrastructure"):
-        assert grp in allowed, f"{grp} must be in free tier"
-
-
-# ── Pro tier ───────────────────────────────────────────────────────────
-
-def test_valid_pro_license_unlocks_pro_groups(tmp_path, monkeypatch):
+def test_valid_pro_license_changes_nothing(tmp_path, monkeypatch):
     lic = _fresh_license_module(monkeypatch, tmp_path / "h")
     _write_license_file(lic, {"tier": "pro", "expires": time.time() + 86400 * 365})
 
-    allowed = lic.get_allowed_groups()
-    assert "android" in allowed
-    assert "system" in allowed
-    assert "github_full" in allowed
-    assert "linux" in allowed
-    assert "v020" in allowed
-    assert "core" in allowed, "pro must still include free baseline"
+    assert lic.get_allowed_groups() == _all_known_groups()
 
 
-def test_pro_license_does_not_grant_forensics(tmp_path, monkeypatch):
-    """Forensics is an add-on, not bundled with pro."""
-    lic = _fresh_license_module(monkeypatch, tmp_path / "h")
-    _write_license_file(lic, {"tier": "pro", "expires": time.time() + 86400 * 365})
-
-    allowed = lic.get_allowed_groups()
-    assert "forensics" not in allowed
-
-
-# ── Forensics add-on ───────────────────────────────────────────────────
-
-def test_pro_plus_forensics_addon_grants_both(tmp_path, monkeypatch):
-    lic = _fresh_license_module(monkeypatch, tmp_path / "h")
-    _write_license_file(lic, {
-        "tier": "pro",
-        "addons": ["forensics"],
-        "expires": time.time() + 86400 * 365,
-    })
-
-    allowed = lic.get_allowed_groups()
-    assert "android" in allowed, "pro groups still there"
-    assert "forensics" in allowed, "forensics add-on must unlock forensics group"
-
-
-def test_free_plus_forensics_addon_grants_forensics_only(tmp_path, monkeypatch):
+def test_forensics_addon_changes_nothing(tmp_path, monkeypatch):
     lic = _fresh_license_module(monkeypatch, tmp_path / "h")
     _write_license_file(lic, {
         "tier": "free",
@@ -141,30 +99,23 @@ def test_free_plus_forensics_addon_grants_forensics_only(tmp_path, monkeypatch):
         "expires": time.time() + 86400 * 365,
     })
 
-    allowed = lic.get_allowed_groups()
-    assert "forensics" in allowed
-    assert "android" not in allowed, "free + forensics does not grant pro groups"
+    assert lic.get_allowed_groups() == _all_known_groups()
 
 
-# ── Failure modes (must downgrade to free, never crash) ────────────────
+# ── Failure modes (must never crash, must never lock anything) ─────────
 
-def test_expired_license_downgrades_to_free(tmp_path, monkeypatch):
+def test_expired_license_still_unlocks_everything(tmp_path, monkeypatch):
     lic = _fresh_license_module(monkeypatch, tmp_path / "h")
-    # Build a key that expires in 1 day, then rewrite the on-disk expires
-    # field to be in the past. Signature still verifies (signed payload
-    # has expires-in-past too).
     key = lic.generate_license_key(
         email="x@y", tier="pro", days_valid=1, addons=None,
         _override_created=time.time() - 86400 * 365,
     )
     lic.LICENSE_FILE.write_text(json.dumps({"key": key["key"]}))
 
-    allowed = lic.get_allowed_groups()
-    assert "android" not in allowed
-    assert "core" in allowed
+    assert lic.get_allowed_groups() == _all_known_groups()
 
 
-def test_tampered_signature_downgrades_to_free(tmp_path, monkeypatch):
+def test_tampered_signature_still_unlocks_everything(tmp_path, monkeypatch):
     lic = _fresh_license_module(monkeypatch, tmp_path / "h")
     _write_license_file(lic, {"tier": "pro", "expires": time.time() + 86400})
     raw = json.loads(lic.LICENSE_FILE.read_text())
@@ -172,55 +123,72 @@ def test_tampered_signature_downgrades_to_free(tmp_path, monkeypatch):
     bad = raw["key"][:-3] + ("A" if raw["key"][-3] != "A" else "B") + raw["key"][-2:]
     lic.LICENSE_FILE.write_text(json.dumps({"key": bad}))
 
-    allowed = lic.get_allowed_groups()
-    assert "android" not in allowed
-    assert "core" in allowed
+    assert lic.get_allowed_groups() == _all_known_groups()
 
 
-def test_corrupt_license_file_downgrades_to_free(tmp_path, monkeypatch):
+def test_corrupt_license_file_still_unlocks_everything(tmp_path, monkeypatch):
     lic = _fresh_license_module(monkeypatch, tmp_path / "h")
     lic.LICENSE_FILE.write_text("this is not json {{{")
 
-    allowed = lic.get_allowed_groups()
-    assert "android" not in allowed
-    assert "core" in allowed
+    assert lic.get_allowed_groups() == _all_known_groups()
 
 
-# ── Dev escape hatch ───────────────────────────────────────────────────
-
-def test_bypass_env_var_unlocks_everything(tmp_path, monkeypatch):
+def test_bypass_env_var_is_harmless_noop(tmp_path, monkeypatch):
+    """SASSYMCP_LICENSE_BYPASS used to be the dev escape hatch. It's kept
+    accepted-and-ignored so old dev environments and CI configs don't
+    break — and it must not error or change the result."""
     lic = _fresh_license_module(monkeypatch, tmp_path / "h")
     monkeypatch.setenv("SASSYMCP_LICENSE_BYPASS", "1")
 
-    allowed = lic.get_allowed_groups()
-    # Must include groups from every tier
-    assert "android" in allowed
-    assert "github_full" in allowed
-    assert "forensics" in allowed
+    assert lic.get_allowed_groups() == _all_known_groups()
 
 
-# ── Intersection guarantee (no phantom groups) ────────────────────────
+# ── No phantom groups ──────────────────────────────────────────────────
 
-def test_returned_groups_are_subset_of_known_groups(tmp_path, monkeypatch):
-    """get_allowed_groups must never return a group name that doesn't
-    exist in TOOL_GROUPS, even if TIER_GROUPS drifts and references one.
-    Without this guarantee, server.py:268 would silently skip groups and
-    a buyer would pay for nothing.
-    """
+def test_returned_groups_exactly_match_known_groups(tmp_path, monkeypatch):
+    """get_allowed_groups must return exactly TOOL_GROUPS' keys — never a
+    phantom name the server module resolver can't load, never a subset
+    (that would mean gating crept back in)."""
     lic = _fresh_license_module(monkeypatch, tmp_path / "h")
-    from sassymcp.modules._tool_loader import TOOL_GROUPS
+    allowed = lic.get_allowed_groups()
+    known = _all_known_groups()
+    assert allowed == known, (
+        f"drift between allowed and known groups: "
+        f"missing={known - allowed} phantom={allowed - known}"
+    )
+
+
+# ── Supporter-key machinery still works (label integrity) ─────────────
+
+def test_tier_label_still_validates_and_displays(tmp_path, monkeypatch):
+    """Gating is gone but the banner/control panel/cockpit still show the
+    supporter tier — validate_license must keep reporting it honestly."""
+    lic = _fresh_license_module(monkeypatch, tmp_path / "h")
     _write_license_file(lic, {
         "tier": "pro",
         "addons": ["forensics"],
-        "expires": time.time() + 86400,
+        "expires": time.time() + 86400 * 365,
     })
 
-    allowed = lic.get_allowed_groups()
-    unknown = allowed - set(TOOL_GROUPS.keys())
-    assert not unknown, f"phantom groups in allowed set: {unknown}"
+    result = lic.validate_license()
+    assert result["valid"] is True
+    assert result["tier"] == "pro"
+    assert result["addons"] == ["forensics"]
 
 
-# ── Round-trip of addons through generate/parse ───────────────────────
+def test_expired_license_label_downgrades_to_free(tmp_path, monkeypatch):
+    lic = _fresh_license_module(monkeypatch, tmp_path / "h")
+    key = lic.generate_license_key(
+        email="x@y", tier="pro", days_valid=1, addons=None,
+        _override_created=time.time() - 86400 * 365,
+    )
+    lic.LICENSE_FILE.write_text(json.dumps({"key": key["key"]}))
+
+    result = lic.validate_license()
+    assert result["valid"] is False
+    assert result["tier"] == "free"
+    assert result["reason"] == "expired"
+
 
 def test_addons_survive_round_trip(tmp_path, monkeypatch):
     lic = _fresh_license_module(monkeypatch, tmp_path / "h")

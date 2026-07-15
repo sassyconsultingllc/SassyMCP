@@ -370,8 +370,8 @@ def resolve_dependencies(modules: list[str]) -> list[str]:
 # scorer is sassy_adb_shell never sees the android group auto-loaded.
 USAGE_BOOST_THRESHOLD = 0.5
 
-# Tools with score < this are dropped from the default load entirely (Pro
-# tier still loads everything via SASSYMCP_LOAD_ALL=1 or per-group toggle).
+# Tools with score < this are dropped from the default load entirely
+# (everything still loads via SASSYMCP_LOAD_ALL=1 or per-group toggle).
 # Saves context on the long tail of "registered but never used" tools.
 USAGE_PRUNE_THRESHOLD = 0.05
 

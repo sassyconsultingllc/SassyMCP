@@ -18,8 +18,8 @@ and let the upgrade path live inside the tool.
 
 ```
 Name:           SassyMCP
-One-liner:      One MCP server that replaces 75+ — 270 tools in a single exe, smart-loaded.
-Description:    SassyMCP collapses 75+ individual MCP servers into one 34 MB exe with 270 tools
+One-liner:      One MCP server that replaces 75+ — 274 tools in a single exe, smart-loaded.
+Description:    SassyMCP collapses 75+ individual MCP servers into one 34 MB exe with 274 tools
                 across files, shell, full GitHub API, Android control, dynamic vision, memory,
                 and security audit. A smart loader keeps tool-definition context under ~5K tokens.
                 Includes safe-delete interception (agents can't destroy files), phone control with
@@ -27,11 +27,11 @@ Description:    SassyMCP collapses 75+ individual MCP servers into one 34 MB exe
                 driver; Pro is a one-time purchase. Works with any MCP client.
 Categories:     Developer Tools, Automation, GitHub, Security, Productivity
 Transport:      stdio (primary), HTTP/SSE, HTTPS
-Tool count:     270 (35 modules, 18 groups)
+Tool count:     274 (36 modules, 18 groups)
 Platform:       Windows 10/11
 License:        MIT core; commercial license for paid tool groups
 Repo:           https://github.com/sassyconsultingllc/SassyMCP
-Homepage:       https://sassyconsultingllc.com/pricing.html
+Homepage:       https://sassyconsultingllc.com/store   (NOT /pricing.html — that 404s as of 2026-07-15)
 Icon:           (use the bolt logo — see 08-assets-to-capture.md)
 Clients tested: Claude Desktop, Cursor, Windsurf, VS Code Copilot, Cline, Continue, Zed, Grok Desktop
 ```
@@ -88,6 +88,12 @@ Clients tested: Claude Desktop, Cursor, Windsurf, VS Code Copilot, Cline, Contin
 → 6. Smithery → 7. Official registry (publish package first) → 8. awesome-list PR → 9. client lists.
 
 Then record where each listing lives so you can update them on each release.
+
+## Submitted so far
+
+| Directory | Date | Status | Where |
+|---|---|---|---|
+| CuratedMCP (curatedmcp.com) | 2026-07-15 | Pending review (48h SLA) | Dashboard: curatedmcp.com/dashboard/servers · listing will be /marketplace/sassymcp. Free listing; pricing=Free, no request quota (guardrail: no metering claims). Publisher profile bio added same day. Their paid-tier/Stripe rev-share NOT used — upgrade path stays in-product via LemonSqueezy. |
 
 ## Maintenance (what directories reward)
 Per the 2026 directory feedback: they surface **last-commit date, production-readiness, client

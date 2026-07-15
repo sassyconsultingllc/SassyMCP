@@ -130,20 +130,32 @@ jobs:
         run: |
           & scripts/build-mcpb.ps1
 
-      - name: Verify DXT exists
+      - name: Verify DXT + MCPB exist
+        # Both are required: the .dxt is the Claude Desktop one-click install,
+        # and the .mcpb is what the official MCP Registry listing points at
+        # (server.json packages[].identifier). They are byte-identical, so the
+        # registry's fileSha256 is valid for either.
         run: |
           $dxt = Get-ChildItem dist\sassymcp-v*.dxt | Select-Object -First 1
           if (-not $dxt) {
-            Write-Error "build-dxt.ps1 did not produce a DXT file"
+            Write-Error "build-mcpb.ps1 did not produce a DXT file"
             exit 1
           }
           Write-Host "Built $($dxt.Name) ($([math]::Round($dxt.Length / 1MB, 1)) MB)"
+          $mcpb = Get-ChildItem dist\sassymcp-v*.mcpb | Select-Object -First 1
+          if (-not $mcpb) {
+            Write-Error "build-mcpb.ps1 did not produce an MCPB file — the MCP Registry listing would point at a 404"
+            exit 1
+          }
+          Write-Host "Built $($mcpb.Name) ($([math]::Round($mcpb.Length / 1MB, 1)) MB)"
 
-      - name: Upload DXT artifact
+      - name: Upload DXT + MCPB artifact
         uses: actions/upload-artifact@v4
         with:
           name: sassymcp-dxt
-          path: dist/sassymcp-v*.dxt
+          path: |
+            dist/sassymcp-v*.dxt
+            dist/sassymcp-v*.mcpb
           if-no-files-found: error
 
   build-vsix:
@@ -364,11 +376,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          # The .mcpb MUST be attached: the MCP Registry listing's
+          # packages[].identifier is this exact release-asset URL. Drop it and
+          # the registry entry points at a 404.
           if [ -n "${{ steps.notes.outputs.notes_file }}" ]; then
             gh release create "${{ github.ref_name }}" \
               release-artifacts/sassymcp-exe/sassymcp.exe \
               release-artifacts/sassymcp-macos/sassymcp-macos \
               release-artifacts/sassymcp-dxt/*.dxt \
+              release-artifacts/sassymcp-dxt/*.mcpb \
               release-artifacts/sassymcp-vsix/*.vsix \
               --title "${{ github.ref_name }}" \
               --notes-file "${{ steps.notes.outputs.notes_file }}"
@@ -377,10 +393,129 @@ jobs:
               release-artifacts/sassymcp-exe/sassymcp.exe \
               release-artifacts/sassymcp-macos/sassymcp-macos \
               release-artifacts/sassymcp-dxt/*.dxt \
+              release-artifacts/sassymcp-dxt/*.mcpb \
               release-artifacts/sassymcp-vsix/*.vsix \
               --title "${{ github.ref_name }}" \
               --generate-notes
           fi
+
+  publish-pypi:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    # Only on real tag pushes — workflow_dispatch must never publish.
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      id-token: write   # OIDC for PyPI Trusted Publishing — no API token needed
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify tag matches __version__
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          src=$(python3 -c 'import re,sys; m=re.search(r"__version__\s*=\s*\"([^\"]+)\"", open("sassymcp/__init__.py").read()); print(m.group(1)) if m else sys.exit("could not parse __version__")')
+          if [ "$tag" != "$src" ]; then
+            echo "Tag $tag does not match __version__ $src."
+            exit 1
+          fi
+
+      - name: Build sdist + wheel
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Verify registry ownership marker survives into package metadata
+        # The MCP Registry verifies PyPI ownership by finding this exact string
+        # in the package description (sourced from README.md). If it's missing,
+        # the publish-registry job below fails with "package validation failed".
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, zipfile, re, sys
+          whl = glob.glob("dist/*.whl")[0]
+          md = zipfile.ZipFile(whl).read(
+              [n for n in zipfile.ZipFile(whl).namelist() if n.endswith("METADATA")][0]
+          ).decode()
+          if "mcp-name: io.github.sassyconsultingllc/sassymcp" not in md:
+              sys.exit("mcp-name marker missing from package METADATA — restore the "
+                       "<!-- mcp-name: io.github.sassyconsultingllc/sassymcp --> comment in README.md")
+          print("mcp-name marker present")
+          PY
+
+      - name: Publish to PyPI (Trusted Publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-registry:
+    name: Publish to MCP Registry
+    runs-on: ubuntu-latest
+    # Needs the GitHub Release to exist (the .mcpb asset URL must resolve) and
+    # PyPI to be live (the registry validates the pypi package + its mcp-name).
+    needs: [release, publish-pypi]
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      id-token: write   # OIDC for `mcp-publisher login github-oidc` — no secret needed
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download DXT/MCPB artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sassymcp-dxt
+          path: mcpb-artifact
+
+      - name: Stamp server.json with this release's version, URL and SHA
+        # server.json is committed with the *previous* release's values. The
+        # registry rejects duplicate versions and clients verify fileSha256, so
+        # all three must be rewritten per release.
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          MCPB=$(ls mcpb-artifact/sassymcp-v*.mcpb | head -1)
+          [ -n "$MCPB" ] || { echo "no .mcpb artifact found"; exit 1; }
+          SHA=$(sha256sum "$MCPB" | cut -d' ' -f1)
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/$(basename "$MCPB")"
+          echo "version=$VERSION"
+          echo "url=$URL"
+          echo "sha256=$SHA"
+          jq --arg v "$VERSION" --arg sha "$SHA" --arg url "$URL" '
+            .version = $v
+            | .packages = (.packages | map(
+                if .registryType == "pypi" then .version = $v
+                elif .registryType == "mcpb" then .identifier = $url | .fileSha256 = $sha
+                else . end
+              ))
+          ' server.json > server.tmp && mv server.tmp server.json
+          cat server.json
+
+      - name: Confirm the .mcpb URL actually resolves
+        # Cheap guard against publishing a listing that points at a 404.
+        run: |
+          set -euo pipefail
+          URL=$(jq -r '.packages[] | select(.registryType=="mcpb") | .identifier' server.json)
+          code=$(curl -s -o /dev/null -w "%{http_code}" -L "$URL")
+          echo "$URL -> $code"
+          [ "$code" = "200" ] || { echo "MCPB URL does not resolve"; exit 1; }
+
+      - name: Install mcp-publisher
+        run: |
+          set -euo pipefail
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+
+      - name: Authenticate to MCP Registry (OIDC)
+        run: ./mcp-publisher login github-oidc
+
+      - name: Validate + publish
+        run: |
+          set -euo pipefail
+          ./mcp-publisher validate
+          ./mcp-publisher publish
 
   publish-vsix:
     name: Publish VSIX to VS Code Marketplace

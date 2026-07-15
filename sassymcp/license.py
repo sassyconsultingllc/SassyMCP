@@ -1,15 +1,21 @@
 # Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
 # Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
 # CodeMark: SCLLC1-SassyMCP-P3YMUOZGJ5GN
-"""SassyMCP License — Offline-first tier gating with HMAC-signed keys.
+"""SassyMCP License — supporter keys with HMAC-signed local payloads.
 
 License keys are HMAC-SHA256 signed JSON payloads. Validated locally on startup.
-Optional weekly online check handles Stripe cancellations.
+Optional weekly online check handles LemonSqueezy cancellations/refunds.
 
-Tiers:
-  free      — core, meta, github_quick, persona, setup (22 tools)
-  pro       — free + all productivity/automation groups (255 tools)
-  forensics — security_audit, registry (additive, stacks with any tier)
+Tier gating was REMOVED in v1.13.0 — the release model is all-or-nothing:
+every tool group ships unlocked for everyone, no key required. A license
+key is now a supporter purchase: activating one registers the machine as a
+LemonSqueezy seat and records a tier label (shown in the startup banner,
+control panel, and cockpit), but the label never controls which groups
+load. Refunds still revoke the label via the weekly check / fast oracle.
+
+get_allowed_groups() survives as the single point where gating would be
+reintroduced if a real buy→own loop ever ships; today it returns every
+known group unconditionally.
 """
 
 import base64
@@ -76,38 +82,11 @@ def _load_signing_secret() -> str:
 
 _SIGNING_SECRET = _load_signing_secret()
 
-# Free baseline. Every tier — and every failure mode (no license, expired,
-# corrupt, tampered) — guarantees at least these. Group names must match
-# TOOL_GROUPS keys in sassymcp.modules._tool_loader; the intersection in
-# get_allowed_groups() will silently drop drift, but anything in this set
-# that doesn't resolve is a paying-customer-facing bug.
-FREE_GROUPS = {
-    "core", "meta", "github_quick", "persona", "setup",
-    "infrastructure", "utility", "selfmod", "memory",
-    # Infra/always-load groups that aren't tier-priced:
-    "updater", "prompts", "combos",
-}
-
-# Pro adds power-user automation surfaces on top of free.
-PRO_ONLY_GROUPS = {
-    "github_full", "android", "v020", "linux", "system",
-}
-
-# Stand-alone add-ons. Each one names a single group that unlocks when
-# the buyer's license payload carries that add-on slug. Add-ons stack
-# additively with the base tier.
-ADDON_GROUPS = {
-    "forensics": {"forensics"},
-}
-
-TIER_GROUPS = {
-    "free": FREE_GROUPS,
-    "pro": FREE_GROUPS | PRO_ONLY_GROUPS,
-}
-
-# Back-compat alias for the original always-allowed concept. Same set
-# as FREE_GROUPS; older code importing this name still works.
-ALWAYS_ALLOWED = FREE_GROUPS
+# Known tier labels, purely informational since v1.13.0. Kept so key
+# generation, the LS variant map, and status displays have a stable
+# vocabulary — none of these labels gate anything anymore.
+KNOWN_TIERS = ("free", "pro")
+KNOWN_ADDONS = ("forensics",)
 
 
 def _sign_payload(payload: dict) -> str:
@@ -274,16 +253,16 @@ def activate_via_lemonsqueezy(
 
     # A successful LS activation that resolves to the free tier almost
     # always means this variant_id isn't in the entitlement map yet (a
-    # deployment gap, not a buyer error). The seat still gets registered so
-    # we don't strand the purchase, but the buyer would otherwise silently
-    # receive nothing — surface it loudly so it's caught immediately.
+    # deployment gap, not a buyer error). Cosmetic since v1.13.0 — every
+    # tool group is unlocked regardless — but the supporter's tier label
+    # would silently show "free", so still surface the mapping gap loudly.
     unmapped = entitlement["tier"] == "free" and not entitlement["addons"]
     if unmapped:
         logger.error(
             f"LS activation resolved to FREE for a purchase: variant_id="
-            f"{meta.get('variant_id')} is not in the entitlement map. The "
-            f"buyer paid but gets no paid groups. Add this variant_id to "
-            f"DEFAULT_VARIANT_MAP or SASSYMCP_LS_VARIANT_MAP."
+            f"{meta.get('variant_id')} is not in the entitlement map, so the "
+            f"buyer's supporter tier label shows 'free'. Add this variant_id "
+            f"to DEFAULT_VARIANT_MAP or SASSYMCP_LS_VARIANT_MAP."
         )
 
     # Mint our internal HMAC key with the resolved tier+addons. The
@@ -332,8 +311,9 @@ def activate_via_lemonsqueezy(
     if unmapped:
         result["warning"] = (
             f"Purchase activated but variant_id={meta.get('variant_id')} maps to "
-            f"the FREE tier — the entitlement map is missing this variant. "
-            f"Contact support so your paid tier can be unlocked."
+            f"the FREE tier label — the entitlement map is missing this variant. "
+            f"All tools are unlocked regardless; contact support so your "
+            f"supporter tier displays correctly."
         )
     return result
 
@@ -380,52 +360,19 @@ def deactivate_via_lemonsqueezy() -> dict:
 
 
 def get_allowed_groups() -> set[str]:
-    """Tier-aware group allowlist used by the server module resolver.
+    """Group allowlist used by the server module resolver.
 
-    Any failure to parse / verify / load a license downgrades to free
-    tier silently — never raises, never crashes a startup. The free
-    baseline is unconditionally included so a paying customer who lets
-    their key expire still has a usable product instead of a bricked one.
+    Since v1.13.0 this is every known group, unconditionally — tier
+    gating was removed. License state (missing, expired, tampered,
+    corrupt, revoked) affects only the displayed tier label, never
+    which groups load. Kept as a function so callers have one source
+    of truth and gating could be reintroduced in exactly one place.
 
-    SASSYMCP_LICENSE_BYPASS=1 returns every known group. Intended for
-    development on the upstream codebase, CI, and air-gapped support
-    cases where the buyer can't reach the validation endpoint. The
-    bypass is logged at WARNING so it's visible in audit trails.
+    SASSYMCP_LICENSE_BYPASS is accepted and ignored for back-compat:
+    it used to unlock everything; everything is already unlocked.
     """
     from sassymcp.modules._tool_loader import TOOL_GROUPS
-    known = set(TOOL_GROUPS.keys())
-
-    if os.environ.get("SASSYMCP_LICENSE_BYPASS", "").strip() in ("1", "true", "yes"):
-        logger.warning(f"License: BYPASS active — all {len(known)} groups allowed")
-        return known
-
-    result = validate_license()
-    tier = result.get("tier", "free")
-    addons = result.get("addons") or []
-
-    allowed = set(TIER_GROUPS.get(tier, FREE_GROUPS))
-    for addon in addons:
-        allowed.update(ADDON_GROUPS.get(addon, set()))
-
-    # Hard guarantee: free baseline always present even if a future
-    # TIER_GROUPS entry forgets to include it.
-    allowed.update(FREE_GROUPS)
-
-    # Drop any group name that doesn't actually exist in TOOL_GROUPS so
-    # the server module resolver never tries to load a phantom group.
-    resolved = allowed & known
-
-    if result.get("valid"):
-        logger.info(
-            f"License: tier={tier} addons={addons or 'none'} — "
-            f"{len(resolved)} groups allowed"
-        )
-    else:
-        logger.info(
-            f"License: free tier ({result.get('reason', 'unlicensed')}) — "
-            f"{len(resolved)} groups allowed"
-        )
-    return resolved
+    return set(TOOL_GROUPS.keys())
 
 
 async def fast_revocation_check() -> bool:
@@ -477,7 +424,8 @@ async def weekly_validation_check():
     For LS-issued licenses (those with ls_license_key + ls_instance_id
     in the local file), the check hits LS's /v1/licenses/validate. A
     decisive non-active status (inactive / expired / disabled) removes
-    the local file so the next get_allowed_groups() call drops to free.
+    the local file so the displayed supporter tier drops to free (tool
+    availability is unaffected — nothing is gated).
 
     Before hitting LS directly, we consult SassyMCP's billing Worker
     via fast_revocation_check(). If it reports revoked, we skip the

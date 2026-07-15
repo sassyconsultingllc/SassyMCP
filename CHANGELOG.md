@@ -10,6 +10,48 @@ All notable changes to SassyMCP. Newest first. Versions follow semver:
 for new tier-visible features, PATCH for fixes that don't move buyer-
 facing surfaces.
 
+## [1.13.0] — 2026-07-15 — All or nothing: tier gating removed, everything unlocked
+
+The pro/forensics gate locked 5 tool groups (`github_full`, `android`,
+`v020`, `linux`, `system`) plus `forensics` behind a license that could
+not actually be purchased (checkout unwired, entitlement map empty). That
+subtracted value from every user and produced revenue from none. The gate
+is gone: the release model is now all-or-nothing — every tool group ships
+unlocked, for everyone, with no key.
+
+### Changed
+
+- **`get_allowed_groups()` returns every known group unconditionally.**
+  License state (missing, expired, tampered, corrupt, revoked) affects
+  only the displayed tier label, never which groups load. The function
+  survives as the single reintroduction point should a real buy→own loop
+  ever ship.
+- **`_resolve_modules()` no longer consults the license.** `SASSYMCP_GROUPS`
+  loads any known group; the "requires Pro license — skipped" path is gone.
+- **Licenses are now supporter keys.** `sassy_setup_license` still
+  activates/validates/deactivates against LemonSqueezy and the tier label
+  still shows in the startup banner, control panel, CLI wizard, and VS Code
+  cockpit — as supporter recognition. Refunds still revoke the label via
+  the weekly LS check and the fast billing-oracle check.
+- **`SASSYMCP_LICENSE_BYPASS` is accepted and ignored** — there is nothing
+  left to bypass. Old dev/CI environments that set it keep working.
+
+### Removed
+
+- `FREE_GROUPS` / `PRO_ONLY_GROUPS` / `ADDON_GROUPS` / `TIER_GROUPS` /
+  `ALWAYS_ALLOWED` from `sassymcp.license` (nothing outside the module
+  imported them). Tier vocabulary lives on as informational
+  `KNOWN_TIERS` / `KNOWN_ADDONS`.
+- The "BYPASS" startup-banner label and the upsell block in
+  `sassy_setup_license action=status` (replaced by a supporter note).
+
+### Tests
+
+- `test_license_gating.py` rewritten to pin the new contract: every
+  license state → all groups, exactly; failure modes never crash; the
+  supporter-label machinery (generate/parse/validate) still round-trips.
+  LemonSqueezy activation tests unchanged and passing.
+
 ## [1.12.0] — 2026-07-15 — The board becomes truthful: server-side auto-record + every continuity plane visible
 
 The cockpit's feasibility problem was that its data plane was voluntary: an

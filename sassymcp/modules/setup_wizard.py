@@ -861,7 +861,11 @@ def register(server):
 
     @server.tool()
     async def sassy_setup_license(key: str = "", action: str = "status") -> str:
-        """Manage your SassyMCP license against LemonSqueezy.
+        """Manage your SassyMCP supporter license against LemonSqueezy.
+
+        All tool groups are unlocked for everyone — no key required. A
+        license is an optional supporter purchase; activating one records
+        your tier label (shown in the banner, control panel, cockpit).
 
         action: status | activate | deactivate | validate
         key: LemonSqueezy license key (format XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX),
@@ -901,11 +905,16 @@ def register(server):
                             info[f] = raw[f]
                 except Exception:
                     pass
+            info["note"] = (
+                "All tool groups are unlocked for everyone — no key required. "
+                "A license is an optional supporter purchase."
+            )
             if tier == "free" and not result.get("valid"):
-                info["upgrade"] = {
+                info["support"] = {
                     "url": "https://sassyconsultingllc.com/store",
-                    "what_you_get": "255 tools, persistent memory, dynamic vision, phone control, "
-                                    "GitHub full API, operational hooks, self-modification, and more.",
+                    "what_it_does": "Registers this machine as a LemonSqueezy seat and "
+                                    "records your supporter tier. It does not unlock "
+                                    "anything — everything already ships unlocked.",
                 }
             return json.dumps(info, indent=2)
 
@@ -925,7 +934,8 @@ def register(server):
                     "email": result.get("email"),
                     "expires": result.get("expires"),
                     "ls_instance_id": result.get("ls_instance_id"),
-                    "note": "Restart the server to load Pro tools, or call sassy_selfmod_restart().",
+                    "note": "Thanks for supporting SassyMCP. All tools were already "
+                            "unlocked — this registers your seat and supporter tier.",
                 }
                 # Surface the unmapped-variant misconfiguration (paid purchase
                 # that resolved to free) so the buyer doesn't silently get nothing.

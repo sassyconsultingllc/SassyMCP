@@ -246,22 +246,20 @@ mcp = _build_server()
 # ── Module Resolution ─────────────────────────────────────────────────
 
 def _resolve_modules() -> list[str]:
-    """Determine which modules to load based on license tier + env vars.
+    """Determine which modules to load from env vars.
     Priority:
-    1. License tier gates which groups are available
-    2. SASSYMCP_LOAD_ALL=1 -> load all ALLOWED modules
-    3. SASSYMCP_GROUPS=core,github_quick -> load specific ALLOWED groups
-    4. Default: load always_load=True groups (intersected with allowed)
+    1. SASSYMCP_LOAD_ALL=1 -> load every group's modules
+    2. SASSYMCP_GROUPS=core,github_quick -> load specific groups
+    3. Default: load always_load=True groups
+    Tier gating was removed in v1.13.0 — every group is available to
+    everyone; a license only sets the displayed supporter tier.
     """
-    allowed_groups = get_allowed_groups()
-
     if os.environ.get("SASSYMCP_LOAD_ALL", "").strip() == "1":
         modules = []
-        for group_name, group_info in TOOL_GROUPS.items():
-            if group_name in allowed_groups:
-                modules.extend(group_info["modules"])
+        for group_info in TOOL_GROUPS.values():
+            modules.extend(group_info["modules"])
         if modules:
-            logger.info(f"SASSYMCP_LOAD_ALL=1 — loading allowed modules: {modules}")
+            logger.info(f"SASSYMCP_LOAD_ALL=1 — loading all modules: {modules}")
             return resolve_dependencies(modules)
         return get_default_modules()
 
@@ -270,10 +268,8 @@ def _resolve_modules() -> list[str]:
         requested = [g.strip() for g in groups_env.split(",") if g.strip()]
         modules = []
         for g in requested:
-            if g in TOOL_GROUPS and g in allowed_groups:
+            if g in TOOL_GROUPS:
                 modules.extend(TOOL_GROUPS[g]["modules"])
-            elif g in TOOL_GROUPS and g not in allowed_groups:
-                logger.warning(f"Group '{g}' requires Pro license — skipped")
             else:
                 logger.warning(f"Unknown group: {g}")
         logger.info(f"SASSYMCP_GROUPS={groups_env} — loading: {modules}")
@@ -664,7 +660,9 @@ def _load_modules():
         modules_dir = Path(__file__).parent / "modules"
         enable_live_reload(mcp, modules_dir)
 
-    # License validation, two cadences:
+    # License validation, two cadences. Affects only the displayed
+    # supporter tier since v1.13.0 (nothing gates on it), but keeps the
+    # label honest — a refunded key shouldn't keep showing "pro":
     #   - Fast revocation check at startup: hits the billing Worker's
     #     edge-cached revocation oracle. If LS fired a refund/cancel
     #     webhook since last startup, the local license is removed
@@ -1218,12 +1216,11 @@ def main():
             logger.info(f"FIRST RUN DETECTED: no persona.md found in {_SASSY_HOME}")
 
     tool_count = len(mcp._tool_manager._tools) if hasattr(mcp, "_tool_manager") else "?"
+    # Tier label is informational (supporter recognition) — nothing gates.
     _lic = validate_license()
     _tier_label = _lic.get("tier", "free")
     if _lic.get("addons"):
         _tier_label += "+" + ",".join(_lic["addons"])
-    if os.environ.get("SASSYMCP_LICENSE_BYPASS", "").strip() in ("1", "true", "yes"):
-        _tier_label = "BYPASS"
     logger.info(
         f"SassyMCP v{__version__} started | tier={_tier_label} | "
         f"{tool_count} tools | groups: {sorted(get_allowed_groups())}"

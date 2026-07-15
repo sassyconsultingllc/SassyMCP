@@ -3,6 +3,7 @@
    Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
    CodeMark: SCLLC1-SassyMCP-HQ73WJ6U2BIV
 -->
+<!-- mcp-name: io.github.sassyconsultingllc/sassymcp -->
 # SassyMCP
 
 **One MCP server to replace them all.**
@@ -53,27 +54,20 @@ SassyMCP replaces **75+ individual MCP servers** — including [Desktop Commande
 
 **Plus features with no MCP server equivalent:** phone pause/resume with sensitive context detection (auto-blocks on login/payment screens), operational hooks (14 expert playbooks), safe delete interception, Windows autorun forensics, Android+Windows clipboard sync, usage-weighted smart loading.
 
-## Licensing & Tiers
+## Licensing
 
-SassyMCP is sold through [LemonSqueezy](https://sassyconsultingllc.com/store) as a **one-time perpetual license** (no subscriptions). Free tier runs out of the box with no key required — paid tiers unlock additional tool groups. Buy once, own forever; refunds revoke automatically.
+**Every tool group ships unlocked, for everyone, with no key required.** As of v1.13.0 the release model is all-or-nothing — there is no free/pro split, no gated groups, no crippled demo. The 274 tools you see in the module table below are the product, out of the box.
 
-| Tier | What unlocks | What you get |
-|---|---|---|
-| **Free** | core, meta, github_quick, persona, setup, infrastructure, utility, selfmod, memory, updater, prompts, combos | File ops, shell, desktop automation, daily-driver GitHub, persistent memory, surgical edit, audit log, multi-client install — enough to use SassyMCP as a daily driver, just without the heavy automation surfaces. |
-| **Pro** | Free + `github_full`, `android`, `v020`, `linux`, `system` | Full GitHub API (80 tools), Android phone control + dynamic vision, OCR, app launcher, web inspector, crosslink, remote Linux SSH, system monitoring, clipboard sync, event logs. |
-| **Forensics** *(add-on)* | `forensics` group: `security_audit`, `registry` | Stacks additively on top of Free or Pro. APK inspection, certificate validation, hash + permission audit, Defender / firewall status, registry read/write/export, autorun forensics. |
+**Supporter licenses (optional):** SassyMCP can still be purchased through [LemonSqueezy](https://sassyconsultingllc.com/store) as a **one-time supporter license** (no subscriptions). Activating a key registers your machine as a seat and records a supporter tier that shows in the startup banner, control panel, and VS Code cockpit — it does not unlock anything, because everything is already unlocked. Buy once to support development; refunds revoke the label automatically.
 
-**Activation flow:**
+**Activation flow (supporters):**
 1. Purchase at `https://sassyconsultingllc.com/store` — LemonSqueezy emails you a key (`XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX`).
 2. Activate from your AI agent: `sassy_setup_license action=activate key=...`
 3. Or from a terminal: `sassymcp.exe setup` opens the interactive menu.
-4. SassyMCP calls LS to register this machine as an instance, mints a local HMAC-signed payload, and unlocks the paid groups on the next server restart.
 
-**Offline operation:** Once activated, the local HMAC payload lets SassyMCP run fully offline. A weekly authoritative re-check against LS catches refunds and cancellations; a faster startup check against the SassyMCP billing oracle cuts refund-to-revocation latency to seconds.
+**Offline operation:** Once activated, a local HMAC-signed payload lets the supporter tier validate fully offline. A weekly re-check against LS catches refunds and cancellations; a faster startup check against the SassyMCP billing oracle cuts refund-to-revocation latency to seconds. Missing, expired, tampered, or corrupt license files just show the free label — tool availability is never affected.
 
-**Safe failure modes:** Missing, expired, tampered, or corrupt license files silently downgrade to free tier — the product never bricks. Network errors during activation or revalidation leave the local license intact.
-
-**Dev escape hatch:** Set `SASSYMCP_LICENSE_BYPASS=1` to unlock all groups regardless of license state. Intended for development on the upstream codebase, CI, and air-gapped support cases. Logged at WARNING level.
+**Back-compat:** `SASSYMCP_LICENSE_BYPASS=1` (the old dev escape hatch that unlocked gated groups) is accepted and ignored — there is nothing left to bypass.
 
 ## Running supervised (`sassymcp supervise`)
 
@@ -122,8 +116,8 @@ The supervisor owns the runtime tree and makes it self-healing and **orphan-proo
 | **PhoneScreen** | 14 | android | UI tree reader, phone glance/watch, tap/swipe/type/key, pause/resume, scrcpy |
 | **NetworkAudit** | 7 | system | netstat, ARP, WiFi scan, port scan, DNS, traceroute |
 | **ProcessManager** | 5 | system | Windows + Android process list/kill, system info |
-| **SecurityAudit** | 7 | forensics | Hash, permissions, certs, APK, firewall, Defender — *requires Forensics add-on* |
-| **Registry** | 4 | forensics | Read, write, export, autorun forensics — *requires Forensics add-on* |
+| **SecurityAudit** | 7 | forensics | Hash, permissions, certs, APK, firewall, Defender |
+| **Registry** | 4 | forensics | Read, write, export, autorun forensics |
 | **Bluetooth** | 3 | system | Windows + Android BT enumeration |
 | **EventLog** | 3 | system | Windows Event Log + Android logcat |
 | **Clipboard** | 4 | system | Windows + Android clipboard sync |
@@ -279,7 +273,7 @@ Each step is independent and skippable. Just tell the AI "set up SassyMCP" or "l
 
 | # | Step | Tool | What happens |
 |---|------|------|--------------|
-| 0 | **License** | `sassy_setup_license action="status"` then `action="activate" key=...` | Reports current tier. If you have a Pro/Forensics key, activates it and unlocks the gated tool groups. |
+| 0 | **License** *(optional)* | `sassy_setup_license action="status"` then `action="activate" key=...` | Reports supporter tier. All tools are unlocked regardless — a key just registers your seat and supporter status. |
 | 1 | **Persona** | `sassy_setup_wizard` | Asks the questionnaire below, generates `~/.sassymcp/persona.md`, hot-reloads the persona module. |
 | 2 | **GitHub** | `sassy_setup_github action="check"` → `action="open_browser"` → `action="save_token" token=...` | Validates an existing `GITHUB_TOKEN`, or opens [github.com/settings/tokens](https://github.com/settings/tokens?type=beta), walks you through scope selection, then saves and re-validates. |
 | 3 | **SSH / Linux** | `sassy_setup_ssh action="check"` → `action="save" host=... user=... password=...` → `action="test"` | Locates `plink`, stores creds in process env, runs an `echo` round-trip to verify. |
@@ -388,13 +382,14 @@ If you don't need the bundled `nmap` / `adb` / `cloudflared` (or you have them o
 
 **First-run wizard:** Double-click `sassymcp.exe` (or run it from a terminal with no flags) on a fresh machine and you'll get an interactive menu — auto-detect AI agents and register SassyMCP, activate a LemonSqueezy license key, generate / list bearer tokens, or start the HTTP server. Run `sassymcp.exe setup` anytime to re-open the menu. Once a persona is configured, bare invocation falls back to starting the HTTP server (the v1.5 behavior) so existing setups are unchanged.
 
-### Activating a paid tier
+### Activating a supporter license (optional)
 
-There is no separate "licensed download" — everyone runs the same binary from
-the [GitHub releases](https://github.com/sassyconsultingllc/SassyMCP/releases/latest).
-Buy a license at **[sassyconsultingllc.com/store](https://sassyconsultingllc.com/store)**,
-then activate it on top of the free install — paid groups unlock on the next
-server restart:
+There is no separate "licensed download" and nothing to unlock — everyone runs
+the same fully-unlocked binary from the
+[GitHub releases](https://github.com/sassyconsultingllc/SassyMCP/releases/latest).
+If you want to support development, buy a license at
+**[sassyconsultingllc.com/store](https://sassyconsultingllc.com/store)** and
+activate it to register your seat and supporter tier:
 
 ```powershell
 # from your AI agent:

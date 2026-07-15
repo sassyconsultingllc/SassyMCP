@@ -5,7 +5,7 @@
 -->
 # SassyMCP
 
-*Last updated: 2026-05-20 — v1.6.0*
+*Last updated: 2026-07-15 — v1.13.0*
 
 One MCP server replacing 75+. After installing, sassymcp will automatically detect and patch every OTHER MCP client on your machine (Cursor, VS Code, Windsurf, Continue, Cline, Zed, Grok Desktop) so all your AI tools share the same brain.
 
@@ -16,19 +16,17 @@ One MCP server replacing 75+. After installing, sassymcp will automatically dete
 - Cross-session memory and crosslink messaging (your Claude conversation can hand off to a Cursor session)
 - Safe delete (rm/del/Remove-Item are intercepted; targets staged to _DELETE_/ for review)
 
-## Tiers
+## Licensing
 
-- **Free** — file ops, shell, desktop automation, daily-driver GitHub, persistent memory, surgical edit, audit log, multi-client install. Runs out of the box with no key.
-- **Pro** — adds Android phone control, dynamic vision, OCR, web inspector, crosslink, remote Linux SSH, system monitoring, clipboard sync, full GitHub API.
-- **Forensics add-on** — stacks additively. APK inspection, cert validation, registry forensics, Defender / firewall status.
+**Everything is unlocked for everyone — no key, no tiers, no gated tools.** File ops, shell, desktop automation, full GitHub API, Android phone control, dynamic vision, OCR, web inspector, crosslink, remote Linux SSH, system monitoring, clipboard sync, security forensics — all of it ships in the box.
 
-Get a key at [sassyconsultingllc.com/store](https://sassyconsultingllc.com/store) — one-time purchase via LemonSqueezy. No subscription; pay once, the key works forever (refunds revoke).
+Want to support development? Grab a one-time supporter license at [sassyconsultingllc.com/store](https://sassyconsultingllc.com/store) (LemonSqueezy, no subscription). It registers your seat and shows a supporter tier in the cockpit — it doesn't unlock anything, because nothing is locked.
 
 ## After install
 
 Open Claude Desktop and say "set up SassyMCP". It'll walk through persona, GitHub token, optional Android/Linux config.
 
-To activate a paid tier, say "activate my SassyMCP license" and paste the key from your LemonSqueezy email.
+To register a supporter license, say "activate my SassyMCP license" and paste the key from your LemonSqueezy email.
 
 ## Source
 
