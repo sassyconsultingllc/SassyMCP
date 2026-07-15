@@ -19,7 +19,7 @@
 | **~35K+ tokens overhead** | **~10K tokens overhead** |
 
 - **~25K fewer tokens** consumed by tool definitions
-- **270 tools** across 35 modules in 17 groups (more than the 3 servers combined)
+- **274 tools** across 36 modules in 18 groups (more than the 3 servers combined)
 - **Syntax normalization** — no more PowerShell `&&` crashes
 - **Android integration** — ADB, scrcpy, logcat built in
 - **Security tools** — hash, certs, firewall, Defender, APK analysis

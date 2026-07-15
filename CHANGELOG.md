@@ -10,7 +10,97 @@ All notable changes to SassyMCP. Newest first. Versions follow semver:
 for new tier-visible features, PATCH for fixes that don't move buyer-
 facing surfaces.
 
-## [Unreleased] — Cross-platform (macOS / Linux) + Control Panel
+## [1.11.0] — 2026-07-14 — Sassy Brain cockpit: the tabbed coordination UI
+
+The `feat/sassy-brain-cockpit` branch (all four phases of the 2026-06-06
+design spec) lands on main. One feature, three surfaces, one data plane.
+
+### Added
+
+- **Sassy Brain Cockpit (VS Code).** `SassyMCP: Open Sassy Brain Cockpit`
+  (also a click on the status-bar item) opens a branded React webview with
+  three tabs:
+  - **Coordination** — the hero: live peer board (Claude / Cursor / Hermes /
+    remote nodes), crosslink channels with message counts, handoff timeline,
+    Start-Hermes button, Android tile.
+  - **Dashboard** — brain status: license tier, memory/audit/persona
+    counts, per-group tool availability, version.
+  - **Actions** — card launcher with fuzzy filter (announce, observe/mirror
+    phone, wizard, audit log, brain folder).
+  Built from `sassymcp-vscode/webview/` (Vite + React, self-contained IIFE —
+  no CDN, CSP-nonced; `media/cockpit/` is gitignored build output). The
+  webview never touches the filesystem: it posts intents to the extension
+  host, which talks to the already-running server.
+- **Coordination module** (`sassy_peer_announce`, `sassy_peer_list`,
+  `sassy_peer_delegate`, `sassy_coordination_board`) — multi-AI peer mesh
+  riding the existing `crosslink.db`; joins the `v020` (Pro) group. 274
+  tools across 36 modules.
+- **Standalone desktop app** (`python -m sassymcp.desktop`) — the same
+  cockpit outside VS Code (pywebview host + JS bridge).
+- **Overlay quick-launcher** (`python -m sassymcp.overlay`) — tray icon +
+  global hotkey for reach when no editor is open.
+- **`sassymcp mesh` subcommand** — `board | brain | phone | peers |
+  announce | delegate` as one JSON line, for external UIs shelling out to a
+  bundled exe.
+
+### Fixed
+
+- `sassymcp install` skill deployment strips the repo's leading CodeMark/CMI
+  HTML comment, so deployed SKILL.md / rules files start at the YAML
+  frontmatter or H1 as each client requires.
+
+## [1.10.2] — 2026-06-30 — Control Panel cockpit: read-only tool visualizers
+
+### Added
+
+- **Full-stack visibility in the server-served Control Panel.** Five new tabs
+  turn the operational tools an LLM rarely calls into a live dashboard:
+  - **Server** — health, live metrics, tool usage/stats, recent tool calls
+    (visible on every tier, no license needed).
+  - **Network** — `sassy_netstat`, `sassy_open_ports`, `sassy_arp_table`.
+  - **Processes** — `sassy_system_info`, `sassy_processes`, `sassy_autorun_entries`.
+  - **Security** — `sassy_defender_status`, `sassy_firewall_status`, `sassy_eventlog`.
+  - **Screen** — `sassy_screen_glance` (image), `sassy_list_windows`, `sassy_screen_ocr`.
+- **Generic result renderer.** One endpoint runs a view's tool and the backend
+  auto-detects how to draw it — table (process list), image (screenshot),
+  key/value card (system info), or text (netstat) — so new read-only tools are a
+  one-line `_COCKPIT_VIEWS` entry with no bespoke UI.
+- The catalog reports per-view availability, so tools gated behind the
+  `system` / `v020` / `forensics` groups show "not in this tier" instead of
+  failing when they aren't loaded.
+
+### Security
+
+- The cockpit can invoke only a hard allowlist of **read-only** tools
+  (`_COCKPIT_TOOLS`). There is no code path from a panel request to `sassy_shell`,
+  fileops writes, selfmod, or any mutating tool. Calls reuse the registered
+  tools, so each one is still recorded in the audit trail.
+
+## [1.10.1] — 2026-06-25 — Fix: concurrent clients no longer wedge each other
+
+### Fixed
+
+- **Two MCP clients calling tools at the same time no longer freeze each
+  other.** Claude Desktop multiplexes every chat onto a *single* stdio server
+  process (one asyncio event loop) — it does not spawn a process per chat. Yet
+  nearly every tool body did synchronous blocking work (SQLite, file I/O,
+  screenshots/OCR) directly on that loop. With one chat this was invisible
+  (calls are sequential anyway); with two, any in-flight blocking call starved
+  the loop and froze the other chat until it timed out.
+  - The audit wrapper now runs synchronous tools via `asyncio.to_thread`, and
+    `_wrap_all_tools` forces `tool.is_async = True` so FastMCP awaits the
+    (always-async) wrapper even for `def`-declared tools. Net effect: **a
+    blocking tool written as a plain `def` is automatically offloaded to a
+    worker thread and can never block the event loop.**
+  - Converted the confirmed loop-blockers to plain `def`: `state_manager`,
+    `memory`, `fileops`, `vision` (single-shot capture/OCR), `crosslink`,
+    `editor`, `audit`. SQLite-backed modules (`state_manager`, `memory`) now
+    open a fresh per-call connection (`with closing(open_db(...))`) instead of
+    sharing one connection, which is required once calls run on worker threads.
+  - Registry / eventlog / web_inspector were already non-blocking (they offload
+    via `create_subprocess_exec` / `httpx.AsyncClient`) and were left as-is.
+
+## [1.10.0] — 2026-06-25 — Cross-platform (macOS / Linux) + Control Panel + tool discovery
 
 ### Added — Cross-platform support (one source, routed at the head)
 
@@ -71,56 +161,11 @@ facing surfaces.
   `127.0.0.1` and requires the per-install token in
   `~/.sassymcp/control_panel.token`.
 
-## [1.10.2] — 2026-06-30 — Control Panel cockpit: read-only tool visualizers
+### Added — tool discovery (see docs/releases/v1.10.0.md)
 
-### Added
-
-- **Full-stack visibility in the server-served Control Panel.** Five new tabs
-  turn the operational tools an LLM rarely calls into a live dashboard:
-  - **Server** — health, live metrics, tool usage/stats, recent tool calls
-    (visible on every tier, no license needed).
-  - **Network** — `sassy_netstat`, `sassy_open_ports`, `sassy_arp_table`.
-  - **Processes** — `sassy_system_info`, `sassy_processes`, `sassy_autorun_entries`.
-  - **Security** — `sassy_defender_status`, `sassy_firewall_status`, `sassy_eventlog`.
-  - **Screen** — `sassy_screen_glance` (image), `sassy_list_windows`, `sassy_screen_ocr`.
-- **Generic result renderer.** One endpoint runs a view's tool and the backend
-  auto-detects how to draw it — table (process list), image (screenshot),
-  key/value card (system info), or text (netstat) — so new read-only tools are a
-  one-line `_COCKPIT_VIEWS` entry with no bespoke UI.
-- The catalog reports per-view availability, so tools gated behind the
-  `system` / `v020` / `forensics` groups show "not in this tier" instead of
-  failing when they aren't loaded.
-
-### Security
-
-- The cockpit can invoke only a hard allowlist of **read-only** tools
-  (`_COCKPIT_TOOLS`). There is no code path from a panel request to `sassy_shell`,
-  fileops writes, selfmod, or any mutating tool. Calls reuse the registered
-  tools, so each one is still recorded in the audit trail.
-
-## [1.10.1] — 2026-06-25 — Fix: concurrent clients no longer wedge each other
-
-### Fixed
-
-- **Two MCP clients calling tools at the same time no longer freeze each
-  other.** Claude Desktop multiplexes every chat onto a *single* stdio server
-  process (one asyncio event loop) — it does not spawn a process per chat. Yet
-  nearly every tool body did synchronous blocking work (SQLite, file I/O,
-  screenshots/OCR) directly on that loop. With one chat this was invisible
-  (calls are sequential anyway); with two, any in-flight blocking call starved
-  the loop and froze the other chat until it timed out.
-  - The audit wrapper now runs synchronous tools via `asyncio.to_thread`, and
-    `_wrap_all_tools` forces `tool.is_async = True` so FastMCP awaits the
-    (always-async) wrapper even for `def`-declared tools. Net effect: **a
-    blocking tool written as a plain `def` is automatically offloaded to a
-    worker thread and can never block the event loop.**
-  - Converted the confirmed loop-blockers to plain `def`: `state_manager`,
-    `memory`, `fileops`, `vision` (single-shot capture/OCR), `crosslink`,
-    `editor`, `audit`. SQLite-backed modules (`state_manager`, `memory`) now
-    open a fresh per-call connection (`with closing(open_db(...))`) instead of
-    sharing one connection, which is required once calls run on worker threads.
-  - Registry / eventlog / web_inspector were already non-blocking (they offload
-    via `create_subprocess_exec` / `httpx.AsyncClient`) and were left as-is.
+- `sassy_self_check` (manifest vs live-registry reconciliation, BROKEN-module
+  detection) and `sassy_tool_catalog` (live name/purpose/group map), plus
+  frozen-safe selfmod stubs and the `/sassymcp:discover` prompt.
 
 ## [1.9.0] — 2026-06-23 — Permission engine (modes + sandbox jail + rules)
 

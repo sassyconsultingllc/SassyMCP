@@ -379,11 +379,28 @@ def _skill_target_for(client: ClientInfo) -> Path | None:
     return None
 
 
+def _strip_leading_html_comment(text: str) -> str:
+    """Drop a leading <!-- ... --> block (the repo's CodeMark/CMI header).
+
+    The header is for the source tree; deployed renderings must start at the
+    YAML frontmatter or the H1 — Claude Skills reject frontmatter that isn't
+    the first thing in the file, and rules files shouldn't lead with an
+    unrelated comment.
+    """
+    stripped = text.lstrip()
+    if stripped.startswith("<!--"):
+        end = stripped.find("-->")
+        if end != -1:
+            return stripped[end + 3:].lstrip("\n")
+    return text
+
+
 def _render_skill_for(client: ClientInfo, source_text: str) -> str:
     """Render the canonical playbook for a specific client. Most clients want
     plain markdown; Claude Skills want a YAML frontmatter block. The source
     file already has frontmatter, so for non-Skill targets we strip it.
     """
+    source_text = _strip_leading_html_comment(source_text)
     if client.short_name == "claude":
         # Claude Skills format expects the YAML frontmatter as-is.
         return source_text

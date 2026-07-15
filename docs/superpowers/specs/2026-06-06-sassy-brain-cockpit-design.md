@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-06
 **Branch:** `feat/sassy-brain-cockpit`
-**Status:** approved direction; phased build in progress
+**Status:** shipped — all four phases merged to main (v1.11.0, 2026-07-14)
 
 ## Why
 

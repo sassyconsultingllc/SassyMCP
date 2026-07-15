@@ -11,7 +11,7 @@ One MCP server replacing 75+. After installing, sassymcp will automatically dete
 
 ## What you get
 
-- 270 tools across 35 modules in 18 groups — file ops, shell, GitHub, Android, vision, security audit, persona, memory, self-update
+- 274 tools across 36 modules in 18 groups — file ops, shell, GitHub, Android, vision, security audit, persona, memory, multi-AI coordination, self-update
 - Smart tool loading (only the groups you use; default ~5K tokens of context)
 - Cross-session memory and crosslink messaging (your Claude conversation can hand off to a Cursor session)
 - Safe delete (rm/del/Remove-Item are intercepted; targets staged to _DELETE_/ for review)

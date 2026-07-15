@@ -30,7 +30,7 @@ def test_self_check_reports_whole_and_runtime():
     # Running from a source checkout, every declared module must import.
     assert out["verdict"] == "whole", out.get("broken")
     assert out["runtime"] == "source"
-    assert out["modules_total"] == 35
+    assert out["modules_total"] == 36  # +coordination (multi-AI mesh)
     assert isinstance(out["pid"], int)
     # Every module entry carries an import status; none expected-loaded is BROKEN.
     assert all(m["import"] == "ok" for m in out["modules"].values())
