@@ -1011,6 +1011,36 @@ def _cli_show_token(argv: list[str]) -> int:
     return 0
 
 
+def _cli_mesh(argv: list[str]) -> int:
+    """Emit coordination-mesh data/actions as one JSON line, for external UIs
+    (e.g. the Sassy Brain desktop app) that shell out to a bundled/installed
+    sassymcp.exe instead of a python interpreter.
+
+    Usage: sassymcp mesh [board|brain|phone|peers|announce ...|delegate ...]
+    Reuses the same code paths as `python -m sassymcp.modules.coordination`,
+    `python -m sassymcp._brain_status`, and `python -m sassymcp._phone_status`.
+    """
+    import json
+    cmd = argv[0] if argv else "board"
+    try:
+        if cmd == "brain":
+            from sassymcp import _brain_status
+            out = _brain_status.snapshot()
+        elif cmd == "phone":
+            from sassymcp import _phone_status
+            out = _phone_status.snapshot()
+        else:  # board | peers | announce | delegate
+            from sassymcp.modules.coordination import _main as _coord_main
+            out = _coord_main(argv)
+        sys.stdout.write(json.dumps(out))
+        return 0
+    except SystemExit:
+        raise
+    except Exception as e:
+        sys.stdout.write(json.dumps({"error": str(e)}))
+        return 1
+
+
 def _dispatch_subcommand() -> int | None:
     """Sniff argv[1] for a subcommand before argparse takes over.
 
@@ -1030,6 +1060,8 @@ def _dispatch_subcommand() -> int | None:
     if sub == "supervise":
         from sassymcp.supervisor import main as _supervise_main
         return _supervise_main(sys.argv[2:])
+    if sub == "mesh":
+        return _cli_mesh(sys.argv[2:])
     if sub in ("setup", "wizard"):
         # Interactive menu. Returns "run_server" if the user picks the
         # "Run as HTTP server" option, in which case we fall through to
@@ -1055,7 +1087,7 @@ def main():
 
     parser = argparse.ArgumentParser(
         description=f"SassyMCP Server v{__version__}",
-        epilog="Subcommands: setup | install | generate-token | show-token  "
+        epilog="Subcommands: setup | install | supervise | mesh | generate-token | show-token  "
                "(e.g. `sassymcp.exe setup` opens the interactive wizard)",
     )
     parser.add_argument(

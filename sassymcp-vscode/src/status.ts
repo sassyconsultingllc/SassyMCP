@@ -12,7 +12,7 @@ export class StatusManager implements vscode.Disposable {
 
     constructor(private exePath: string | undefined, private brain: Brain) {
         this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-        this.item.command = "sassymcp.showBrainStatus";
+        this.item.command = "sassymcp.openCockpit";
     }
 
     start(): void {
