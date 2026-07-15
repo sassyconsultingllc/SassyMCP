@@ -365,6 +365,26 @@ def _get_retry_hint(exc: Exception) -> str:
 _rate_limiter = None
 
 
+def _touch_peer_from_ctx():
+    """Auto-record the calling MCP client on the coordination board.
+
+    Reads clientInfo from the initialize handshake via the request context —
+    works for stdio and HTTP alike, and for every client product, with zero
+    LLM cooperation. Throttled inside touch_client_peer; must never raise
+    (runs in the audit path of every tool call).
+    """
+    try:
+        from mcp.server.lowlevel.server import request_ctx
+        ctx = request_ctx.get()
+        params = getattr(ctx.session, "client_params", None)
+        info = getattr(params, "clientInfo", None)
+        if info is not None and getattr(info, "name", ""):
+            from sassymcp.modules.coordination import touch_client_peer
+            touch_client_peer(str(info.name), str(getattr(info, "version", "") or ""))
+    except Exception:
+        pass
+
+
 def audit_tool(fn):
     """Decorator: audit logging, rate limiting, error recovery for every tool."""
     @functools.wraps(fn)
@@ -424,6 +444,9 @@ def audit_tool(fn):
             })
         finally:
             elapsed_ms = int((time.monotonic() - start) * 1000)
+            # Auto-record the calling client as a live peer (throttled to one
+            # SQLite touch per 15s per client; a no-op the rest of the time).
+            _touch_peer_from_ctx()
             if log_tool_call:
                 try:
                     _SENSITIVE_KEYS = {"password", "token", "secret", "key", "auth",
@@ -597,6 +620,27 @@ def _load_modules():
             auto_activate_hooks_for_modules(boosted)
     except Exception as e:
         logger.warning(f"hook auto-activation failed (non-fatal): {e}")
+
+    # Continuity playbooks are always active: any agent that asks the server
+    # what to do (hooks_list, discovery surface) sees the session-startup /
+    # handoff / coordination protocol without having to know to activate it.
+    # This is the "no one loses focus" guarantee at the playbook layer; the
+    # audit wrapper's touch_client_peer is the guarantee at the record layer.
+    try:
+        from sassymcp.modules._hooks import activate_hook
+        for _hook in ("session_startup", "session_handoff", "coordination", "crosslink"):
+            activate_hook(_hook)
+    except Exception as e:
+        logger.warning(f"continuity hook activation failed (non-fatal): {e}")
+
+    # Best-effort: flip this process's auto-recorded peers to offline on a
+    # clean shutdown so the board doesn't show ghosts for stale_seconds.
+    try:
+        import atexit
+        from sassymcp.modules.coordination import mark_client_peers_offline
+        atexit.register(mark_client_peers_offline)
+    except Exception:
+        pass
 
     # Wire audit middleware after all tools are registered
     _wrap_all_tools()

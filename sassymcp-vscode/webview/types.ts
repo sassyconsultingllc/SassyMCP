@@ -27,11 +27,61 @@ export interface Handoff {
     age_seconds: number;
 }
 
+export interface MemoryEntry {
+    key: string;
+    priority: string;
+    project: string;
+    tags: string[];
+    age_seconds: number;
+    value?: string;
+}
+
+export interface Milestone {
+    event: string;
+    project: string;
+    age_seconds: number;
+}
+
+export interface MemorySummary {
+    available?: boolean;
+    memory_count?: number;
+    milestone_count?: number;
+    recent?: MemoryEntry[];
+    active_tasks?: MemoryEntry[];
+    milestones?: Milestone[];
+    db?: string;
+    error?: string;
+}
+
+export interface RecentCall {
+    tool: string;
+    elapsed_ms?: number | null;
+    error?: string | null;
+    age_seconds?: number | null;
+}
+
+export interface HookInfo {
+    name: string;
+    module: string;
+    description: string;
+    triggers: string[];
+    active: boolean;
+}
+
+export interface HooksSummary {
+    hooks?: HookInfo[];
+    active_count?: number;
+    error?: string;
+}
+
 export interface Board {
     peers: Peer[];
     channels: { channel: string; count: number }[];
     handoffs: Handoff[];
     sessions: Session[];
+    memory?: MemorySummary;
+    recent_calls?: RecentCall[] | { error?: string };
+    hooks?: HooksSummary;
     db?: string;
     generated_at?: string;
     error?: string;

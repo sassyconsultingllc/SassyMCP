@@ -264,6 +264,10 @@ _COCKPIT_VIEWS: dict[str, tuple[str, dict]] = {
     "tool_stats":     ("sassy_observability_tool_stats", {}),
     "recent_calls":   ("sassy_recent_tool_calls", {}),
     "tool_usage":     ("sassy_tool_usage", {}),
+    # Brain: continuity planes (coordination mesh + persistent memory)
+    "peers":          ("sassy_peer_list", {}),
+    "memory_stats":   ("sassy_memory_stats", {}),
+    "milestones":     ("sassy_memory_milestones", {}),
 }
 
 # Hard allowlist — the only tools the panel may execute. Derived from the
@@ -644,6 +648,7 @@ INDEX_HTML = r"""<!doctype html>
 <nav>
   <button data-pane=events class=active>Event log</button>
   <button data-pane=server>Server</button>
+  <button data-pane=brain>Brain</button>
   <button data-pane=network>Network</button>
   <button data-pane=procs>Processes</button>
   <button data-pane=security>Security</button>
@@ -684,6 +689,7 @@ INDEX_HTML = r"""<!doctype html>
   </section>
 
   <section class=pane id=server><div class=cards id=cards-server></div></section>
+  <section class=pane id=brain><div class=cards id=cards-brain></div></section>
   <section class=pane id=network><div class=cards id=cards-network></div></section>
   <section class=pane id=procs><div class=cards id=cards-procs></div></section>
   <section class=pane id=security><div class=cards id=cards-security></div></section>
@@ -768,12 +774,14 @@ const COCKPIT={
   server:[{k:'health',l:'Health'},{k:'metrics',l:'Live metrics'},
           {k:'tool_usage',l:'Tool usage',wide:1},{k:'tool_stats',l:'Tool stats',wide:1},
           {k:'recent_calls',l:'Recent tool calls',wide:1}],
+  brain:[{k:'peers',l:'Agents on the mesh',wide:1},{k:'memory_stats',l:'Memory'},
+         {k:'milestones',l:'Milestones'},{k:'recent_calls',l:'Live tool calls',wide:1}],
   network:[{k:'netstat',l:'Connections',wide:1},{k:'open_ports',l:'Listening ports'},{k:'arp',l:'ARP table'}],
   procs:[{k:'system',l:'System'},{k:'processes',l:'Processes',wide:1},{k:'autoruns',l:'Autostart entries',wide:1}],
   security:[{k:'defender',l:'Endpoint protection'},{k:'firewall',l:'Firewall'},{k:'eventlog',l:'Event log',wide:1}],
   screen:[{k:'screen',l:'Live screen glance'},{k:'windows',l:'Windows',wide:1},{k:'ocr',l:'Screen OCR',wide:1}],
 };
-const AUTORUN=new Set(['health','metrics','system','tool_usage','screen']);
+const AUTORUN=new Set(['health','metrics','system','tool_usage','screen','peers','memory_stats','milestones']);
 let CATALOG=null;
 async function ensureCatalog(){if(CATALOG===null){try{CATALOG=(await api('/cockpit')).views||{};}catch(e){CATALOG={};}}}
 function tableHTML(rows){

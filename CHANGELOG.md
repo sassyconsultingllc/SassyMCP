@@ -10,6 +10,56 @@ All notable changes to SassyMCP. Newest first. Versions follow semver:
 for new tier-visible features, PATCH for fixes that don't move buyer-
 facing surfaces.
 
+## [1.12.0] — 2026-07-15 — The board becomes truthful: server-side auto-record + every continuity plane visible
+
+The cockpit's feasibility problem was that its data plane was voluntary: an
+LLM had to *choose* to call `sassy_peer_announce`, so the board showed
+memories of demos. This release moves the recording into the server itself
+and widens the board from one plane (crosslink) to all of them.
+
+### Added
+
+- **Server-side client auto-record.** The audit wrapper reads the MCP
+  `initialize` handshake's `clientInfo` from the request context and upserts
+  the calling client as a peer on every tool call (throttled to one SQLite
+  touch per 15s per client). Claude Desktop, Cursor, Windsurf — any client
+  that does work appears on the board as `client-<name>`, alive, with zero
+  LLM cooperation. Clean shutdown flips this process's auto-recorded peers
+  offline immediately (atexit backdates their session rows).
+- **Brain board carries every continuity plane.** `board_snapshot()` (and so
+  `sassy_coordination_board`, `sassymcp mesh board`, and the cockpit poll)
+  now returns, alongside peers/channels/handoffs/sessions:
+  - `memory` — entry/milestone counts, recent keys, active `task_*_state` /
+    `task-active` / `blocker_*` rows with value snippets, recent milestones
+    (read directly from memory.db; works even when the memory tool group
+    isn't loaded).
+  - `recent_calls` — tail of audit.jsonl (last 128KB, newest first): the
+    MCP's live pulse.
+  - `hooks` — every registered playbook with triggers and active state,
+    continuity playbooks (session_startup, session_handoff, coordination,
+    crosslink) sorted first. Planes degrade to an error marker; the core
+    board never breaks.
+- **Continuity playbooks always active.** The server activates
+  session_startup / session_handoff / coordination / crosslink hooks at
+  boot, so `sassy_hooks_list` shows any connecting agent the startup and
+  handoff protocol without the agent knowing to activate anything.
+- **Cockpit webview**: Memory card (active task state + milestones),
+  Continuity playbooks card (Coordination tab), and a Live activity feed
+  (Dashboard tab) rendering the audit tail.
+- **Control Panel "Brain" tab**: agents-on-the-mesh, memory stats,
+  milestones, and live tool calls as generic-renderer views
+  (`sassy_peer_list`, `sassy_memory_stats`, `sassy_memory_milestones` join
+  the read-only cockpit allowlist).
+
+### Changed
+
+- **Announce heartbeats no longer flood the channel.** `sassy_peer_announce`
+  refreshes the sessions row on every call, but posts a peer-announce
+  MESSAGE only when the peer is new, its identity/capabilities changed, or
+  the newest announce went stale. Liveness now reads the sessions row
+  (which heartbeats and auto-record refresh) instead of message age, so
+  channel counts mean something again.
+
 ## [1.11.0] — 2026-07-14 — Sassy Brain cockpit: the tabbed coordination UI
 
 The `feat/sassy-brain-cockpit` branch (all four phases of the 2026-06-06

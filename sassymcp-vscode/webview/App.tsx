@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import type { Board, BrainStatus, Handoff, Peer, PhoneState, Session, VsCodeApi } from "./types";
+import type {
+    Board, BrainStatus, Handoff, HooksSummary, MemorySummary,
+    Peer, PhoneState, RecentCall, Session, VsCodeApi,
+} from "./types";
 
 declare function acquireVsCodeApi(): VsCodeApi;
 const vscode = acquireVsCodeApi();
@@ -55,7 +58,7 @@ export function App() {
             />
 
             {tab === "coord" && <CoordinationView board={board} phone={phone} agentCount={agentCount} />}
-            {tab === "dash" && <DashboardView brain={brain} />}
+            {tab === "dash" && <DashboardView brain={brain} board={board} />}
             {tab === "actions" && <ActionsView phone={phone} />}
 
             <footer className="foot">
@@ -130,9 +133,79 @@ function CoordinationView(props: { board: Board | null; phone: PhoneState | null
             </section>
 
             <section className="card span2">
+                <h2>Memory{board?.memory?.available !== false &&
+                    <span className="badge">{board?.memory?.memory_count ?? 0} entries · {board?.memory?.milestone_count ?? 0} milestones</span>}
+                </h2>
+                <MemoryPanel memory={board?.memory} />
+            </section>
+
+            <section className="card span2">
                 <h2>Handoff timeline</h2>
                 <Handoffs handoffs={board?.handoffs ?? []} />
             </section>
+
+            <section className="card span2">
+                <h2>Continuity playbooks</h2>
+                <HooksPanel hooks={board?.hooks} />
+            </section>
+        </div>
+    );
+}
+
+function MemoryPanel({ memory }: { memory?: MemorySummary }) {
+    if (!memory) { return <p className="empty">Reading memory…</p>; }
+    if (memory.error) { return <p className="empty">Memory unavailable: {memory.error}</p>; }
+    if (memory.available === false) { return <p className="empty">No memory database yet — sassy_memory_remember creates it.</p>; }
+    const tasks = memory.active_tasks ?? [];
+    const milestones = memory.milestones ?? [];
+    return (
+        <div>
+            <h3 className="muted">Active task state</h3>
+            {tasks.length === 0 && <p className="empty">No task-state entries. Handoffs write task_&lt;concept&gt;_&lt;project&gt;_state keys.</p>}
+            <ol className="timeline">
+                {tasks.map((t) => (
+                    <li key={t.key}>
+                        <span className="t-route"><b>{t.key}</b></span>
+                        <span className="t-task">{t.value || <i className="dim">(empty)</i>}</span>
+                        <span className="t-meta">{t.project || "no project"} · {t.priority} · {ago(t.age_seconds)}</span>
+                    </li>
+                ))}
+            </ol>
+            {milestones.length > 0 && (
+                <>
+                    <h3 className="muted">Recent milestones</h3>
+                    <ol className="timeline">
+                        {milestones.map((m, i) => (
+                            <li key={i}>
+                                <span className="t-task">{m.event}</span>
+                                <span className="t-meta">{m.project || "—"} · {ago(m.age_seconds)}</span>
+                            </li>
+                        ))}
+                    </ol>
+                </>
+            )}
+        </div>
+    );
+}
+
+function HooksPanel({ hooks }: { hooks?: HooksSummary }) {
+    if (!hooks || hooks.error) { return <p className="empty">Playbooks unavailable{hooks?.error ? `: ${hooks.error}` : "…"}</p>; }
+    const list = hooks.hooks ?? [];
+    if (list.length === 0) { return <p className="empty">No hooks registered.</p>; }
+    return (
+        <div>
+            <div className="caps" style={{ marginBottom: 6 }}>
+                {list.map((h) => (
+                    <span key={h.name} className="cap" title={h.description}>
+                        <span className={`dot ${h.active ? "g" : "x"}`} /> {h.name}
+                    </span>
+                ))}
+            </div>
+            <p className="empty">
+                Active on the server for every connected agent: session startup loads context and
+                checks handoffs, session handoff saves state before context runs out, coordination
+                keeps the mesh honest. Agents see these via sassy_hooks_list.
+            </p>
         </div>
     );
 }
@@ -173,7 +246,7 @@ function PhonePanel({ phone }: { phone: PhoneState | null }) {
 }
 
 // ── Dashboard tab ─────────────────────────────────────────────────────
-function DashboardView({ brain }: { brain: BrainStatus | null }) {
+function DashboardView({ brain, board }: { brain: BrainStatus | null; board: Board | null }) {
     useEffect(() => { send({ type: "refreshBrain" }); }, []);
     if (!brain) { return <p className="empty pad">Reading brain state…</p>; }
     if (brain.error) { return <p className="empty pad">Couldn’t read brain: {brain.error}</p>; }
@@ -202,7 +275,29 @@ function DashboardView({ brain }: { brain: BrainStatus | null }) {
                 </div>
                 <p className="hint">{allowed.length} of {brain.groups?.length ?? 0} groups available on this tier.</p>
             </section>
+
+            <section className="card span2">
+                <h2>Live activity</h2>
+                <ActivityFeed calls={Array.isArray(board?.recent_calls) ? board!.recent_calls : []} />
+            </section>
         </div>
+    );
+}
+
+function ActivityFeed({ calls }: { calls: RecentCall[] }) {
+    if (calls.length === 0) { return <p className="empty">No tool calls in the audit tail yet.</p>; }
+    return (
+        <ol className="timeline">
+            {calls.map((c, i) => (
+                <li key={i}>
+                    <span className="t-route"><b>{c.tool}</b></span>
+                    <span className="t-task">{c.error
+                        ? <span className="err">{c.error}</span>
+                        : <span className="dim">{c.elapsed_ms != null ? `${c.elapsed_ms} ms` : "ok"}</span>}</span>
+                    <span className="t-meta">{c.age_seconds != null ? ago(c.age_seconds) : ""}</span>
+                </li>
+            ))}
+        </ol>
     );
 }
 
