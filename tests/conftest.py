@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-K4PW45HCJUJA
 """Shared pytest fixtures + a safety net against leaked child processes.
 
 Several tests spawn real OS subprocesses (terminal sessions, supervisor

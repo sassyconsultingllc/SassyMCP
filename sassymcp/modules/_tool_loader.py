@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-YRKBF4XKWDMT
 """SassyMCP Smart Tool Loader v1.0 — Production + Nuclear features.
 
 Tracks which tools are actually called, scores them, and enables

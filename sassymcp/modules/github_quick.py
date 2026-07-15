@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-FOWIC55KYPPD
 """SassyMCP GitHub Quick - Lean daily-driver GitHub tools.
 
 Registers ONLY the most-used tools for daily development workflow.

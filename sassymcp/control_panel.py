@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-K44QH3IR5QTJ
 """SassyMCP Control Panel — a localhost web UI for the permission engine,
 runtime config, and the live event log.
 

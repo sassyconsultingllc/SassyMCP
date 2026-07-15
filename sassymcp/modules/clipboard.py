@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-52W2P6R4J5JO
 """Clipboard - Cross-device clipboard (host <-> Android).
 
 The host clipboard is read/written via the OS-native tool resolved at the

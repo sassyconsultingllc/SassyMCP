@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-TZGYD5VU3ZRC
 """SassyMCP Setup Wizard — First-run questionnaire that generates persona.md.
 
 On first launch (no ~/.sassymcp/persona.md), the wizard tool is prominently

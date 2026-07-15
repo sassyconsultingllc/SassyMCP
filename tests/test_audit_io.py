@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-WJLDMC2K4FPQ
 """Concurrent-append correctness tests for sassymcp._audit_io.append_audit."""
 import json
 import subprocess

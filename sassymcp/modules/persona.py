@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-6NEVKB7IG7ST
 """SassyMCP Persona Module — Expert Mode.
 
 Injects maximum-capability operating parameters into any connected AI session.

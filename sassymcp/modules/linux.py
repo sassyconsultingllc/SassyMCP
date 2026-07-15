@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-EAWRGKENYDD2
 """Linux Module — Streaming SSH execution (plink on Windows, OpenSSH on POSIX).
 
 Long-running commands stream partial output in real time via MCP streaming.

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+// Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+// CodeMark: SCLLC1-SassyMCP-4LVARUIHK536
 // Setup Wizard webview -- single-page form that mirrors sassy_setup_wizard's
 // questionnaire, posts answers to sassymcp setup-wizard, and shows the
 // resulting persona.md in a read-only editor.

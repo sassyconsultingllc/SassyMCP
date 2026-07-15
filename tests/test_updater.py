@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-QBQ3TPXGS7R6
 """Updater module unit tests — version comparator and offline state shape.
 
 Live GitHub calls are not made here; the smoke test in development verifies

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-2MZZRNVGOE62
 """Single source of truth for OS detection and per-command platform routing.
 
 This is "the head": the host OS is resolved exactly once, at import, and

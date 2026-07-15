@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-H3GT4T3HWJML
 """Editor - Surgical diff-based file editing.
 
 Provides edit_block functionality: find exact text in a file and replace it

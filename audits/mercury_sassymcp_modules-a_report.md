@@ -1,3 +1,8 @@
+<!--
+   Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+   Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+   CodeMark: SCLLC1-SassyMCP-DG3NQEANUU62
+-->
 ```json
 {"severity":"critical","category":"SECURITY","file":"sassymcp/modules/audit.py","symbol":"log_tool_call","issue":"Sensitive arguments are logged without redaction, potentially leaking secrets","why":"Logs are written to $SASSYMCP_HOME/audit.log and audit.jsonl; if a tool receives passwords, tokens, or private keys they are stored in plaintext and could be read by any user with read access","fix":"Add a secret‑masking step before logging (e.g. regex‑based detection of common secret patterns) or allow callers to flag sensitive fields; truncate or replace such values with placeholders","confidence":0.95}
 {"severity":"critical","category":"CONCURRENCY","file":"sassymcp/modules/_confirm.py","symbol":"_PENDING","issue":"In‑memory token table accessed without any synchronization","why":"Multiple async tool calls could read/write _PENDING concurrently leading to lost tokens, duplicate consumptions or race‑condition‑based token reuse","fix":"Guard all accesses to _PENDING with an asyncio.Lock (or use a thread‑safe dict such as collections.OrderedDict wrapped by a lock) and make make_purge_expired, make_token, consume_token acquire the lock","confidence":0.9}

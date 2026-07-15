@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-ABZHMHV6D3TX
 """External tool bootstrap -- PATH injection and winget-based auto-install.
 
 Runs at startup to inject bundled tools/ into PATH and warn about missing

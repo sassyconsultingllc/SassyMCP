@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-ISAPQFPWMCGP
 """SassyMCP process supervisor — `sassymcp supervise`.
 
 A thin, dependency-light parent that owns the runtime tree: it spawns the

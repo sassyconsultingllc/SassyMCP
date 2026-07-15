@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-LJFE6KM7KLLT
 """SassyMCP MCP Prompts — slash-menu shortcuts that most MCP clients expose.
 
 The MCP protocol's `prompts` slot lets a server register named prompts

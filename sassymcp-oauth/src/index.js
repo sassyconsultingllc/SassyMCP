@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+// Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+// CodeMark: SCLLC1-SassyMCP-UTW2ZJTW6J4K
 // SassyMCP OAuth Proxy Worker
 //
 // Sits between claude.ai (OAuth 2.1 client) and the SassyMCP bridge

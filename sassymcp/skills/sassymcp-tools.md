@@ -1,3 +1,8 @@
+<!--
+   Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+   Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+   CodeMark: SCLLC1-SassyMCP-MSFTNQ4IMH3B
+-->
 ---
 name: sassymcp-tools
 description: Activate when working with SassyMCP — recognises when user asks for screenshots, phone control, audit log review, GitHub PR work, persona memory, cross-session handoffs, network/registry forensics, or persistent terminal sessions. Maps user phrasings to the right tool sequences so the model picks the efficient path instead of improvising.

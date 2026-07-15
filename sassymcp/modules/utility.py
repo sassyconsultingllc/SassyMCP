@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-PS3DVUYPXIQT
 """Utility - Environment variables, notifications, archives, diffs, HTTP requests.
 
 Lightweight tools that fill gaps between the heavier modules.

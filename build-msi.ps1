@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-D6GKWPV6N2KS
 # Build SassyMCP-v<version>.msi from a staging dir using WiX 3.x.
 #
 # Prereqs:

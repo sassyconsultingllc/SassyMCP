@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-2CIZVNXNEMLQ
 """Multi-process-safe SQLite connection helper for SassyMCP.
 
 Every SassyMCP SQLite database lives in ~/.sassymcp/ (or $SASSYMCP_HOME).

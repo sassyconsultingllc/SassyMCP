@@ -1,3 +1,8 @@
+<!--
+   Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+   Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+   CodeMark: SCLLC1-SassyMCP-U47PZJ5FESVE
+-->
 # SASSYMCP IMPROVEMENT NOTES (post 2026-04-30 partition session)
 
 *Last updated: 2026-05-15 — v1.4.1*

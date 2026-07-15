@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-77GFRNQZP742
 """Shell - Execute commands in the host's native shells.
 
 Cross-platform by design. The available shells are resolved at the head

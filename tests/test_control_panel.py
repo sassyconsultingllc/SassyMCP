@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-MNCIYS6KFX7V
 """Tests for the Control Panel API core (sassymcp.control_panel).
 
 Exercise the pure router (handle_api) and the token logic without binding

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-6N6ND2LDNM4T
 """PhoneScreen - Android live vision, UI awareness, interaction, and screen mirroring.
 
 Dynamic phone observation: reads the UI accessibility tree (uiautomator),

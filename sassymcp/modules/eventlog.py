@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-P3B2IEWOCE4S
 """EventLog - System log (Windows Event Log / macOS unified log / Linux journald) + Android logcat.
 
 The host log source is selected at the head (see _platform):

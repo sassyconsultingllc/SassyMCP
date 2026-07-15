@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-JSN7R5WX5A4D
 """SassyMCP GitHub Client - Shared HTTP client for GitHub API.
 
 Handles authentication, rate limiting, retries, and proper SHA management.

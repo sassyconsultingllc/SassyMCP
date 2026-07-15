@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-GC4IDUQDMCXT
 """AppLauncher - Application control and window management (cross-platform).
 
 Launch apps by name, focus/close/resize/snap windows, and manage the desktop

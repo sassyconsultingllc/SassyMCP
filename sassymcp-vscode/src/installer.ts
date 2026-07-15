@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+// Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+// CodeMark: SCLLC1-SassyMCP-DXMG72W3DB7O
 // Locates sassymcp.exe and runs `sassymcp install` to patch every
 // detected MCP client config. Spawns the install CLI as a subprocess
 // rather than reimplementing the logic — single source of truth lives in
