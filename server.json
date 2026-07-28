@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.sassyconsultingllc/sassymcp",
   "title": "SassyMCP",
-  "description": "One MCP server that replaces 75+ — 274 tools in a single exe, smart-loaded.",
+  "description": "One MCP server that replaces 75+ \u2014 274 tools in a single exe, smart-loaded.",
   "version": "1.14.1",
   "repository": {
     "url": "https://github.com/sassyconsultingllc/SassyMCP",
@@ -21,7 +21,7 @@
     {
       "registryType": "mcpb",
       "identifier": "https://github.com/sassyconsultingllc/SassyMCP/releases/download/v1.14.1/sassymcp-v1.14.1.mcpb",
-      "fileSha256": "PENDING_AFTER_BUILD",
+      "fileSha256": "70f0a24f56cd949619ac59747a6e41b73ea3994b81e773ebfbd17388af12efaf",
       "transport": {
         "type": "stdio"
       }
