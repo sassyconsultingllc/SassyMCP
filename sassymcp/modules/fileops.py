@@ -226,7 +226,8 @@ def register(server):
                 )
                 return (
                     f"Refused: rewrite of protected path blocked ({reason}). "
-                    "Use sassy_selfmod_edit for controlled edits inside the SassyMCP tree."
+                    "Edit SassyMCP sources outside the running MCP server "
+                    "(PR / local checkout), not via tool calls."
                 )
             # Snapshot the existing file into _DELETE_ before overwriting.
             if p.exists() and p.is_file():

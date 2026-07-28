@@ -59,7 +59,7 @@ def _guard_edit(path_str: str, tool_name: str) -> tuple[bool, str, Path | None]:
     prot, reason = is_protected_path(p)
     if prot:
         _audit.log_intercept(tool_name, "protected_edit", path_str, [str(p)], [reason or ""])
-        return False, f"Refused: edit of protected path blocked ({reason}). Use sassy_selfmod_edit for controlled edits inside the SassyMCP tree.", None
+        return False, f"Refused: edit of protected path blocked ({reason}). Edit SassyMCP sources outside the running MCP server (PR / local checkout), not via tool calls.", None
 
     ok, snap = _snapshot_before_edit(p)
     if not ok:

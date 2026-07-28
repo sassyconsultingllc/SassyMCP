@@ -29,7 +29,6 @@ import json
 import logging
 import math
 import os
-import sys
 import threading
 import time
 from collections import defaultdict
@@ -37,32 +36,6 @@ from pathlib import Path
 from typing import Any, Optional
 
 logger = logging.getLogger("sassymcp.loader")
-
-
-def is_selfmod_enabled() -> bool:
-    """Whether the selfmod tool group may load.
-
-    Always False in frozen/PyInstaller builds — marketplace and .mcpb
-    installs must remain a fixed graded version. From source, requires
-    an explicit opt-in so public/default installs never expose rewrite
-    or hot-reload tools.
-    """
-    if getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS"):
-        return False
-    return os.environ.get("SASSYMCP_ENABLE_SELFMOD", "").strip() == "1"
-
-
-def exclude_gated_modules(modules: list[str]) -> list[str]:
-    """Strip modules that are gated off for the current runtime."""
-    if is_selfmod_enabled():
-        return modules
-    filtered = [m for m in modules if m != "selfmod"]
-    if len(filtered) != len(modules):
-        logger.info(
-            "selfmod gated off (frozen build or SASSYMCP_ENABLE_SELFMOD unset) — "
-            "omitting self-modification tools"
-        )
-    return filtered
 
 # Optional live reload (pip install watchdog)
 try:
@@ -287,17 +260,6 @@ TOOL_GROUPS = {
         "max_concurrent": 10,
         "calls_per_minute": 120,
     },
-    "selfmod": {
-        "modules": ["selfmod"],
-        # Opt-in + source-only. Packaged / marketplace builds must ship a
-        # fixed graded version — rewrite/hot-reload after install is
-        # incompatible with that. Enable with SASSYMCP_ENABLE_SELFMOD=1
-        # when running from a source checkout (never honored when frozen).
-        "description": "Self-modification: edit MCP source, hot-reload modules, git-backed rollback (source-only, opt-in)",
-        "always_load": False,
-        "max_concurrent": 3,
-        "calls_per_minute": 30,
-    },
     "setup": {
         "modules": ["setup_wizard", "tools_manager"],
         "description": "First-run setup wizard, external tool bootstrap, auth token generation",
@@ -507,7 +469,7 @@ def get_default_modules() -> list[str]:
                 f"usage-boost: adding {new} based on score >= {USAGE_BOOST_THRESHOLD}"
             )
             modules.extend(new)
-    return exclude_gated_modules(resolve_dependencies(modules))
+    return resolve_dependencies(modules)
 
 
 def auto_activate_hooks_for_modules(module_names: list[str]) -> list[str]:
@@ -539,11 +501,11 @@ def auto_activate_hooks_for_modules(module_names: list[str]) -> list[str]:
 
 
 def get_all_modules() -> list[str]:
-    """Return all known module names (respecting runtime gates like selfmod)."""
+    """Return all known module names."""
     modules = []
     for group in TOOL_GROUPS.values():
         modules.extend(group["modules"])
-    return exclude_gated_modules(resolve_dependencies(modules))
+    return resolve_dependencies(modules)
 
 
 def get_group_info() -> dict:

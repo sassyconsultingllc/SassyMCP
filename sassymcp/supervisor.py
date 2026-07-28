@@ -472,9 +472,9 @@ def _build_specs(args) -> list[ChildSpec]:
     specs = [ChildSpec(
         role="bridge",
         cmd=_bridge_cmd(args.host, args.port),
-        # SASSYMCP_SUPERVISED tells the bridge's selfmod restart to exit and
-        # let US respawn it, instead of detaching its own successor (which
-        # would race us for the port). See modules/selfmod.py:_do_restart.
+        # SASSYMCP_SUPERVISED tells the bridge to exit on supervised restart
+        # handoff rather than re-exec itself (the supervisor owns respawn and
+        # would race us for the port).
         env={"SASSYMCP_LOAD_ALL": "1", "SASSYMCP_SUPERVISED": "1"},
         readiness_url=f"http://{args.host}:{args.port}/mcp",
     )]

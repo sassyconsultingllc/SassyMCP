@@ -196,7 +196,7 @@ def test_classify_error_envelope():
 
 def test_cockpit_allowlist_blocks_mutating_tools():
     # the panel must never be able to invoke a mutating/dangerous tool
-    for danger in ("sassy_shell", "sassy_write_file", "sassy_selfmod_write", "sassy_safe_delete"):
+    for danger in ("sassy_shell", "sassy_write_file", "sassy_safe_delete"):
         assert danger not in cp._COCKPIT_TOOLS
         _, err = cp._run_tool(danger, {})
         assert err and "not permitted" in err

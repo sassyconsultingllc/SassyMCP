@@ -31,7 +31,6 @@ SassyMCP replaces **75+ individual MCP servers** — including [Desktop Commande
 - **Context Estimation** — Built-in tool to measure how much of your 200K context window tool definitions consume.
 - **Response Minification** — GitHub API responses stripped of URL metadata bloat (40-70% smaller).
 - **Safe Delete** — Delete commands (`rm`, `del`, `Remove-Item`, etc.) are intercepted across all shells. Instead of destroying files, targets are moved to a `_DELETE_/` staging folder in the same directory for human review — protecting against AI hallucinations.
-- **Self-Modification** — Hot-reload modules without restart, git-backed rollback on syntax errors.
 - **Guided Setup** — Wizard walks through persona, GitHub token, SSH credentials, and optional tool discovery.
 
 ## What It Replaces
@@ -50,7 +49,6 @@ SassyMCP replaces **75+ individual MCP servers** — including [Desktop Commande
 | OCR / screen reading | Vision | 7 OCR/vision MCP servers | [PaddleOCR MCP](https://paddlepaddle.github.io/PaddleOCR/) |
 | Web inspection | WebInspector, Utility | 7 web/fetch MCP servers | [Fetch](https://github.com/modelcontextprotocol/servers/tree/main/src/fetch) (Anthropic official) |
 | Windows system | Registry, ProcessManager, Clipboard, EventLog, Bluetooth | 13 Windows MCP servers | [Windows-MCP](https://github.com/CursorTouch/Windows-MCP) (5k stars) |
-| Hot reload | SelfMod | 3 reload MCP servers | [mcp-reloader](https://github.com/mizchi/mcp-reloader) |
 
 **Plus features with no MCP server equivalent:** phone pause/resume with sensitive context detection (auto-blocks on login/payment screens), operational hooks (14 expert playbooks), safe delete interception, Windows autorun forensics, Android+Windows clipboard sync, usage-weighted smart loading.
 
@@ -103,7 +101,6 @@ The supervisor owns the runtime tree and makes it self-healing and **orphan-proo
 | **GitHub Quick** | 6 | github_quick | Daily-driver: push_files, get_file, issue, PR, protect |
 | **Persona** | 7 | persona | Expert-mode directives, decision framework, engineering standards |
 | **Utility** | 11 | utility | Env vars, toast, zip/tar/unzip/untar, HTTP requests, file diff |
-| **SelfMod** | 8 | selfmod | Source-only opt-in (`SASSYMCP_ENABLE_SELFMOD=1`); omitted from packaged/marketplace builds |
 | **Setup** | 8 | setup | Setup wizard, GitHub token guide, SSH setup, tool checker, license activation |
 | **ToolsManager** | 1 | setup | External tool bootstrap and detection |
 | **Observability** | 3 | infrastructure | Health, metrics, tool stats |
@@ -187,8 +184,6 @@ AI agents can hallucinate destructive commands. SassyMCP intercepts **all** dele
 | `sassy_edit_block` / `sassy_edit_multi` | Refuses protected paths, snapshots existing content to `_DELETE_/<name>.pre-edit.<ts><ext>` before applying |
 | `sassy_copy` | Refuses existing destination (no silent overwrite), refuses protected src/dst |
 | `sassy_move` | Refuses silent destination overwrite, refuses protected src/dst |
-| `sassy_selfmod_edit` / `sassy_selfmod_write` | Bad-syntax writes rename to `<name>.bad.<ts>` (never unlink) |
-| `sassy_selfmod_rollback` | Requires `confirm='YES'` — discards uncommitted changes |
 | `sassy_audit_clear` | Rotates the audit log instead of deleting it; requires `confirm='YES'` |
 
 **Intercepted command keywords:** `rm`, `rmdir`, `unlink` (Unix/WSL), `del`, `erase`, `rd` (CMD), `Remove-Item`, `ri`, `rni` (PowerShell aliases), `sdelete` / `sdelete64` (Sysinternals).
@@ -313,10 +308,9 @@ By default, SassyMCP only loads frequently-used tool groups. This keeps tool def
 
 ```bash
 # Default: loads core, github_quick, persona, meta, utility, setup, infrastructure
-# (selfmod is opt-in via SASSYMCP_ENABLE_SELFMOD=1; never in packaged builds)
 uv run sassymcp
 
-# Load everything (270 tools, ~22K tokens of context)
+# Load everything (~22K tokens of context)
 SASSYMCP_LOAD_ALL=1 uv run sassymcp
 
 # Load specific groups
@@ -333,7 +327,6 @@ SASSYMCP_GROUPS=core,github_quick,android,v020 uv run sassymcp
 | `github_quick` | github_quick (6 lean tools) | Yes |
 | `persona` | persona | Yes |
 | `utility` | utility | Yes |
-| `selfmod` | selfmod | No (opt-in / source-only) |
 | `setup` | setup_wizard, tools_manager | Yes |
 | `memory` | memory | Yes |
 | `updater` | updater | Yes |
@@ -660,4 +653,4 @@ installs (winget / brew / apt), and more.
 
 ## License
 
-MIT License - Sassy Consulting LLC
+Proprietary - Copyright (c) 2026 Sassy Consulting LLC. All rights reserved.

@@ -30,4 +30,4 @@ To register a supporter license, say "activate my SassyMCP license" and paste th
 
 ## Source
 
-[github.com/sassyconsultingllc/SassyMCP](https://github.com/sassyconsultingllc/SassyMCP) — MIT licensed.
+[github.com/sassyconsultingllc/SassyMCP](https://github.com/sassyconsultingllc/SassyMCP) — proprietary licensed.

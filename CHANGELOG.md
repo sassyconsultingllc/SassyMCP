@@ -10,6 +10,26 @@ All notable changes to SassyMCP. Newest first. Versions follow semver:
 for new tier-visible features, PATCH for fixes that don't move buyer-
 facing surfaces.
 
+## [1.14.1] — 2026-07-28 — SelfMod removed entirely (no gate)
+
+Marketplace graders require a fixed version. Opt-in gating was not
+enough — SelfMod is gone: no `selfmod` tool group, no `sassy_selfmod_*`
+tools, no `SASSYMCP_ENABLE_SELFMOD` escape hatch. The module file remains
+as an importable no-op so older packaging lists do not break.
+
+### Removed
+
+- `selfmod` entry from `TOOL_GROUPS`
+- `is_selfmod_enabled` / `exclude_gated_modules`
+- All `sassy_selfmod_*` tool registrations and the `self_modify` hook
+- README / persona / setup / skills copy that marketed hot-reload SelfMod
+
+### Changed
+
+- Protected-path edit refusals point at checkout/PR workflow instead of
+  `sassy_selfmod_edit`
+- License metadata remains Proprietary (from the 1.14.0 packaging patch)
+
 ## [1.14.0] — 2026-07-28 — Marketplace compliance: SelfMod gated, token banner hardened
 
 CuratedMCP / MCP directory review rejected the prior listing because

@@ -88,10 +88,9 @@ a = Analysis(
         'sassymcp._phone_status',
         # Remote Linux SSH
         'sassymcp.modules.linux',
-        # Persona / Utility / Setup / Selfmod
+        # Persona / Utility / Setup
         'sassymcp.modules.persona',
         'sassymcp.modules.utility',
-        'sassymcp.modules.selfmod',
         'sassymcp.modules.setup_wizard',
         'sassymcp.modules.tools_manager',
         'sassymcp.modules.memory',

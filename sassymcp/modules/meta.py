@@ -202,7 +202,7 @@ def register(server):
         # Runtime self-identification so ANY client can tell which instance it
         # is talking to (the opaque-UUID namespace problem solves itself if
         # each server says who it is). 'frozen' == packaged PyInstaller build;
-        # 'source' == running from a checkout (self-modification works here).
+        # 'source' == running from a checkout.
         runtime = "frozen" if (getattr(_sys, "frozen", False) or hasattr(_sys, "_MEIPASS")) else "source"
         return json.dumps({
             "verdict": "whole" if not broken else "DEGRADED",

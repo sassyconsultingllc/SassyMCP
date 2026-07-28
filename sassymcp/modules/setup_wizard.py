@@ -222,7 +222,7 @@ def _generate_persona_md(answers: dict) -> str:
     sections.append("| \"scan my network\" | `sassy_netstat` + `sassy_arp` for local; `sassy_port_scan` for remote |")
     sections.append("| \"what's running on this machine\" / \"autoruns\" | `sassy_reg_autoruns` (Windows forensics) |")
     sections.append("| \"hand off to my [other client]\" | `sassy_crosslink_send channel=\"task-handoff\"` |")
-    sections.append("| \"add a tool that...\" | Activate `self_modify` hook; use `sassy_selfmod_*` workflow (read → edit → hot-reload) |")
+    sections.append("| \"add a tool that...\" | Edit the SassyMCP source checkout and ship a new release — self-modification tools are removed |")
     sections.append("")
     sections.append("Discover more playbooks any time: `sassy_hooks_list` shows registered operational hooks; `sassy_hooks_activate name=\"<x>\"` loads a hook's full playbook into context.")
     sections.append("")

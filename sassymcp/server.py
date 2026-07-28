@@ -55,7 +55,6 @@ from sassymcp.modules._tool_loader import (
     validate_tool,
     enable_live_reload,
     compute_schema_version,
-    exclude_gated_modules,
     TOOL_GROUPS,
 )
 
@@ -254,19 +253,15 @@ def _resolve_modules() -> list[str]:
     3. Default: load always_load=True groups
     Tier gating was removed in v1.13.0 — every group is available to
     everyone; a license only sets the displayed supporter tier.
-
-    Selfmod is additionally gated: never in frozen builds, and from
-    source only when SASSYMCP_ENABLE_SELFMOD=1 (marketplace / public
-    installs must remain a fixed graded version).
+    Self-modification was removed entirely (no tools, no opt-in gate).
     """
     if os.environ.get("SASSYMCP_LOAD_ALL", "").strip() == "1":
         modules = []
         for group_info in TOOL_GROUPS.values():
             modules.extend(group_info["modules"])
         if modules:
-            modules = exclude_gated_modules(resolve_dependencies(modules))
             logger.info(f"SASSYMCP_LOAD_ALL=1 — loading all modules: {modules}")
-            return modules
+            return resolve_dependencies(modules)
         return get_default_modules()
 
     groups_env = os.environ.get("SASSYMCP_GROUPS", "").strip()
@@ -278,9 +273,8 @@ def _resolve_modules() -> list[str]:
                 modules.extend(TOOL_GROUPS[g]["modules"])
             else:
                 logger.warning(f"Unknown group: {g}")
-        modules = exclude_gated_modules(resolve_dependencies(modules))
         logger.info(f"SASSYMCP_GROUPS={groups_env} — loading: {modules}")
-        return modules
+        return resolve_dependencies(modules)
 
     defaults = get_default_modules()
     logger.info(f"Default load: {defaults}")

@@ -7,7 +7,7 @@ dynamic = ["version"]
 description = "Unified MCP server for cross-platform (Windows/macOS/Linux) desktop automation, Android device control, security auditing, web inspection, cross-session communication, GitHub operations, and AI workflow persona"
 readme = "README.md"
 requires-python = ">=3.11"
-license = {text = "MIT"}
+license = {text = "Proprietary"}
 authors = [{name = "SassyMCP Contributors"}]
 
 dependencies = [
@@ -64,6 +64,16 @@ path = "sassymcp/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["sassymcp"]
+
+[tool.hatch.build.targets.sdist]
+# Keep source distributions limited to runtime packaging surfaces.
+# Avoid shipping internal audits, tooling, and monorepo sidecars on PyPI.
+only-include = [
+    "sassymcp",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml",
+]
 
 [tool.uv]
 # python managed by .python-version file

@@ -413,25 +413,16 @@ async def test_audit():
 asyncio.run(test_audit())
 
 
-# ── selfmod_rollback confirm — v1.1.2 ────────────────────────────────
-print("\n[9] selfmod_rollback — confirm required")
-import os as _os
-_os.environ["SASSYMCP_ENABLE_SELFMOD"] = "1"  # opt-in for this unit test
+# ── selfmod removed — register is a no-op ─────────────────────────────
+print("\n[9] selfmod — permanently removed")
 from sassymcp.modules import selfmod as selfmod_mod
+from sassymcp.modules._tool_loader import TOOL_GROUPS as _TG
 _fake = _FakeServer()
 selfmod_mod.register(_fake)
-sassy_selfmod_rollback = _fake.tools["sassy_selfmod_rollback"]
-
-async def test_rollback():
-    # Use a path that does NOT exist under git so even if the confirm
-    # check is missing, git checkout will error instead of touching real
-    # files. The fix must refuse BEFORE attempting git checkout.
-    r = await sassy_selfmod_rollback("_nonexistent_test_target.py")
-    check("selfmod_rollback: refuses without confirm",
-          "Refused" in r or ("confirm" in r.lower() and "YES" in r),
-          f"r={r[:200]}")
-
-asyncio.run(test_rollback())
+check("selfmod group absent from TOOL_GROUPS", "selfmod" not in _TG)
+check("selfmod register adds no tools",
+      not any(n.startswith("sassy_selfmod_") for n in _fake.tools),
+      f"tools={list(_fake.tools)}")
 
 
 # ── adb_shell detect_delete_intent — v1.1.2 ──────────────────────────

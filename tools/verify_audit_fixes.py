@@ -26,6 +26,11 @@ RED = "\033[91m"
 YEL = "\033[93m"
 RST = "\033[0m"
 
+# Prefer the repo checkout over any installed sassymcp wheel/egg.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 
 class Verifier:
     def __init__(self):
@@ -209,12 +214,25 @@ if 'is_sensitive_read_path(apk_path)' in text:
 else:
     V.fail("sassy_apk_info calls is_sensitive_read_path", "call site not found")
 
-# 2c) selfmod confirm gate
-selfmod_src = (Path(__file__).resolve().parent.parent / "sassymcp" / "modules" / "selfmod.py").read_text(encoding="utf-8")
-if 'confirm != "YES"' in selfmod_src and "not _is_module_file(resolved)" in selfmod_src:
-    V.ok("selfmod gates non-module edits behind confirm='YES'")
+# 2c) selfmod permanently removed (no tools, no group, no gate)
+from sassymcp.modules._tool_loader import TOOL_GROUPS as _TG
+_has_selfmod_group = "selfmod" in _TG.keys()
+if not _has_selfmod_group:
+    V.ok("selfmod group removed from TOOL_GROUPS")
 else:
-    V.fail("selfmod gates non-module edits behind confirm='YES'", "guard missing")
+    V.fail(
+        "selfmod group removed from TOOL_GROUPS",
+        f"group still present; keys={sorted(_TG.keys())}",
+    )
+selfmod_src = (Path(__file__).resolve().parent.parent / "sassymcp" / "modules" / "selfmod.py").read_text(encoding="utf-8")
+if "permanently removed" in selfmod_src or "Self-modification tools removed" in selfmod_src:
+    V.ok("selfmod module is a no-op stub (tools removed)")
+else:
+    V.fail("selfmod module is a no-op stub (tools removed)", "still looks like live selfmod")
+if "sassy_selfmod_edit" not in selfmod_src and "@server.tool()" not in selfmod_src:
+    V.ok("selfmod stub registers no tools")
+else:
+    V.fail("selfmod stub registers no tools", "tool registration still present")
 
 # 2d) shell allow_pattern='*' removed
 if 'allow_pattern == "*"' in shell_src:

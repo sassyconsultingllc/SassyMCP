@@ -40,10 +40,10 @@ This is the canonical "when to use which tool" guide for SassyMCP. The
 | "scan my network" / "what's listening" | `sassy_netstat` + `sassy_arp` for local-host posture; `sassy_port_scan target=<host>` for remote (always confirm with user before scanning third-party) |
 | "what runs on boot" / "autoruns" / "persistence" | `sassy_reg_autoruns` (Windows forensics — covers Run, RunOnce, Services, Scheduled Tasks, IFEO debugger hijacks in one call) |
 | "USB history" / "connected devices" | `sassy_reg_read key_path="HKLM\\System\\CurrentControlSet\\Enum\\USBSTOR"` |
-| "edit a file in this project" | `sassy_edit_block` for surgical find/replace OR `sassy_edit_multi` for parallel edits across one file. The repo's source tree is auto-protected — pre-edit snapshots land in `_DELETE_/` for review. |
+| "edit a file in this project" | `sassy_edit_block` for surgical find/replace OR `sassy_edit_multi` for parallel edits across one file. The SassyMCP source tree is auto-protected — edit it in a checkout / PR, not via MCP tools. |
 | "delete X" | NEVER use `sassy_shell rm` — the interceptor moves targets to `_DELETE_/` instead. Use `sassy_safe_delete` if you want explicit staging. |
-| "add a new tool to SassyMCP" | Activate the `self_modify` hook (`sassy_hooks_activate name="self_modify"`); use `sassy_selfmod_read` → `sassy_selfmod_edit` → hot-reload happens automatically. |
-| "run a Linux command on yomama" | `sassy_linux_exec` (Pro tier — uses plink to a configured remote host). Destructive commands are blocked unless `allow_destructive=True`. |
+| "add a new tool to SassyMCP" | Edit the SassyMCP source checkout and ship a new release. Self-modification tools are removed. |
+| "run a Linux command on yomama" | `sassy_linux_exec` (uses plink to a configured remote host). Destructive commands are blocked unless `allow_destructive=True`. |
 | "find references to X in the codebase" | `sassy_search_files pattern=<x>` — always faster than `sassy_shell grep`. Returns ranked file list. |
 | "what's the SassyMCP context cost?" | `sassy_context_estimate` — shows tool def tokens as % of 200K window. |
 | "show tool usage stats" | `sassy_tool_usage` or `sassy_observability_tool_stats` (latter includes pruning suggestions) |
@@ -52,7 +52,7 @@ This is the canonical "when to use which tool" guide for SassyMCP. The
 
 1. **Don't improvise via shell when a tool exists.** If the user says "screenshot", call `sassy_screenshot`, not `sassy_shell powershell ScreenCapture`. The shell version has more failure modes and burns more context.
 
-2. **Read before edit.** Always `sassy_read_file` (or `sassy_selfmod_read` for sassymcp/* paths) before any edit. The repo's source tree is auto-protected; edits to it MUST go through `sassy_selfmod_*`, not `sassy_edit_block`.
+2. **Read before edit.** Always `sassy_read_file` before any edit. The SassyMCP source tree is auto-protected — change it in a checkout / PR, not via MCP tools.
 
 3. **Sensitive contexts auto-block.** Phone interaction tools (tap, swipe, type) refuse on detected login/payment/2FA screens. Pass `confirmed=True` only after asking the user.
 

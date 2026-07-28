@@ -188,10 +188,9 @@ OBSERVABILITY = """
 **Health** (sassy_observability_health, sassy_observability_metrics):
   Uptime, error rates, CPU/memory/disk, live reload status.
 
-**Self-modification** (opt-in, source-only):
-  Disabled in packaged / marketplace builds (fixed graded version).
-  From a source checkout set SASSYMCP_ENABLE_SELFMOD=1, then use
-  sassy_selfmod_status / edit / reload / rollback.
+**Self-modification:**
+  Removed. Packaged and source builds do not expose rewrite / hot-reload
+  tools. Change SassyMCP via a source checkout and a new release.
 
 **Cross-session** (sassy_crosslink_status):
   Active sessions, message queues, channels, auth status.
