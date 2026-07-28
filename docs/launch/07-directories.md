@@ -30,7 +30,7 @@ Categories:     Developer Tools, Automation, GitHub, Security, Productivity
 Transport:      stdio (primary), HTTP/SSE, HTTPS
 Tool count:     274 (36 modules, 18 groups)
 Platform:       Windows 10/11
-License:        MIT core; commercial license for paid tool groups
+License:        Proprietary (all rights reserved)
 Repo:           https://github.com/sassyconsultingllc/SassyMCP
 Homepage:       https://sassyconsultingllc.com/store   (NOT /pricing.html — that 404s as of 2026-07-15)
 Icon:           (use the bolt logo — see 08-assets-to-capture.md)
@@ -94,7 +94,7 @@ Then record where each listing lives so you can update them on each release.
 
 | Directory | Date | Status | Where |
 |---|---|---|---|
-| CuratedMCP (curatedmcp.com) | 2026-07-15 | Pending review (48h SLA) | Dashboard: curatedmcp.com/dashboard/servers · listing will be /marketplace/sassymcp. Free listing; pricing=Free, no request quota (guardrail: no metering claims). Publisher profile bio added same day. Their paid-tier/Stripe rev-share NOT used — upgrade path stays in-product via LemonSqueezy. |
+| CuratedMCP (curatedmcp.com) | 2026-07-15 | Rejected (SelfMod / token banner); resubmit after v1.14.0 | Dashboard: curatedmcp.com/dashboard/servers · listing will be /marketplace/sassymcp. Free listing; pricing=Free — matches all-or-nothing product (no paid-tier/Stripe rev-share). Upgrade/support path stays on sassyconsultingllc.com/store as optional Supporter. Resubmit via SHA256-pinned .mcpb after SelfMod gated + token banner hardened (v1.14.0). |
 
 ## Maintenance (what directories reward)
 Per the 2026 directory feedback: they surface **last-commit date, production-readiness, client
