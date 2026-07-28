@@ -58,10 +58,10 @@ BILLING_TIMEOUT_SECONDS = 4
 # live, either by editing this file or by setting SASSYMCP_LS_VARIANT_MAP
 # to a JSON string mapping variant_id (string or int) → {tier, addons}.
 DEFAULT_VARIANT_MAP: dict[str, dict[str, Any]] = {
-    # Example shape — replace with real LS variant IDs:
-    # "123456": {"tier": "pro", "addons": []},
-    # "234567": {"tier": "pro", "addons": ["forensics"]},
-    # "345678": {"tier": "free", "addons": ["forensics"]},
+    # Foodie Finder published variant — temporary shared checkout vehicle
+    # while dedicated SassyMCP Pro/Forensics/Team products are created in LS.
+    # Worker uses this as LS_FALLBACK_VARIANT with custom_price for mcp-pro.
+    "1874031": {"tier": "pro", "addons": []},
 }
 
 
