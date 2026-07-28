@@ -103,7 +103,7 @@ The supervisor owns the runtime tree and makes it self-healing and **orphan-proo
 | **GitHub Quick** | 6 | github_quick | Daily-driver: push_files, get_file, issue, PR, protect |
 | **Persona** | 7 | persona | Expert-mode directives, decision framework, engineering standards |
 | **Utility** | 11 | utility | Env vars, toast, zip/tar/unzip/untar, HTTP requests, file diff |
-| **SelfMod** | 8 | selfmod | Self-edit, hot-reload, restart, rollback, status |
+| **SelfMod** | 8 | selfmod | Source-only opt-in (`SASSYMCP_ENABLE_SELFMOD=1`); omitted from packaged/marketplace builds |
 | **Setup** | 8 | setup | Setup wizard, GitHub token guide, SSH setup, tool checker, license activation |
 | **ToolsManager** | 1 | setup | External tool bootstrap and detection |
 | **Observability** | 3 | infrastructure | Health, metrics, tool stats |
@@ -312,7 +312,8 @@ The onboarding hook fires on phrases like `"setup"`, `"first time"`, `"get start
 By default, SassyMCP only loads frequently-used tool groups. This keeps tool definitions under 5% of your context window.
 
 ```bash
-# Default: loads core, github_quick, persona, meta, utility, selfmod, setup, infrastructure
+# Default: loads core, github_quick, persona, meta, utility, setup, infrastructure
+# (selfmod is opt-in via SASSYMCP_ENABLE_SELFMOD=1; never in packaged builds)
 uv run sassymcp
 
 # Load everything (270 tools, ~22K tokens of context)
@@ -332,7 +333,7 @@ SASSYMCP_GROUPS=core,github_quick,android,v020 uv run sassymcp
 | `github_quick` | github_quick (6 lean tools) | Yes |
 | `persona` | persona | Yes |
 | `utility` | utility | Yes |
-| `selfmod` | selfmod | Yes |
+| `selfmod` | selfmod | No (opt-in / source-only) |
 | `setup` | setup_wizard, tools_manager | Yes |
 | `memory` | memory | Yes |
 | `updater` | updater | Yes |

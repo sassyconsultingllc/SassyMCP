@@ -22,9 +22,10 @@ One-liner:      One MCP server that replaces 75+ — 274 tools in a single exe, 
 Description:    SassyMCP collapses 75+ individual MCP servers into one 34 MB exe with 274 tools
                 across files, shell, full GitHub API, Android control, dynamic vision, memory,
                 and security audit. A smart loader keeps tool-definition context under ~5K tokens.
-                Includes safe-delete interception (agents can't destroy files), phone control with
-                sensitive-context auto-block, and self-modification. Free tier is a full daily
-                driver; Pro is a one-time purchase. Works with any MCP client.
+                Includes safe-delete interception (agents can't destroy files) and phone control
+                with sensitive-context auto-block. Free tier is a full daily driver. Works with
+                any MCP client. Install via the SHA256-pinned .mcpb from GitHub Releases (preferred)
+                or `pip install sassymcp` — do not use unverified curl|exe install commands.
 Categories:     Developer Tools, Automation, GitHub, Security, Productivity
 Transport:      stdio (primary), HTTP/SSE, HTTPS
 Tool count:     274 (36 modules, 18 groups)

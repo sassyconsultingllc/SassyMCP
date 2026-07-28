@@ -70,6 +70,8 @@ def test_cold_start_returns_only_always_load_groups(tmp_path: Path, monkeypatch)
     assert "phone_screen" not in defaults
     assert "registry" not in defaults
     assert "github_ops" not in defaults  # the heavy github_full module
+    # Selfmod is opt-in / never always_load (marketplace fixed-version rule)
+    assert "selfmod" not in defaults
 
 
 def test_high_score_adb_tool_pulls_android_group(tmp_path: Path, monkeypatch):

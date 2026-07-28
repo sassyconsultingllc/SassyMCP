@@ -415,6 +415,8 @@ asyncio.run(test_audit())
 
 # ── selfmod_rollback confirm — v1.1.2 ────────────────────────────────
 print("\n[9] selfmod_rollback — confirm required")
+import os as _os
+_os.environ["SASSYMCP_ENABLE_SELFMOD"] = "1"  # opt-in for this unit test
 from sassymcp.modules import selfmod as selfmod_mod
 _fake = _FakeServer()
 selfmod_mod.register(_fake)

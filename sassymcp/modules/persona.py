@@ -188,9 +188,10 @@ OBSERVABILITY = """
 **Health** (sassy_observability_health, sassy_observability_metrics):
   Uptime, error rates, CPU/memory/disk, live reload status.
 
-**Self-modification** (sassy_selfmod_status):
-  Pending restarts, reload history, editable file index, git status.
-  Source-only — in a packaged (frozen) build these are inert stubs.
+**Self-modification** (opt-in, source-only):
+  Disabled in packaged / marketplace builds (fixed graded version).
+  From a source checkout set SASSYMCP_ENABLE_SELFMOD=1, then use
+  sassy_selfmod_status / edit / reload / rollback.
 
 **Cross-session** (sassy_crosslink_status):
   Active sessions, message queues, channels, auth status.

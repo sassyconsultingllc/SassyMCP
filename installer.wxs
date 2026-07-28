@@ -9,7 +9,7 @@
       candle -dExtractRoot=path\to\extract installer.wxs
   -->
   <?define ExtractRoot="dist\Most recent extract" ?>
-  <Product Id="*" Name="SassyMCP" Language="1033" Version="1.6.0" Manufacturer="SassyMCP Contributors" UpgradeCode="fcc4abb1-f2c1-4ecf-846b-12d7e1e6d72e">
+  <Product Id="*" Name="SassyMCP" Language="1033" Version="1.14.0" Manufacturer="SassyMCP Contributors" UpgradeCode="fcc4abb1-f2c1-4ecf-846b-12d7e1e6d72e">
     <!--
       perUser: SassyMCP is a user-mode CLI; no system services, no
       shared resources. Installing per-user means no UAC elevation,

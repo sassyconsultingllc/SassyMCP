@@ -3,7 +3,7 @@
   "name": "io.github.sassyconsultingllc/sassymcp",
   "title": "SassyMCP",
   "description": "One MCP server that replaces 75+ — 274 tools in a single exe, smart-loaded.",
-  "version": "1.12.1",
+  "version": "1.14.0",
   "repository": {
     "url": "https://github.com/sassyconsultingllc/SassyMCP",
     "source": "github"
@@ -13,15 +13,15 @@
     {
       "registryType": "pypi",
       "identifier": "sassymcp",
-      "version": "1.12.0",
+      "version": "1.14.0",
       "transport": {
         "type": "stdio"
       }
     },
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/sassyconsultingllc/SassyMCP/releases/download/v1.12.0/sassymcp-v1.12.0.mcpb",
-      "fileSha256": "0874c2d0f797ba173347ed35bf0fdcf82fa8cf47cfbec05d3769480f2098593f",
+      "identifier": "https://github.com/sassyconsultingllc/SassyMCP/releases/download/v1.14.0/sassymcp-v1.14.0.mcpb",
+      "fileSha256": "8677a9248d64e03b551b0f1e0fd103e45c28bf87a38d5692d0f208e7b70dae04",
       "transport": {
         "type": "stdio"
       }

@@ -10,6 +10,42 @@ All notable changes to SassyMCP. Newest first. Versions follow semver:
 for new tier-visible features, PATCH for fixes that don't move buyer-
 facing surfaces.
 
+## [1.14.0] — 2026-07-28 — Marketplace compliance: SelfMod gated, token banner hardened
+
+CuratedMCP / MCP directory review rejected the prior listing because
+SelfMod let an installed binary rewrite/hot-reload after install
+(incompatible with grading a fixed version), and the mercury core
+audit still called out full bearer tokens on stdout plus packaging
+concerns. This release closes those gates for public/packaged installs.
+
+### Changed
+
+- **SelfMod is opt-in and omitted from packaged builds.** Frozen /
+  `.mcpb` / marketplace installs never register `sassy_selfmod_*`
+  tools (no stubs). From a source checkout set
+  `SASSYMCP_ENABLE_SELFMOD=1` to restore the developer workflow.
+  `always_load` for the `selfmod` group is now `False`;
+  `SASSYMCP_LOAD_ALL=1` still skips it unless the opt-in is set.
+- **Startup banner never prints the raw bearer token.** Snippets use
+  `<token-from-sassymcp-show-token>`; retrieve via `sassymcp show-token`.
+- **Listing copy** prefers the SHA256-pinned `.mcpb` from GitHub
+  Releases (and `pip install sassymcp`); drop unverified exe/curl
+  install instructions from directory submissions.
+- MSI `Version` bumped to `1.14.0` (already `perUser` + relative
+  `ExtractRoot` from earlier hardening).
+
+### Security
+
+- Token file Windows ACL lockdown / permission checks retained from
+  prior hardening; banner leak path closed.
+
+### Tests
+
+- `test_discovery.py` — frozen builds register zero selfmod tools;
+  source requires opt-in.
+- `test_tool_loader_boost.py` — selfmod absent from cold-start defaults.
+- `test_intercept.py` — enables SelfMod only for the rollback unit test.
+
 ## [1.13.0] — 2026-07-15 — All or nothing: tier gating removed, everything unlocked
 
 The pro/forensics gate locked 5 tool groups (`github_full`, `android`,

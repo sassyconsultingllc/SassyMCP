@@ -55,6 +55,7 @@ from sassymcp.modules._tool_loader import (
     validate_tool,
     enable_live_reload,
     compute_schema_version,
+    exclude_gated_modules,
     TOOL_GROUPS,
 )
 
@@ -253,14 +254,19 @@ def _resolve_modules() -> list[str]:
     3. Default: load always_load=True groups
     Tier gating was removed in v1.13.0 — every group is available to
     everyone; a license only sets the displayed supporter tier.
+
+    Selfmod is additionally gated: never in frozen builds, and from
+    source only when SASSYMCP_ENABLE_SELFMOD=1 (marketplace / public
+    installs must remain a fixed graded version).
     """
     if os.environ.get("SASSYMCP_LOAD_ALL", "").strip() == "1":
         modules = []
         for group_info in TOOL_GROUPS.values():
             modules.extend(group_info["modules"])
         if modules:
+            modules = exclude_gated_modules(resolve_dependencies(modules))
             logger.info(f"SASSYMCP_LOAD_ALL=1 — loading all modules: {modules}")
-            return resolve_dependencies(modules)
+            return modules
         return get_default_modules()
 
     groups_env = os.environ.get("SASSYMCP_GROUPS", "").strip()
@@ -272,8 +278,9 @@ def _resolve_modules() -> list[str]:
                 modules.extend(TOOL_GROUPS[g]["modules"])
             else:
                 logger.warning(f"Unknown group: {g}")
+        modules = exclude_gated_modules(resolve_dependencies(modules))
         logger.info(f"SASSYMCP_GROUPS={groups_env} — loading: {modules}")
-        return resolve_dependencies(modules)
+        return modules
 
     defaults = get_default_modules()
     logger.info(f"Default load: {defaults}")
@@ -743,28 +750,16 @@ def _print_banner(tool_count, host, port, first_run, *, transport="http",
                   scheme="http", token: str | None = None, update_info=None):
     """Print a human-readable startup banner with paste-and-go config snippets.
 
-    The snippet matches the current Claude Code / Claude Desktop / VS Code
-    Copilot / Cursor MCP shape:
-
-        {
-          "mcpServers": {
-            "sassymcp": {
-              "type": "http",
-              "url": "...",
-              "headers": {"Authorization": "Bearer ..."}
-            }
-          }
-        }
-
-    When `token` is provided, the `headers` block is emitted with the
-    real bearer value (NOT a placeholder), so the snippet works on the
-    first paste. When `token` is None, auth is off and the headers block
-    is omitted.
+    Security: the raw bearer token is NEVER written to stdout. Startup
+    logs, CI captures, and terminal recordings must not contain credentials.
+    Retrieve the token with `sassymcp show-token` (or generate-token).
+    Snippets use a masked placeholder the user replaces after show-token.
     """
     from sassymcp._paths import TOKENS_FILE
     url = f"{scheme}://{host}:{port}"
     endpoint = f"{url}/mcp/"
     typ = "sse" if transport == "sse" else "http"
+    token_placeholder = "<token-from-sassymcp-show-token>"
 
     bar = "=" * 62
     print(flush=True)
@@ -777,15 +772,13 @@ def _print_banner(tool_count, host, port, first_run, *, transport="http",
     print(flush=True)
     print(f"   MCP endpoint:  {endpoint}", flush=True)
     if token:
-        # For pathologically short tokens (shouldn't happen — our minimum
-        # is 16 — but a future caller could pass a custom value), avoid
-        # dumping the whole thing in the preview line. The full token
-        # still appears in the copy-paste snippet below where it's needed.
+        # Never dump the full token. Preview is masked; short tokens show
+        # only asterisks so a misconfigured short value cannot leak.
         if len(token) >= 12:
             preview = f"{token[:6]}...{token[-4:]}"
         else:
             preview = "*" * len(token)
-        print(f"   Auth:          Bearer {preview}  (full token in snippet below)", flush=True)
+        print(f"   Auth:          Bearer {preview}  (use show-token for the full value)", flush=True)
     else:
         print("   Auth:          disabled  (SASSYMCP_NO_AUTH=1 or token bootstrap failed)", flush=True)
 
@@ -804,7 +797,7 @@ def _print_banner(tool_count, host, port, first_run, *, transport="http",
     print("   Claude Code (CLI):", flush=True)
     if token:
         print(f'     claude mcp add --transport http sassymcp {endpoint} \\', flush=True)
-        print(f'       --header "Authorization: Bearer {token}"', flush=True)
+        print(f'       --header "Authorization: Bearer {token_placeholder}"', flush=True)
     else:
         print(f"     claude mcp add --transport http sassymcp {endpoint}", flush=True)
     print(flush=True)
@@ -818,7 +811,7 @@ def _print_banner(tool_count, host, port, first_run, *, transport="http",
     if token:
         print(f'           "url": "{endpoint}",', flush=True)
         print('           "headers": {', flush=True)
-        print(f'             "Authorization": "Bearer {token}"', flush=True)
+        print(f'             "Authorization": "Bearer {token_placeholder}"', flush=True)
         print('           }', flush=True)
     else:
         print(f'           "url": "{endpoint}"', flush=True)

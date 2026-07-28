@@ -47,7 +47,11 @@ def test_tool_catalog_enumerates_registry():
             assert row["name"].startswith("sassy_")
 
 
-def test_selfmod_frozen_registers_instant_stubs():
+def test_selfmod_frozen_registers_no_tools():
+    """Packaged builds must not expose selfmod tools at all (marketplace
+    graders require a fixed graded version — stubs that advertise rewrite
+    were rejected).
+    """
     original = selfmod._FROZEN
     selfmod._FROZEN = True
     try:
@@ -57,13 +61,28 @@ def test_selfmod_frozen_registers_instant_stubs():
         for t in ("sassy_selfmod_status", "sassy_selfmod_read", "sassy_selfmod_edit",
                   "sassy_selfmod_write", "sassy_selfmod_reload", "sassy_selfmod_restart",
                   "sassy_selfmod_rollback"):
-            assert t in names, f"frozen stub missing: {t}"
-        # The status stub must answer instantly with an honest reason, not hang.
-        st = json.loads(_call(s._tool_manager._tools["sassy_selfmod_status"]))
-        assert st["error"] == "selfmod unavailable in packaged build"
-        assert st["runtime"] == "frozen"
+            assert t not in names, f"frozen build must not register {t}"
     finally:
         selfmod._FROZEN = original
+
+
+def test_selfmod_source_requires_opt_in(monkeypatch):
+    """From source, selfmod stays off unless SASSYMCP_ENABLE_SELFMOD=1."""
+    original = selfmod._FROZEN
+    selfmod._FROZEN = False
+    try:
+        monkeypatch.delenv("SASSYMCP_ENABLE_SELFMOD", raising=False)
+        s = FastMCP("t-gated")
+        selfmod.register(s)
+        assert "sassy_selfmod_status" not in s._tool_manager._tools
+
+        monkeypatch.setenv("SASSYMCP_ENABLE_SELFMOD", "1")
+        s2 = FastMCP("t-enabled")
+        selfmod.register(s2)
+        assert "sassy_selfmod_status" in s2._tool_manager._tools
+    finally:
+        selfmod._FROZEN = original
+        monkeypatch.delenv("SASSYMCP_ENABLE_SELFMOD", raising=False)
 
 
 def test_persona_bakes_discovery_protocol():
@@ -91,7 +110,8 @@ def test_discover_prompt_registered_and_renders():
 if __name__ == "__main__":
     test_self_check_reports_whole_and_runtime()
     test_tool_catalog_enumerates_registry()
-    test_selfmod_frozen_registers_instant_stubs()
+    test_selfmod_frozen_registers_no_tools()
+    # opt-in test needs pytest monkeypatch; skip in bare python run
     test_persona_bakes_discovery_protocol()
     test_discover_prompt_registered_and_renders()
     print("all discovery tests passed")

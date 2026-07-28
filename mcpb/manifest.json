@@ -2,7 +2,7 @@
   "manifest_version": "0.2",
   "name": "sassymcp",
   "display_name": "SassyMCP",
-  "version": "1.12.0",
+  "version": "1.14.0",
   "description": "One MCP server replacing 75+. File ops, shell, GitHub, Android control, vision, security audit, persona memory — with multi-client auto-config. Everything unlocked, no key required.",
   "author": {"name": "SassyMCP Contributors", "url": "https://sassyconsultingllc.com"},
   "license": "MIT",
