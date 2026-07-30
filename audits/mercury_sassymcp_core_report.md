@@ -145,5 +145,5 @@
 | Full bearer token printed to stdout banner | **Fixed** | Banner uses `<token-from-sassymcp-show-token>`; retrieve via `show-token` |
 | MSI absolute developer paths | **Fixed** | `$(var.ExtractRoot)` relative define + candle `-dExtractRoot=` |
 | MSI `InstallScope=perMachine` (admin elevation) | **Fixed** | `perUser` + `LocalAppDataFolder` install root |
-| SelfMod rewrite/hot-reload after install | **Fixed (v1.14.0)** | Packaged builds register **zero** selfmod tools; source requires `SASSYMCP_ENABLE_SELFMOD=1` |
+| SelfMod rewrite/hot-reload after install | **Fixed (v1.14.1+)** | SelfMod removed entirely — no tools, no group, no opt-in gate |
 | Marketplace install path | **Fixed (v1.14.0)** | Listing uses SHA256-pinned `.mcpb` + PyPI; no unverified exe curl |

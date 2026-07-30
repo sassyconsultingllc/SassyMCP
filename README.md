@@ -595,7 +595,7 @@ The legacy `personal/autostart-bridge.bat` + `personal/register-autostart.ps1` t
 
 | Variable | Purpose |
 |----------|---------|
-| `SASSYMCP_LOAD_ALL=1` | Load all 270 tools |
+| `SASSYMCP_LOAD_ALL=1` | Load every tool group |
 | `SASSYMCP_GROUPS=core,android` | Load specific groups |
 | `SASSYMCP_AUTH_TOKEN=xxx` | Bearer token for HTTP auth |
 | `SASSYMCP_DEV=1` | Enable live reload (dev mode) |

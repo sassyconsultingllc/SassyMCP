@@ -188,4 +188,4 @@ To add a new module:
 
 ## License
 
-MIT License (c) 2026
+Proprietary — Copyright (c) 2026 Sassy Consulting LLC. All rights reserved.

@@ -94,7 +94,7 @@ Then record where each listing lives so you can update them on each release.
 
 | Directory | Date | Status | Where |
 |---|---|---|---|
-| CuratedMCP (curatedmcp.com) | 2026-07-28 | Resubmitted (awaiting review) | Dashboard: curatedmcp.com/dashboard/servers · listing will be /marketplace/sassymcp. Edit saved 2026-07-28: pricing=Free; install=SHA256-pinned `sassymcp-v1.14.0.mcpb` (`8677a924…dae04`); tip/support in description → https://sassyconsultingllc.com/store#sassymcp. UI may still show REJECTED until re-review. SelfMod removed in v1.14.1. |
+| CuratedMCP (curatedmcp.com) | 2026-07-29 | Resubmit with v1.14.2 | Prefer SHA256-pinned `sassymcp-v1.14.2.mcpb` from GitHub Releases; SelfMod removed; proprietary license; frozen `update_apply` disabled. |
 
 ## Maintenance (what directories reward)
 Per the 2026 directory feedback: they surface **last-commit date, production-readiness, client

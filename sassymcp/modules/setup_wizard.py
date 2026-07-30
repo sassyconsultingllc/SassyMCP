@@ -226,7 +226,7 @@ def _generate_persona_md(answers: dict) -> str:
     sections.append("")
     sections.append("Discover more playbooks any time: `sassy_hooks_list` shows registered operational hooks; `sassy_hooks_activate name=\"<x>\"` loads a hook's full playbook into context.")
     sections.append("")
-    sections.append("Smart loading: SassyMCP auto-loads tool groups whose top tools have a usage score >= 0.5 in your `~/.sassymcp/tool_usage.json` history. Override with `SASSYMCP_GROUPS=core,android,system` env var, or `SASSYMCP_LOAD_ALL=1` for all 257.")
+    sections.append("Smart loading: SassyMCP auto-loads tool groups whose top tools have a usage score >= 0.5 in your `~/.sassymcp/tool_usage.json` history. Override with `SASSYMCP_GROUPS=core,android,system` env var, or `SASSYMCP_LOAD_ALL=1` to load every group.")
     sections.append("")
 
     return "\n".join(sections)

@@ -10,6 +10,19 @@ All notable changes to SassyMCP. Newest first. Versions follow semver:
 for new tier-visible features, PATCH for fixes that don't move buyer-
 facing surfaces.
 
+## [1.14.2] — 2026-07-29 — Release-audit follow-ups
+
+Closes remaining distribution-audit items after SelfMod removal and
+proprietary relicensing.
+
+### Changed
+
+- **`sassy_update_apply` refused in frozen/packaged builds** so marketplace
+  installs stay a fixed graded version (check/list/changelog still work).
+- Stale "all 257/270 tools" copy scrubbed from setup wizard, skills, README.
+- `MIGRATION.md` license footer matches Proprietary (no MIT).
+- VS Code extension package version aligned to `1.14.2`.
+
 ## [1.14.1] — 2026-07-28 — SelfMod removed entirely (no gate)
 
 Marketplace graders require a fixed version. Opt-in gating was not

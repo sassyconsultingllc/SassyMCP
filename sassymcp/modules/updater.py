@@ -328,7 +328,10 @@ class Updater:
 
 
 def register(server) -> None:
+    import sys
+
     upd = Updater()
+    _frozen = getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS")
 
     @server.tool()
     async def sassy_update_check(force: bool = False) -> dict:
@@ -356,10 +359,24 @@ def register(server) -> None:
         """Download an asset to staging. Returns the path + a run command.
 
         Does NOT execute the installer — the user runs the returned command
-        when ready. If SASSYMCP_LICENSE_KEY is set in the environment, the
-        download goes through the gated sassyconsultingllc.com endpoint.
+        when ready. Disabled in packaged/frozen builds so marketplace installs
+        remain a fixed graded version; upgrade by installing a new release
+        artifact instead.
         """
+        if _frozen:
+            return {
+                "error": "update_apply unavailable in packaged build",
+                "reason": (
+                    "This SassyMCP is a fixed graded install. Download a new "
+                    "release .mcpb / exe from GitHub Releases instead of "
+                    "in-place apply."
+                ),
+                "runtime": "frozen",
+            }
         return upd.apply(asset_name=asset_name, tag=tag, dest_dir=dest_dir)
 
     server.updater = upd
-    logger.info("Updater module loaded")
+    logger.info(
+        "Updater module loaded%s",
+        " (apply disabled in frozen build)" if _frozen else "",
+    )
