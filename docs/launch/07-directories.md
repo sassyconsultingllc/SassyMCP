@@ -94,7 +94,7 @@ Then record where each listing lives so you can update them on each release.
 
 | Directory | Date | Status | Where |
 |---|---|---|---|
-| CuratedMCP (curatedmcp.com) | 2026-07-29 | Resubmit with v1.14.2 | Prefer SHA256-pinned `sassymcp-v1.14.2.mcpb` from GitHub Releases; SelfMod removed; proprietary license; frozen `update_apply` disabled. |
+| CuratedMCP (curatedmcp.com) | 2026-07-29 | Resubmit with v1.14.2 | SHA256-pinned `sassymcp-v1.14.2.mcpb` (`f5609947…b3d1`); SelfMod removed; proprietary license; frozen `update_apply` disabled; tip → https://sassyconsultingllc.com/store#sassymcp |
 
 ## Maintenance (what directories reward)
 Per the 2026 directory feedback: they surface **last-commit date, production-readiness, client
