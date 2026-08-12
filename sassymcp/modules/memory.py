@@ -3,7 +3,7 @@
 # CodeMark: SCLLC1-SassyMCP-DIWQZTX2DVLX
 """SassyMCP Memory — Persistent cross-session memory with concept-based organization.
 
-This IS the MadameClaude memory layer, built into SassyMCP. No separate server needed.
+The memory layer is built into SassyMCP. No separate server needed.
 Stores memories in SQLite ($SASSYMCP_HOME/memory.db, default ~/.sassymcp/memory.db) with tags, priorities, and timestamps.
 Survives server restarts. Searchable by concept, tag, project, or free text.
 
@@ -16,8 +16,6 @@ Memory types:
 The AI calls sassy_memory_context on session start to load everything it needs.
 It calls sassy_memory_remember to store what it learns.
 It calls sassy_memory_handoff before ending a session to save continuation state.
-
-This replaces the aspirational madame_* tools from SassyWorks.md with real implementations.
 """
 
 import json

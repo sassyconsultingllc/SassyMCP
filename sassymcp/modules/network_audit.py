@@ -40,9 +40,9 @@ def _register_hooks():
 ### Local-host posture (default starting point)
 1. `sassy_netstat` — what's bound to which port. Filter the output by
    listening sockets, note any 0.0.0.0 binds (LAN-exposed) vs 127.0.0.1.
-2. `sassy_arp` — who's on the local segment right now (devices the host
+2. `sassy_arp_table` — who's on the local segment right now (devices the host
    has talked to recently).
-3. `sassy_wifi_scan` — visible SSIDs + signal strength when on Wi-Fi.
+3. `sassy_wifi_networks` — visible SSIDs + signal strength when on Wi-Fi.
 
 ### Remote target scan
 1. `sassy_port_scan target="<host>" ports="<range>"` — wraps nmap (Pro tier).
@@ -60,8 +60,8 @@ def _register_hooks():
   no extra logging needed.
 
 ### Combine with
-- `sassy_security_audit_certs` for cert-chain inspection on TLS ports you find.
-- `sassy_url_security_headers` for HTTP responses on web ports.
+- `sassy_cert_check` for cert-chain inspection on TLS ports you find.
+- `sassy_url_headers` for HTTP responses on web ports.
 """,
     )
 

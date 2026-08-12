@@ -10,6 +10,36 @@ All notable changes to SassyMCP. Newest first. Versions follow semver:
 for new tier-visible features, PATCH for fixes that don't move buyer-
 facing surfaces.
 
+## [1.14.3] — 2026-08-11 — Agent-guidance accuracy fixes
+
+Every tool name the shipped guidance hands to an AI client now resolves to
+a real tool. Previously six names did not exist, so a model following the
+playbook would emit failing tool calls.
+
+### Fixed
+
+- **Six non-existent tool names corrected** across the shipped skill file,
+  the setup-wizard-generated persona doc, and two runtime hook playbooks:
+  `sassy_github_quick_pr` → `sassy_combo_pr_review`, `sassy_arp` →
+  `sassy_arp_table`, `sassy_reg_autoruns` → `sassy_autorun_entries`,
+  `sassy_wifi_scan` → `sassy_wifi_networks`, `sassy_security_audit_certs`
+  → `sassy_cert_check`, `sassy_url_security_headers` → `sassy_url_headers`.
+- **PR-review guidance pointed at a tool that creates PRs.** `sassy_ghq_pr`
+  opens a pull request; it has no `action="show"` mode. The row now points
+  at `sassy_combo_pr_review`, which is what the `pr-review` prompt uses.
+- **Two false capability claims removed.** `sassy_linux_exec` has no
+  `allow_destructive` parameter (deletes are a hard block with no
+  override), and `sassy_autorun_entries` covers Run/RunOnce only — not
+  Services, Scheduled Tasks, or IFEO as the forensics playbook claimed.
+- **Phantom `madame_*` aliases** no longer advertised; no such tools are
+  registered.
+
+### Changed
+
+- Personal/internal references scrubbed from user-facing surfaces: the
+  `yomama` SSH example trigger phrase, and `MadameClaude` in the `resume`
+  prompt description shown in client slash-command pickers.
+
 ## [1.14.2] — 2026-07-29 — Release-audit follow-ups
 
 Closes remaining distribution-audit items after SelfMod removal and

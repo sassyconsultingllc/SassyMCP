@@ -76,7 +76,7 @@ def register(server):
     @server.prompt(
         name="resume",
         description=(
-            "Pick up where the prior session left off. Loads MadameClaude "
+            "Pick up where the prior session left off. Loads cross-session "
             "memory context AND any cross-platform task-handoff messages, "
             "then executes the next_steps from the handoff immediately."
         ),

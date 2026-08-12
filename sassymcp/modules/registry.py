@@ -53,11 +53,12 @@ Triggered when the user asks about Windows persistence, what's running on
 boot, suspicious autorun entries, or generic forensic investigation.
 
 ### Triage order
-1. **Boot persistence** (highest signal-to-noise) — `sassy_reg_autoruns` returns
-   the union of all known autorun keys (Run, RunOnce, RunOnceEx, Image File
-   Execution Options, Services, Scheduled Tasks shadow). Look for unsigned
+1. **Boot persistence** (highest signal-to-noise) — `sassy_autorun_entries`
+   returns the Run and RunOnce keys under both HKLM and HKCU. Look for unsigned
    binaries, paths under %TEMP% or %APPDATA%, names that mimic legit Windows
-   processes (svhost.exe vs svchost.exe).
+   processes (svhost.exe vs svchost.exe). For Services, Scheduled Tasks, and
+   Image File Execution Options hijacks, follow up with `sassy_reg_read` on the
+   specific hive — they are not covered by this call.
 2. **Specific key inspection** — `sassy_reg_read key_path="HKLM\\Software\\..."`
    for ad-hoc reads. Use forward-slash escaping for nested values.
 3. **Export for offline analysis** — `sassy_reg_export key_path="..." output_file="..."`

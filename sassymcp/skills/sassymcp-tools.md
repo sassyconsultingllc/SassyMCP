@@ -32,18 +32,18 @@ This is the canonical "when to use which tool" guide for SassyMCP. The
 | "type on phone" | `sassy_phone_type` (needs an editable field already focused) |
 | "android shell" / "adb command" | `sassy_adb_shell` — destructive commands (rm, dd) auto-block; pass `allow_destructive=True` after explicit confirmation |
 | "check the audit log" / "what got blocked" | `sassy_audit_search pattern_event="pattern_block"` for the security-interception trail |
-| "review the PR" / "look at PR #N" | `sassy_github_quick_pr action="show" pr=N` then `action="diff"` then `action="comments"`. Or use the `pr-review` MCP prompt. |
-| "remember this for next session" | `sassy_memory_remember` with key prefix `task_<concept>_<project>_state`. The MadameClaude convention: `pattern_<concept>` for cross-project solutions, `decision_<concept>` for architecture decisions, `blocker_<concept>_<project>` for known blockers. |
+| "review the PR" / "look at PR #N" | `sassy_combo_pr_review owner=<owner> repo=<repo> pr=N` — metadata + diff + comments + CI check status in one call. Or use the `pr-review` MCP prompt. |
+| "remember this for next session" | `sassy_memory_remember` with key prefix `task_<concept>_<project>_state`. The key convention: `pattern_<concept>` for cross-project solutions, `decision_<concept>` for architecture decisions, `blocker_<concept>_<project>` for known blockers. |
 | "what was I working on" / session start | `sassy_memory_context` FIRST, then `sassy_crosslink_recv channel="task-handoff" unread_only=True` to pick up cross-client handoffs. Don't ask the user — figure it out. |
 | "hand this off to my [other client]" | `sassy_crosslink_send channel="task-handoff"` with a JSON payload containing `task`, `status`, `next_steps`, `files_touched`, `context_notes` |
 | "build / compile / dev server / wrangler" | `sassy_session_start` (NOT `sassy_shell`) — sessions persist; shell is one-shot. Then `sassy_session_read` in a loop to follow output. |
-| "scan my network" / "what's listening" | `sassy_netstat` + `sassy_arp` for local-host posture; `sassy_port_scan target=<host>` for remote (always confirm with user before scanning third-party) |
-| "what runs on boot" / "autoruns" / "persistence" | `sassy_reg_autoruns` (Windows forensics — covers Run, RunOnce, Services, Scheduled Tasks, IFEO debugger hijacks in one call) |
+| "scan my network" / "what's listening" | `sassy_netstat` + `sassy_arp_table` for local-host posture; `sassy_port_scan target=<host>` for remote (always confirm with user before scanning third-party) |
+| "what runs on boot" / "autoruns" / "persistence" | `sassy_autorun_entries` (cross-platform — Windows Run/RunOnce under HKLM+HKCU, macOS LaunchAgents/LaunchDaemons + login items, Linux enabled systemd units + crontab + XDG autostart) |
 | "USB history" / "connected devices" | `sassy_reg_read key_path="HKLM\\System\\CurrentControlSet\\Enum\\USBSTOR"` |
 | "edit a file in this project" | `sassy_edit_block` for surgical find/replace OR `sassy_edit_multi` for parallel edits across one file. The SassyMCP source tree is auto-protected — edit it in a checkout / PR, not via MCP tools. |
 | "delete X" | NEVER use `sassy_shell rm` — the interceptor moves targets to `_DELETE_/` instead. Use `sassy_safe_delete` if you want explicit staging. |
 | "add a new tool to SassyMCP" | Edit the SassyMCP source checkout and ship a new release. Self-modification tools are removed. |
-| "run a Linux command on yomama" | `sassy_linux_exec` (uses plink to a configured remote host). Destructive commands are blocked unless `allow_destructive=True`. |
+| "run a command on my Linux box" / "ssh into the server" | `sassy_linux_exec` — SSH to the host in `SSH_HOST`/`SSH_USER` (plink on Windows, native ssh on macOS/Linux). Destructive commands are a hard block with no override; SSH in manually to remove files. |
 | "find references to X in the codebase" | `sassy_search_files pattern=<x>` — always faster than `sassy_shell grep`. Returns ranked file list. |
 | "what's the SassyMCP context cost?" | `sassy_context_estimate` — shows tool def tokens as % of 200K window. |
 | "show tool usage stats" | `sassy_tool_usage` or `sassy_observability_tool_stats` (latter includes pruning suggestions) |
@@ -58,7 +58,7 @@ This is the canonical "when to use which tool" guide for SassyMCP. The
 
 4. **Smart loading is real.** SassyMCP loads only the tool groups whose top tools cross score >= 0.5 in the user's `~/.sassymcp/tool_usage.json` history, plus the always-on core. Override with `SASSYMCP_GROUPS=core,android,system` env var, or `SASSYMCP_LOAD_ALL=1` to load every group.
 
-5. **Cross-session memory is the source of truth.** Use `sassy_memory_*` (and the `madame_*` aliases) to persist learning across sessions. The convention is task-concept-based, not project-based — same concept across projects shares patterns automatically.
+5. **Cross-session memory is the source of truth.** Use `sassy_memory_*` to persist learning across sessions. The convention is task-concept-based, not project-based — same concept across projects shares patterns automatically.
 
 ## Discover more
 
