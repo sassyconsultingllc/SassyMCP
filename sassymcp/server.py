@@ -392,6 +392,20 @@ def audit_tool(fn):
 
         # Rate limiting
         group = get_group_for_tool(tool_name)
+
+        # Offline gate. Fires ONLY on a confirmed-offline probe and only for
+        # tools that genuinely need egress — a fast, accurate refusal naming
+        # the local substitute beats a 30s DNS timeout the model then has to
+        # interpret. Never blocks LAN or local tools; SASSYMCP_OFFLINE_GATE=off
+        # disables it entirely. Any failure here falls through to the call.
+        try:
+            from sassymcp import _netstate
+            refusal = _netstate.gate(tool_name, group, kwargs)
+            if refusal is not None:
+                return json.dumps(refusal, indent=2)
+        except Exception:
+            pass
+
         acquired = False
         if _rate_limiter and group:
             try:
@@ -431,14 +445,29 @@ def audit_tool(fn):
             error = str(e)
             if obs:
                 obs.record_call(success=False)
-            # Structured error recovery
-            return json.dumps({
+            # Reactive half of the offline detector: a DNS/refused/unreachable
+            # failure expires the link cache so the NEXT call gets a fresh
+            # verdict instead of a stale "online" for up to 30s. Cheap, and it
+            # means the first casualty of a dropped link is also the last.
+            payload = {
                 "error": error,
                 "tool": tool_name,
                 "retryable": _is_retryable(e),
                 "retry_hint": _get_retry_hint(e),
                 "retry_after_seconds": 5 if _is_retryable(e) else None,
-            })
+            }
+            try:
+                from sassymcp import _netstate
+                _netstate.note_tool_failure(tool_name, e)
+                if _netstate.classify_tool(tool_name, group) == "internet":
+                    alt = _netstate.offline_alternative(tool_name)
+                    if alt:
+                        payload["offline_alternative"] = alt
+                        payload["hint"] = "Call sassy_offline_status if the link is down."
+            except Exception:
+                pass
+            # Structured error recovery
+            return json.dumps(payload)
         finally:
             elapsed_ms = int((time.monotonic() - start) * 1000)
             # Auto-record the calling client as a live peer (throttled to one

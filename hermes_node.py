@@ -14,8 +14,15 @@ Run with the SassyMCP venv interpreter so `import sassymcp` resolves:
     V:\\Projects\\SassyMCP\\.venv\\Scripts\\python.exe V:\\Projects\\SassyMCP\\hermes_node.py
 
 Env: HERMES_MODEL, OLLAMA_URL, JOINT_CHANNEL (default joint), MAX_TURNS (12),
-     POLL_SECONDS (2), HERMES_AUTORUN (0 = propose-only; 1 = auto-run clean cmds).
+     POLL_SECONDS (2), HERMES_AUTORUN (0 = propose-only; 1 = auto-run clean cmds),
+     HERMES_TOOLS (1 = native tool calls over the offline-safe SassyMCP surface),
+     HERMES_TOOL_HOPS (6), SASSYMCP_GROUPS (which groups the tool surface exposes).
 Stdlib + sassymcp only -- no third-party deps.
+
+This is the offline fallback: SassyMCP is a server, it does no inference. When
+the link drops, the cloud model driving it is gone but the tools are fine, so a
+LOCAL model on loopback (Ollama et al) becomes the driver and keeps working
+against the same gated, audited tool functions.
 """
 import asyncio
 import os
@@ -51,6 +58,13 @@ POLL = float(os.environ.get("POLL_SECONDS", "2"))
 # so opt in deliberately, on your own gear.
 AUTORUN = os.environ.get("HERMES_AUTORUN", "0") == "1"
 MEM_KEY = "task_jointsession_ops_state"
+# Native tool calling against the offline-safe SassyMCP surface. When the link
+# is down this is the whole point: the local model drives real tools (files,
+# editor, sessions, memory, audit) instead of guessing shell one-liners. Set
+# HERMES_TOOLS=0 to fall back to the ```run fence protocol alone, which is
+# what a model with no tool-call support needs.
+USE_TOOLS = os.environ.get("HERMES_TOOLS", "1") == "1"
+MAX_TOOL_HOPS = int(os.environ.get("HERMES_TOOL_HOPS", "6"))
 
 # Hermes asks to run a command by emitting a fenced block:
 #   ```run            (powershell, default)
@@ -141,11 +155,25 @@ def build_system(mem):
             "executes. Propose clearly; do not assume execution.\n"
         )
 
+    n_tools = len(tool_specs()) if USE_TOOLS else 0
+    if n_tools:
+        tool_line = (
+            f"- You have {n_tools} SassyMCP tools available as native function calls: files, "
+            "editor, persistent sessions, memory, persona, audit, process and system "
+            "inspection. Call them directly. Tools that need internet are NOT in your list "
+            "because there is no egress right now — do not invent them.\n"
+        )
+    else:
+        tool_line = ""
+
     return (
         "You are Hermes, a local peer in a joined session with Claude (the lead) over "
         "the SassyMCP crosslink. You are talking to SaS (Shane Smith), a senior engineer.\n"
+        "If Claude is absent, the link is down and you are the only model running — "
+        "carry the task yourself from the handoff in memory.\n"
         "Protocol:\n"
         f"- You and Claude alternate on channel '{CHANNEL}'. Tag every reply: 'turn=N from=hermes'.\n"
+        + tool_line +
         "- To run a shell command, emit a fenced block:\n"
         "    ```run\n    <powershell command>\n    ```\n"
         "  Use ```run:cmd or ```run:wsl for other shells. One command per block.\n"
@@ -157,15 +185,32 @@ def build_system(mem):
     )
 
 
-def hermes_reply(system, history, incoming):
-    messages = [{"role": "system", "content": system}]
-    for h in history[-10:]:
-        role = "assistant" if h["session_id"] == SELF_ID else "user"
-        messages.append({"role": role, "content": h["payload"]})
-    messages.append({"role": "user", "content": incoming})
-    body = json.dumps(
-        {"model": MODEL, "messages": messages, "stream": False, "temperature": 0.7}
-    ).encode("utf-8")
+_TOOL_SPECS = None
+
+
+def tool_specs():
+    """OpenAI-compatible specs for the offline-safe SassyMCP surface (cached)."""
+    global _TOOL_SPECS
+    if _TOOL_SPECS is None:
+        try:
+            from sassymcp.modules.offline import openai_tool_specs
+            _TOOL_SPECS = openai_tool_specs()
+        except Exception as e:
+            print(f"[hermes-node] tool surface unavailable ({e}); fence protocol only")
+            _TOOL_SPECS = []
+    return _TOOL_SPECS
+
+
+def call_tool(name, arguments):
+    from sassymcp.modules.offline import dispatch
+    return asyncio.run(dispatch(name, arguments))
+
+
+def _post_chat(messages, tools=None):
+    payload = {"model": MODEL, "messages": messages, "stream": False, "temperature": 0.7}
+    if tools:
+        payload["tools"] = tools
+    body = json.dumps(payload).encode("utf-8")
     headers = {"Content-Type": "application/json"}
     key = os.environ.get("LLM_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
     if key:  # hosted OpenAI-compatible endpoints (OpenRouter, etc.) need a bearer token
@@ -173,14 +218,68 @@ def hermes_reply(system, history, incoming):
     req = urllib.request.Request(OLLAMA_URL, data=body, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=600) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+            return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace")[:300]
         raise RuntimeError(
             f"Ollama HTTP {e.code} at {OLLAMA_URL}: {detail} | model={MODEL!r} "
             f"-- check `ollama list` / `ollama pull {MODEL}`, or set HERMES_MODEL to a pulled tag"
         )
-    return data["choices"][0]["message"]["content"].strip()
+
+
+def hermes_reply(system, history, incoming):
+    messages = [{"role": "system", "content": system}]
+    for h in history[-10:]:
+        role = "assistant" if h["session_id"] == SELF_ID else "user"
+        messages.append({"role": role, "content": h["payload"]})
+    messages.append({"role": "user", "content": incoming})
+
+    tools = tool_specs() if USE_TOOLS else []
+    transcript = []
+
+    for hop in range(MAX_TOOL_HOPS + 1):
+        try:
+            data = _post_chat(messages, tools if (tools and hop < MAX_TOOL_HOPS) else None)
+        except RuntimeError as e:
+            # A backend that rejects the `tools` field (older llama.cpp builds,
+            # some GGUF chat templates) fails on the FIRST hop only — drop
+            # tools and retry once rather than losing the turn entirely.
+            if tools and hop == 0:
+                print(f"[hermes-node] backend rejected tools ({e}); retrying without")
+                tools = []
+                data = _post_chat(messages, None)
+            else:
+                raise
+
+        msg = data["choices"][0]["message"]
+        calls = msg.get("tool_calls") or []
+        if not calls:
+            content = (msg.get("content") or "").strip()
+            if transcript:
+                content += "\n\n--- tool calls ---\n" + "\n".join(transcript)
+            return content
+
+        messages.append(msg)
+        for call in calls:
+            fn = call.get("function", {})
+            name = fn.get("name", "")
+            raw = fn.get("arguments") or "{}"
+            try:
+                args = json.loads(raw) if isinstance(raw, str) else dict(raw)
+            except json.JSONDecodeError:
+                args = {}
+            print(f"[hermes-node] tool: {name}({json.dumps(args)[:160]})", flush=True)
+            audit("hermes_node_tool", "tool_call", f"{name} {json.dumps(args)[:200]}", {"hop": hop})
+            out = call_tool(name, args)
+            transcript.append(f"[{name}] {out[:800]}")
+            messages.append({
+                "role": "tool",
+                "tool_call_id": call.get("id", name),
+                "name": name,
+                "content": out[:16000],
+            })
+
+    return "(hermes: tool hop cap reached)\n" + "\n".join(transcript)
 
 
 def process_commands(text):
@@ -228,6 +327,8 @@ def preflight():
             print(f"[hermes-node] WARNING: {MODEL!r} not pulled -- run `ollama pull {MODEL}` or set HERMES_MODEL to one above")
     except Exception as e:
         print(f"[hermes-node] WARNING: Ollama unreachable at {base} ({e}); is `ollama serve` up?")
+    if USE_TOOLS:
+        print(f"[hermes-node] offline tool surface: {len(tool_specs())} SassyMCP tools")
 
 
 def main():
