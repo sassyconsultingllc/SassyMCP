@@ -9,4 +9,4 @@ and every banner / log line / user-agent in the codebase imports
 __version__ from here. To bump the version, edit ONLY this line.
 """
 
-__version__ = "1.14.3"
+__version__ = "1.14.4"

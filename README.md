@@ -10,7 +10,7 @@
 
 **274 tools | 36 modules | 18 tool groups | Replaces 75+ MCP servers | 34MB standalone exe**
 
-*Last updated: 2026-07-15 — v1.12.0 | one-time perpetual licensing (free / pro / forensics)*
+*Last updated: 2026-08-14 — v1.14.4 | all tools unlocked; optional supporter license*
 
 Compatible with Claude Desktop, Grok Desktop, Cursor, Windsurf, and any MCP client.
 

@@ -10,6 +10,30 @@ All notable changes to SassyMCP. Newest first. Versions follow semver:
 for new tier-visible features, PATCH for fixes that don't move buyer-
 facing surfaces.
 
+## [1.14.4] — 2026-08-14 — Offline fallback + dependency security
+
+When the link drops, the server now probes honestly, refuses internet-only
+tools with a local substitute, and can hand the session to a loopback model
+(Hermes / Ollama) against the same gated tool surface.
+
+### Added
+
+- **Offline degradation** — `sassy_offline_status`, `sassy_offline_commands`,
+  `sassy_offline_handoff`, plus a fail-open netstate gate in `audit_tool`.
+- **Hermes native tool calls** against the offline-safe SassyMCP surface
+  (`HERMES_TOOLS=1`).
+
+### Fixed
+
+- **Dependabot (30 alerts)** — `pillow` 12.3.0, `cryptography` 50.0.0,
+  `mcp` 1.29.0; vscode transitives pinned (`brace-expansion` 5.0.9,
+  `fast-uri` 3.1.5, `js-yaml` 4.3.1, `linkify-it` 5.0.2, `nanoid` 3.3.18,
+  `postcss` 8.5.23, `undici` 7.29.0).
+
+### Changed
+
+- README header version/licensing line matches the all-or-nothing 1.13+ model.
+
 ## [1.14.3] — 2026-08-11 — Agent-guidance accuracy fixes
 
 Every tool name the shipped guidance hands to an AI client now resolves to
