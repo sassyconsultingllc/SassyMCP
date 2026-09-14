@@ -7,7 +7,7 @@ Live GitHub calls are not made here; the smoke test in development verifies
 the network path manually.
 """
 
-from sassymcp.modules.updater import _normalize, Updater
+from sassymcp.modules.updater import Updater, _normalize
 
 
 def test_version_compare_basic_ordering():

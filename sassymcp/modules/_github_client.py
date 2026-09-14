@@ -10,11 +10,9 @@ Requires GITHUB_TOKEN env var or GITHUB_PERSONAL_ACCESS_TOKEN.
 """
 
 import asyncio
-import base64
-import json
 import logging
 import os
-from typing import Any, Optional
+from typing import Any
 
 from sassymcp import __version__
 
@@ -52,7 +50,7 @@ class GitHubClient:
             "X-GitHub-Api-Version": "2022-11-28",
             "User-Agent": f"SassyMCP/{__version__}",
         }
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -69,7 +67,7 @@ class GitHubClient:
         path: str,
         *,
         json_body: Any = None,
-        params: Optional[dict] = None,
+        params: dict | None = None,
         retries: int = 3,
     ) -> httpx.Response:
         """Make an authenticated GitHub API request with retry + rate-limit handling."""
@@ -141,7 +139,7 @@ class GitHubClient:
 
     # -- Helpers used by tools --
 
-    async def get_file_sha(self, owner: str, repo: str, path: str, branch: str = "") -> Optional[str]:
+    async def get_file_sha(self, owner: str, repo: str, path: str, branch: str = "") -> str | None:
         """Get the real blob SHA for a file (not ETag). Returns None if file doesn't exist."""
         params = {"ref": branch} if branch else {}
         resp = await self.get(f"repos/{owner}/{repo}/contents/{path}", params=params)
@@ -211,7 +209,7 @@ class GitHubClient:
 
 
 # Module-level singleton
-_client: Optional[GitHubClient] = None
+_client: GitHubClient | None = None
 
 
 def get_client() -> GitHubClient:

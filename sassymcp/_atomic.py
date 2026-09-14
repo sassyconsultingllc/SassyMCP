@@ -33,7 +33,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-
 # Windows-only retry budget. On POSIX os.replace is genuinely atomic w.r.t.
 # concurrent writers and never raises EACCES; on Windows it can race against
 # any process that briefly opens dst (AV scanners, file indexers, another

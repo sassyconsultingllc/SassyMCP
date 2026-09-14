@@ -29,9 +29,8 @@ import json
 import os
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 from sassymcp._atomic import atomic_write_json
 
@@ -211,11 +210,11 @@ def _ensure_backup(config_path: Path, *, dry_run: bool) -> Path | None:
 def _load_existing_config(config_path: Path) -> dict:
     if not config_path.exists():
         return {}
-    try:
-        return json.loads(config_path.read_text(encoding="utf-8") or "{}")
-    except json.JSONDecodeError:
-        # Refuse to clobber a corrupt config; surface to the caller.
-        raise
+    # A JSONDecodeError propagates deliberately: refuse to clobber a corrupt
+    # config, surface it to the caller. (This was an explicit
+    # `except json.JSONDecodeError: raise`, which is what bare propagation
+    # already does — the intent now lives in this comment instead.)
+    return json.loads(config_path.read_text(encoding="utf-8") or "{}")
 
 
 def patch_client(client: ClientInfo, exe_path: Path, *, dry_run: bool = False) -> PatchResult:
@@ -516,7 +515,9 @@ def main(argv: list[str] | None = None) -> int:
         clients = [c for c in clients if c.short_name != "claude"]
 
     results: list[PatchResult] = []
-    op = unpatch_client if args.uninstall else patch_client
+    # (An `op = unpatch_client if args.uninstall else patch_client` alias stood
+    # here but was never called — the loop below branches and calls each
+    # directly, which it has to: the two take different arguments.)
     for c in clients:
         if args.uninstall:
             results.append(unpatch_client(c, dry_run=args.dry_run))

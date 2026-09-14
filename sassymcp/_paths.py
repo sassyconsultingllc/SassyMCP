@@ -61,16 +61,16 @@ SUPERVISOR_CMD: Path = HOME / "supervisor.cmd"
 # here, to keep this file from sprawling.
 
 __all__ = [
-    "HOME",
-    "PERSONA_FILE",
-    "CONFIG_FILE",
-    "TOKENS_FILE",
-    "LICENSE_FILE",
     "AUDIT_LOG",
+    "CONFIG_FILE",
     "CROSSLINK_DB",
+    "HOME",
+    "LICENSE_FILE",
+    "PERSONA_FILE",
     "SSL_CERT",
     "SSL_KEY",
+    "SUPERVISOR_CMD",
     "SUPERVISOR_PIDFILE",
     "SUPERVISOR_REGISTRY",
-    "SUPERVISOR_CMD",
+    "TOKENS_FILE",
 ]

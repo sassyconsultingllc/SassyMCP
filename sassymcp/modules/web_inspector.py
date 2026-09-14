@@ -10,12 +10,15 @@ Dependencies: httpx (for async HTTP), playwright (optional for screenshots).
 Falls back to urllib if httpx unavailable, Chrome CLI if playwright unavailable.
 """
 
-import json
+import asyncio
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Any
 
-from sassymcp.modules._security import validate_url as _validate_url, validate_path as _validate_path, is_protected_path as _is_protected_path
+from sassymcp.modules._security import is_protected_path as _is_protected_path
+from sassymcp.modules._security import validate_path as _validate_path
+from sassymcp.modules._security import validate_url as _validate_url
 
 
 def _register_hooks():
@@ -102,7 +105,7 @@ except Exception:
 def register(server):
 
     @server.tool()
-    async def sassy_url_headers(url: str, follow_redirects: bool = True) -> str:
+    async def sassy_url_headers(url: str, follow_redirects: bool = True) -> dict[str, Any]:
         """Fetch and analyze HTTP security headers for a URL.
 
         Checks HSTS, CSP, X-Frame-Options, X-Content-Type-Options,
@@ -111,7 +114,7 @@ def register(server):
         """
         ok, err = _validate_url(url)
         if not ok:
-            return json.dumps({"error": err})
+            return {"error": err}
         try:
             import httpx
         except ImportError:
@@ -119,11 +122,13 @@ def register(server):
             try:
                 req = urllib.request.Request(url, method="HEAD")
                 req.add_header("User-Agent", "SassyMCP-WebInspector/1.0")
-                resp = urllib.request.urlopen(req, timeout=10)
+                # urllib blocks; this tool is async, so inline it would stall the
+                # event loop (and every other session) for up to the timeout.
+                resp = await asyncio.to_thread(urllib.request.urlopen, req, timeout=10)
                 headers = dict(resp.headers)
                 status = resp.status
             except Exception as e:
-                return json.dumps({"error": str(e)})
+                return {"error": str(e)}
         else:
             try:
                 async with httpx.AsyncClient(follow_redirects=follow_redirects, timeout=15) as client:
@@ -131,7 +136,7 @@ def register(server):
                     headers = dict(resp.headers)
                     status = resp.status_code
             except Exception as e:
-                return json.dumps({"error": str(e)})
+                return {"error": str(e)}
 
         checks = {
             "strict-transport-security": {"present": False, "header": "HSTS", "severity": "high"},
@@ -177,26 +182,27 @@ def register(server):
         if leaks:
             recommendations.append(f"Remove server info headers: {', '.join(leaks.keys())}")
 
-        return json.dumps({
+        return {
             "url": url, "status": status, "grade": grade, "score": f"{present}/{total}",
             "headers": {c["header"]: {"present": c["present"], "value": c.get("value"), "severity": c["severity"]} for c in checks.values()},
             "server_leaks": leaks or None, "recommendations": recommendations,
-        }, indent=2)
+        }
 
     @server.tool()
-    async def sassy_url_screenshot(url: str, width: int = 1280, height: int = 720, full_page: bool = False, save_path: str = "") -> str:
+    def sassy_url_screenshot(url: str, width: int = 1280, height: int = 720, full_page: bool = False, save_path: str = "") -> dict[str, Any]:
         """Screenshot a URL via headless Chrome or Playwright. Returns base64 JPEG."""
-        import base64, io
+        import base64
+        import io
         ok_url, err_url = _validate_url(url)
         if not ok_url:
-            return json.dumps({"error": err_url})
+            return {"error": err_url}
         if save_path:
             ok_p, err_p = _validate_path(save_path)
             if not ok_p:
-                return json.dumps({"error": err_p})
+                return {"error": err_p}
             prot, reason = _is_protected_path(Path(save_path).absolute())
             if prot:
-                return json.dumps({"error": f"Refused: save_path is protected ({reason})"})
+                return {"error": f"Refused: save_path is protected ({reason})"}
         save = save_path or str(Path(tempfile.gettempdir()) / "sassymcp_url_screenshot.png")
 
         try:
@@ -212,7 +218,7 @@ def register(server):
             buf = io.BytesIO()
             img.convert("RGB").save(buf, format="JPEG", quality=75, optimize=True)
             b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-            return json.dumps({"image_base64": b64, "format": "jpeg", "size": list(img.size), "bytes": len(buf.getvalue()), "saved_to": save, "method": "playwright"})
+            return {"image_base64": b64, "format": "jpeg", "size": list(img.size), "bytes": len(buf.getvalue()), "saved_to": save, "method": "playwright"}
         except ImportError:
             import sys as _sys
             if getattr(_sys, "frozen", False):
@@ -227,31 +233,35 @@ def register(server):
             chrome = None
             for cp in chrome_paths:
                 try:
-                    subprocess.run([cp, "--version"], capture_output=True, timeout=5)
+                    # check=False: this is a probe — a non-zero exit just means
+                    # "not this binary", handled by the except/continue below.
+                    subprocess.run([cp, "--version"], capture_output=True, timeout=5, check=False)
                     chrome = cp
                     break
                 except Exception: continue
             if not chrome:
-                return json.dumps({"error": f"No screenshot backend. Playwright: {_pw_err}. Chrome/Chromium: not found."})
+                return {"error": f"No screenshot backend. Playwright: {_pw_err}. Chrome/Chromium: not found."}
             cmd = [chrome, "--headless", "--disable-gpu", "--no-sandbox", f"--window-size={width},{height}", f"--screenshot={save}", url]
-            subprocess.run(cmd, capture_output=True, timeout=30)
+            # check=False: headless Chrome can exit non-zero and still have
+            # written the screenshot; success is decided by the file existing.
+            subprocess.run(cmd, capture_output=True, timeout=30, check=False)
             if Path(save).exists():
                 from PIL import Image
                 img = Image.open(save)
                 buf = io.BytesIO()
                 img.convert("RGB").save(buf, format="JPEG", quality=75, optimize=True)
                 b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-                return json.dumps({"image_base64": b64, "format": "jpeg", "size": list(img.size), "bytes": len(buf.getvalue()), "saved_to": save, "method": "chrome-headless"})
-            return json.dumps({"error": "Chrome screenshot failed"})
+                return {"image_base64": b64, "format": "jpeg", "size": list(img.size), "bytes": len(buf.getvalue()), "saved_to": save, "method": "chrome-headless"}
+            return {"error": "Chrome screenshot failed"}
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return {"error": str(e)}
 
     @server.tool()
-    async def sassy_url_tech_stack(url: str) -> str:
+    async def sassy_url_tech_stack(url: str) -> dict[str, Any]:
         """Detect technology stack from HTTP headers and HTML (CDN, CMS, framework, analytics)."""
         ok, err = _validate_url(url)
         if not ok:
-            return json.dumps({"error": err})
+            return {"error": err}
         try:
             import httpx
             async with httpx.AsyncClient(follow_redirects=True, timeout=15) as client:
@@ -261,9 +271,15 @@ def register(server):
         except ImportError:
             import urllib.request
             req = urllib.request.Request(url); req.add_header("User-Agent", "SassyMCP-WebInspector/1.0")
-            resp = urllib.request.urlopen(req, timeout=15)
-            headers = {k.lower(): v for k, v in resp.headers.items()}
-            body = resp.read(50000).decode("utf-8", errors="replace")
+
+            def _blocking_fetch() -> tuple[dict, str]:
+                # Both the connect and the body read block - do them together on
+                # the worker thread rather than hopping back to the loop between.
+                with urllib.request.urlopen(req, timeout=15) as r:
+                    return ({k.lower(): v for k, v in r.headers.items()},
+                            r.read(50000).decode("utf-8", errors="replace"))
+
+            headers, body = await asyncio.to_thread(_blocking_fetch)
 
         d = {}
         if "server" in headers: d["server"] = headers["server"]
@@ -283,16 +299,16 @@ def register(server):
         if analytics: d["analytics"] = analytics
         if "x-powered-by" in headers: d["x_powered_by"] = headers["x-powered-by"]
         if "strict-transport-security" in headers: d["hsts"] = True
-        return json.dumps({"url": url, "detected": d}, indent=2)
+        return {"url": url, "detected": d}
 
     @server.tool()
-    async def sassy_url_links(url: str, external_only: bool = False) -> str:
+    async def sassy_url_links(url: str, external_only: bool = False) -> dict[str, Any]:
         """Extract all links from a URL. Useful for site auditing and SEO."""
-        from urllib.parse import urlparse, urljoin
         import re
+        from urllib.parse import urljoin, urlparse
         ok, err = _validate_url(url)
         if not ok:
-            return json.dumps({"error": err})
+            return {"error": err}
         try:
             import httpx
             async with httpx.AsyncClient(follow_redirects=True, timeout=15) as client:
@@ -301,7 +317,12 @@ def register(server):
         except ImportError:
             import urllib.request
             req = urllib.request.Request(url); req.add_header("User-Agent", "SassyMCP-WebInspector/1.0")
-            body = urllib.request.urlopen(req, timeout=15).read().decode("utf-8", errors="replace")
+
+            def _blocking_body() -> str:
+                with urllib.request.urlopen(req, timeout=15) as r:
+                    return r.read().decode("utf-8", errors="replace")
+
+            body = await asyncio.to_thread(_blocking_body)
 
         matches = re.findall(r'href=["\']([^"\']+)["\']', body, re.IGNORECASE)
         base_domain = urlparse(url).netloc.lower()
@@ -318,15 +339,16 @@ def register(server):
             else: links["external"].append(full)
         result = {"url": url, "total_links": len(links["internal"]) + len(links["external"]), "internal": len(links["internal"]), "external": len(links["external"]), "resources": len(links["resources"])}
         result["links"] = links["external"] if external_only else links
-        return json.dumps(result, indent=2)
+        return result
 
     @server.tool()
-    async def sassy_url_performance(url: str) -> str:
+    async def sassy_url_performance(url: str) -> dict[str, Any]:
         """Quick performance check: response time, page size, compression, caching."""
-        import time as t, re
+        import re
+        import time as t
         ok, err = _validate_url(url)
         if not ok:
-            return json.dumps({"error": err})
+            return {"error": err}
         try:
             import httpx
             async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
@@ -338,12 +360,18 @@ def register(server):
         except ImportError:
             import urllib.request
             req = urllib.request.Request(url); req.add_header("User-Agent", "SassyMCP-WebInspector/1.0")
-            start = t.monotonic()
-            resp = urllib.request.urlopen(req, timeout=30)
-            elapsed = t.monotonic() - start
-            headers = {k.lower(): v for k, v in resp.headers.items()}
-            body = resp.read()
-        return json.dumps({
+
+            def _blocking_timed() -> tuple[float, dict, bytes]:
+                # Time the fetch inside the thread so the measurement covers the
+                # request only, not the scheduling delay of the thread hop.
+                s = t.monotonic()
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    hdrs = {k.lower(): v for k, v in r.headers.items()}
+                    payload = r.read()
+                return t.monotonic() - s, hdrs, payload
+
+            elapsed, headers, body = await asyncio.to_thread(_blocking_timed)
+        return {
             "url": url, "response_time_ms": round(elapsed * 1000),
             "page_size_bytes": len(body), "page_size_kb": round(len(body) / 1024, 1),
             "compressed": "content-encoding" in headers,
@@ -351,4 +379,4 @@ def register(server):
             "cache_control": headers.get("cache-control", "none"),
             "external_resources": len(re.findall(r'(?:src|href)=["\']https?://', body.decode("utf-8", errors="replace"))),
             "content_type": headers.get("content-type", "unknown"),
-        }, indent=2)
+        }

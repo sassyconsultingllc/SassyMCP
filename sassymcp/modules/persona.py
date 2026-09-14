@@ -10,7 +10,7 @@ standard technical operations. Full observability across all subsystems.
 Compatible with any MCP-connected AI client.
 """
 
-import json
+from typing import Any
 
 STYLE = """
 ## Operating Mode: Expert
@@ -357,51 +357,51 @@ def register(server):
     """Register persona/workflow tools."""
 
     @server.tool()
-    async def sassy_persona_style() -> str:
+    def sassy_persona_style() -> str:
         """Get expert-mode operating parameters. Directives for execution priority,
         communication style, autonomy level, and precision standards."""
         return STYLE.strip()
 
     @server.tool()
-    async def sassy_persona_decisions() -> str:
+    def sassy_persona_decisions() -> str:
         """Get the decision framework. Defines when to execute immediately vs
         state approach vs confirm vs hard-stop."""
         return DECISIONS.strip()
 
     @server.tool()
-    async def sassy_persona_practices() -> str:
+    def sassy_persona_practices() -> str:
         """Get engineering standards. Security defaults, code quality rules,
         architecture patterns, platform-specific guidelines, MCP tool patterns."""
         return PRACTICES.strip()
 
     @server.tool()
-    async def sassy_persona_observability() -> str:
+    def sassy_persona_observability() -> str:
         """Get the cross-system observability guide. What introspection tools
         are available, what they return, and the recommended first-call sequence."""
         return OBSERVABILITY.strip()
 
     @server.tool()
-    async def sassy_persona_context() -> str:
+    def sassy_persona_context() -> str:
         """Get current user context from ~/.sassymcp/persona.md.
         Returns user's role, systems, projects, and preferences."""
         return USER_CONTEXT.strip()
 
     @server.tool()
-    async def sassy_persona_capabilities() -> str:
+    def sassy_persona_capabilities() -> str:
         """Get the SassyMCP capabilities guide. How to use dynamic vision,
         phone interaction, pause/resume, sensitive context detection, and setup wizard.
         This is the instruction manual for SassyMCP's advanced features."""
         return CAPABILITIES.strip()
 
     @server.tool()
-    async def sassy_persona_full() -> str:
+    def sassy_persona_full() -> dict[str, Any]:
         """Load the complete operating bundle: style + decisions + practices +
         observability + capabilities + user context. Call this on first connection."""
-        return json.dumps({
+        return {
             "style": STYLE.strip(),
             "decisions": DECISIONS.strip(),
             "practices": PRACTICES.strip(),
             "observability": OBSERVABILITY.strip(),
             "capabilities": CAPABILITIES.strip(),
             "context": USER_CONTEXT.strip(),
-        }, indent=2)
+        }

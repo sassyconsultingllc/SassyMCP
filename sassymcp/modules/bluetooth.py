@@ -29,8 +29,8 @@ def register(server):
         """List paired Bluetooth devices."""
         argv = _platform.pick(
             windows=["powershell.exe", "-NoProfile", "-Command",
-                     "Get-PnpDevice -Class Bluetooth | Where { $_.Status -eq 'OK' } "
-                     "| Select FriendlyName,DeviceID,Status | FT -Auto"],
+                     ("Get-PnpDevice -Class Bluetooth | Where { $_.Status -eq 'OK' } "
+                     "| Select FriendlyName,DeviceID,Status | FT -Auto")],
             macos=(["blueutil", "--paired"] if _platform.which("blueutil")
                    else ["system_profiler", "SPBluetoothDataType"]),
             linux=["bluetoothctl", "paired-devices"],
@@ -43,8 +43,8 @@ def register(server):
         """List all Bluetooth devices."""
         argv = _platform.pick(
             windows=["powershell.exe", "-NoProfile", "-Command",
-                     "Get-PnpDevice -Class Bluetooth "
-                     "| Select FriendlyName,DeviceID,Status,InstanceId | FT -Auto"],
+                     ("Get-PnpDevice -Class Bluetooth "
+                     "| Select FriendlyName,DeviceID,Status,InstanceId | FT -Auto")],
             macos=(["blueutil", "--inquiry"] if _platform.which("blueutil")
                    else ["system_profiler", "SPBluetoothDataType"]),
             linux=["bluetoothctl", "devices"],

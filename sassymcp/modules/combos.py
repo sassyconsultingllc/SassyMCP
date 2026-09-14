@@ -112,7 +112,7 @@ def register(server):
           }
         """
         try:
-            from sassymcp.modules._github_client import get_client, GitHubAPIError
+            from sassymcp.modules._github_client import GitHubAPIError, get_client
         except ImportError as e:
             return _err(f"github client unavailable: {e}")
 
@@ -134,16 +134,27 @@ def register(server):
             except GitHubAPIError as e:
                 return {"_fetch_error": str(e)}
 
-        # Run the four fetches concurrently
-        pr_data, diff_text, comments, checks = await asyncio.gather(
-            _fetch(f"repos/{owner}/{repo}/pulls/{pr}"),
+        # The check-runs URL needs the head SHA, which only the PR fetch can
+        # supply, so the four calls cannot all go in one gather: the original
+        # code read `pr_data` inside the very assignment that binds it, which
+        # raised UnboundLocalError on every invocation. Resolve the PR first,
+        # then fan out the three calls that depend on nothing but its SHA.
+        pr_data = await _fetch(f"repos/{owner}/{repo}/pulls/{pr}")
+
+        head_sha = ""
+        if isinstance(pr_data, dict):
+            head_sha = (pr_data.get("head") or {}).get("sha") or ""
+
+        checks_path = (
+            f"repos/{owner}/{repo}/commits/{head_sha}/check-runs"
+            if head_sha
+            else f"repos/{owner}/{repo}/pulls/{pr}/commits"
+        )
+
+        diff_text, comments, checks = await asyncio.gather(
             _fetch(f"repos/{owner}/{repo}/pulls/{pr}", raw=True),
             _fetch(f"repos/{owner}/{repo}/issues/{pr}/comments", params={"per_page": 20}),
-            _fetch(
-                f"repos/{owner}/{repo}/commits/"
-                f"{pr_data.get('head', {}).get('sha', 'HEAD') if isinstance(pr_data, dict) else 'HEAD'}/check-runs"
-            ) if isinstance(pr_data, dict) and pr_data.get("head", {}).get("sha")
-            else _fetch(f"repos/{owner}/{repo}/pulls/{pr}/commits"),
+            _fetch(checks_path),
             return_exceptions=False,
         )
 
@@ -325,7 +336,13 @@ def register(server):
         out_matches = []
         for file_path in top_files:
             try:
-                content = Path(file_path).read_text(encoding="utf-8", errors="replace")
+                # Blocking disk read, once per matched file, inside an async
+                # tool. Left inline it stalls the event loop for the whole
+                # fan-out; a handful of large source files is enough to be felt
+                # by every other session.
+                content = await asyncio.to_thread(
+                    Path(file_path).read_text, encoding="utf-8", errors="replace"
+                )
             except OSError as e:
                 out_matches.append({
                     "path": file_path,

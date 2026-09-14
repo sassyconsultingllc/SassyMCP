@@ -23,7 +23,6 @@ import os
 import secrets
 import threading
 import time
-from typing import Optional
 
 # token -> {command, shell, cwd, tier, pattern, phrase_required, expires}
 _PENDING: dict[str, dict] = {}
@@ -57,9 +56,9 @@ def make_token(
     shell: str,
     tier: str,
     pattern: str,
-    phrase_required: Optional[str] = None,
+    phrase_required: str | None = None,
     timeout_seconds: int = 30,
-    cwd: Optional[str] = None,
+    cwd: str | None = None,
     ttl_seconds: int = _DEFAULT_TTL,
 ) -> tuple[str, dict]:
     """Issue a fresh confirm token. Returns (token, entry_dict)."""
@@ -87,8 +86,8 @@ def make_token(
 def consume_token(
     token: str,
     confirm_phrase: str = "",
-    cwd: Optional[str] = None,
-) -> tuple[bool, Optional[dict], Optional[str]]:
+    cwd: str | None = None,
+) -> tuple[bool, dict | None, str | None]:
     """Single-use redemption. Returns (ok, entry, error_message).
 
     Validates:

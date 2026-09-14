@@ -25,7 +25,7 @@ async def _safe_wait(proc, timeout=10):
     """Wait for process with timeout; kill on timeout."""
     try:
         return await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         try:
             proc.kill()
         except Exception:
@@ -38,7 +38,7 @@ async def _safe_wait_stdin(proc, data, timeout=10):
     try:
         return await asyncio.wait_for(
             proc.communicate(input=data), timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         try:
             proc.kill()
         except Exception:
@@ -66,7 +66,7 @@ def register(server):
         try:
             stdout, _ = await _safe_wait(proc)
             return stdout.decode("utf-8", errors="replace").strip()
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return "Timed out after 10s"
 
     @server.tool()
@@ -79,7 +79,7 @@ def register(server):
         try:
             await _safe_wait_stdin(proc, text.encode("utf-8"))
             return f"Clipboard set ({len(text)} chars)"
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return "Timed out after 10s"
 
     @server.tool()
@@ -94,7 +94,7 @@ def register(server):
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         try:
             stdout, _ = await _safe_wait(proc)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return "Timed out reading clipboard"
         text = stdout.decode("utf-8", errors="replace").strip()
         if not text:
@@ -111,7 +111,7 @@ def register(server):
             *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         try:
             await _safe_wait(proc2)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return "Timed out sending to Android"
         return f"Sent to Android: {text[:50]}..."
 
@@ -128,5 +128,5 @@ def register(server):
         try:
             stdout, _ = await _safe_wait(proc)
             return stdout.decode("utf-8", errors="replace").strip()[:200]
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return "Timed out after 10s"

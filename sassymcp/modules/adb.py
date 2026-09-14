@@ -12,17 +12,17 @@ Security:
 
 import asyncio
 import ipaddress
-import shutil
 import os
+import shutil
 
 from sassymcp import _platform
+from sassymcp.modules import audit as _audit
 from sassymcp.modules._security import (
     detect_delete_intent,
     validate_adb_device,
     validate_adb_package,
     validate_command,
 )
-from sassymcp.modules import audit as _audit
 
 
 def _adb_path() -> str:
@@ -43,7 +43,7 @@ async def _run_adb(*args, timeout=30):
         err = stderr.decode("utf-8", errors="replace").strip()
         if proc.returncode != 0 and err: return f"Error (exit {proc.returncode}): {err}"
         return out if out else err
-    except asyncio.TimeoutError:
+    except TimeoutError:
         try:
             proc.kill()
         except Exception:
@@ -141,7 +141,7 @@ def register(server):
             return f"Error: {e}"
         args += ["logcat", "-d", "-t", str(min(max(lines, 1), 10000))]
         if filter_str:
-            ok, err = validate_adb_package(filter_str)  # same safe charset
+            ok, _err = validate_adb_package(filter_str)  # same safe charset
             if not ok:
                 return f"Error: invalid filter: {filter_str}"
             args.append(filter_str)

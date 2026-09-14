@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-Projects-Z2FQN6UMBAMV
 """Overlay <-> SassyMCP bridge: coordination reads + action side-effects.
 
 Reads the coordination board directly (same process), and runs the second head

@@ -1,3 +1,8 @@
+<!--
+   Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+   Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+   CodeMark: SCLLC1-Projects-LAM7SF3HKCIV
+-->
 # SassyMCP Positioning & Messaging
 
 The source of truth for every piece of launch copy. Pull lines from here; don't reinvent per channel.

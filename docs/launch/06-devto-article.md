@@ -1,3 +1,8 @@
+<!--
+   Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+   Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+   CodeMark: SCLLC1-Projects-ZB345X46AOIC
+-->
 # Article: "I replaced 75 MCP servers with one exe"
 
 Evergreen, SEO-compounding. Publish on dev.to (tags: #ai #mcp #devtools #productivity), mirror to

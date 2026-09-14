@@ -23,6 +23,7 @@ import logging
 import sqlite3
 import time
 from contextlib import closing
+from typing import TypedDict
 
 from sassymcp._db import open_db
 from sassymcp._paths import HOME as _SASSY_HOME
@@ -72,7 +73,7 @@ class MemoryStore:
             )""")
             conn.commit()
 
-    def remember(self, key: str, value: str, tags: list[str] = None,
+    def remember(self, key: str, value: str, tags: list[str] | None = None,
                  priority: str = "normal", project: str = "") -> dict:
         now = time.time()
         tag_str = ",".join(tags) if tags else ""
@@ -98,7 +99,7 @@ class MemoryStore:
             conn.commit()
             return dict(row)
 
-    def search(self, query: str = "", tags: list[str] = None, project: str = "",
+    def search(self, query: str = "", tags: list[str] | None = None, project: str = "",
                priority: str = "", limit: int = 20) -> list[dict]:
         conditions = []
         params = []
@@ -129,7 +130,7 @@ class MemoryStore:
             conn.commit()
             return cursor.rowcount > 0
 
-    def log_milestone(self, event: str, project: str = "", tags: list[str] = None):
+    def log_milestone(self, event: str, project: str = "", tags: list[str] | None = None):
         tag_str = ",".join(tags) if tags else ""
         with closing(_open()) as conn:
             conn.execute(
@@ -273,6 +274,98 @@ except Exception:
     pass
 
 
+# ── Output schemas ─────────────────────────────────────────────────────
+#
+# These annotations are the whole point: FastMCP derives `outputSchema` from the
+# return type and emits real `structuredContent`. A tool annotated `-> str` that
+# returns json.dumps(...) instead gets wrapped in a {"result": "<json string>"}
+# envelope, so the caller receives double-encoded JSON and has to parse a string
+# out of an object. Annotate the shape, return the dict.
+#
+# Note for callers migrating from the pre-2026-09-14 string returns: two shapes
+# changed rather than merely gaining a schema. `sassy_memory_recall` now nests the
+# record under `memory` alongside `found`, instead of returning the record flat,
+# and `sassy_memory_forget` returns `forgotten` as a bool with the key in `key`,
+# instead of `{"forgotten": "<key>"}`. The text content block still carries the
+# same JSON, so text-parsing consumers keep working.
+
+
+class MemoryRecord(TypedDict):
+    key: str
+    value: str
+    tags: str
+    priority: str
+    project: str
+    created_at: float
+    updated_at: float
+    access_count: int
+
+
+class Milestone(TypedDict):
+    id: int
+    event: str
+    project: str
+    tags: str
+    timestamp: float
+
+
+class RememberResult(TypedDict):
+    key: str
+    action: str  # "created" | "updated"
+
+
+class RecallResult(TypedDict):
+    found: bool
+    memory: MemoryRecord | None
+    error: str | None
+
+
+class SearchResult(TypedDict):
+    count: int
+    results: list[MemoryRecord]
+
+
+class ForgetResult(TypedDict):
+    forgotten: bool
+    key: str
+    error: str | None
+
+
+class LogResult(TypedDict):
+    logged: str
+    project: str
+
+
+class MilestonesResult(TypedDict):
+    count: int
+    milestones: list[Milestone]
+
+
+class ContextResult(TypedDict):
+    critical: list[MemoryRecord]
+    high_priority: list[MemoryRecord]
+    active_tasks: list[MemoryRecord]
+    blockers: list[MemoryRecord]
+    recent_memories: list[MemoryRecord]
+    project_memories: list[MemoryRecord]
+    patterns: list[MemoryRecord]
+    milestones: list[Milestone]
+
+
+class HandoffResult(TypedDict):
+    handoff_saved: bool
+    memory_key: str
+    crosslink_channel: str
+    next_session: str
+
+
+class StatsResult(TypedDict):
+    total_memories: int
+    by_priority: dict[str, int]
+    milestones: int
+    projects: list[str]
+
+
 def register(server):
     """Register persistent memory tools."""
 
@@ -283,7 +376,7 @@ def register(server):
         tags: str = "",
         priority: str = "normal",
         project: str = "",
-    ) -> str:
+    ) -> RememberResult:
         """Store a memory that persists across sessions.
 
         key: unique identifier (use naming convention: task_<concept>_<project>_state,
@@ -294,16 +387,16 @@ def register(server):
         project: project name (e.g. "sassymcp", "sassy-browser")
         """
         tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
-        result = _memory.remember(key, value, tag_list, priority, project)
-        return json.dumps(result)
+        return _memory.remember(key, value, tag_list, priority, project)
 
     @server.tool()
-    def sassy_memory_recall(key: str) -> str:
+    def sassy_memory_recall(key: str) -> RecallResult:
         """Recall a specific memory by key."""
         mem = _memory.recall(key)
         if not mem:
-            return json.dumps({"error": f"No memory found for key: {key}"})
-        return json.dumps(mem, default=str)
+            return RecallResult(found=False, memory=None,
+                                error=f"No memory found for key: {key}")
+        return RecallResult(found=True, memory=mem, error=None)
 
     @server.tool()
     def sassy_memory_search(
@@ -312,7 +405,7 @@ def register(server):
         project: str = "",
         priority: str = "",
         limit: int = 20,
-    ) -> str:
+    ) -> SearchResult:
         """Search memories by text, tags, project, or priority.
 
         query: free text search across keys and values
@@ -322,17 +415,18 @@ def register(server):
         """
         tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
         results = _memory.search(query, tag_list, project, priority, min(limit, 50))
-        return json.dumps({"results": results, "count": len(results)}, default=str)
+        return SearchResult(count=len(results), results=results)
 
     @server.tool()
-    def sassy_memory_forget(key: str) -> str:
+    def sassy_memory_forget(key: str) -> ForgetResult:
         """Delete a memory. Use when information is no longer relevant."""
         if _memory.forget(key):
-            return json.dumps({"forgotten": key})
-        return json.dumps({"error": f"No memory found for key: {key}"})
+            return ForgetResult(forgotten=True, key=key, error=None)
+        return ForgetResult(forgotten=False, key=key,
+                            error=f"No memory found for key: {key}")
 
     @server.tool()
-    def sassy_memory_context(project: str = "") -> str:
+    def sassy_memory_context(project: str = "") -> ContextResult:
         """Load full context for session startup. Returns critical memories,
         active tasks, blockers, recent milestones, and learned patterns.
 
@@ -341,11 +435,10 @@ def register(server):
 
         project: optional filter to focus on a specific project
         """
-        ctx = _memory.context_load(project)
-        return json.dumps(ctx, default=str, indent=2)
+        return _memory.context_load(project)
 
     @server.tool()
-    def sassy_memory_log(event: str, project: str = "", tags: str = "") -> str:
+    def sassy_memory_log(event: str, project: str = "", tags: str = "") -> LogResult:
         """Log a milestone event. Use for significant completions, decisions, or changes.
 
         event: what happened (e.g. "deployed v1.0", "fixed TLS cert chain", "merged PR #42")
@@ -354,13 +447,13 @@ def register(server):
         """
         tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
         _memory.log_milestone(event, project, tag_list)
-        return json.dumps({"logged": event, "project": project})
+        return LogResult(logged=event, project=project)
 
     @server.tool()
-    def sassy_memory_milestones(project: str = "", limit: int = 20) -> str:
+    def sassy_memory_milestones(project: str = "", limit: int = 20) -> MilestonesResult:
         """View recent milestones, optionally filtered by project."""
         milestones = _memory.get_milestones(project, min(limit, 100))
-        return json.dumps({"milestones": milestones, "count": len(milestones)}, default=str)
+        return MilestonesResult(count=len(milestones), milestones=milestones)
 
     @server.tool()
     def sassy_memory_handoff(
@@ -372,7 +465,7 @@ def register(server):
         files_touched: str = "",
         project: str = "",
         context_notes: str = "",
-    ) -> str:
+    ) -> HandoffResult:
         """Write a session handoff — saves state to BOTH memory and crosslink.
 
         The next session calls sassy_memory_context and sassy_crosslink_recv
@@ -414,16 +507,16 @@ def register(server):
         # Log milestone
         _memory.log_milestone(f"Handoff: {task} ({status})", project, ["handoff"])
 
-        return json.dumps({
-            "handoff_saved": True,
-            "memory_key": key,
-            "crosslink_channel": "task-handoff",
-            "next_session": "Call sassy_memory_context to resume.",
-        }, indent=2)
+        return HandoffResult(
+            handoff_saved=True,
+            memory_key=key,
+            crosslink_channel="task-handoff",
+            next_session="Call sassy_memory_context to resume.",
+        )
 
     @server.tool()
-    def sassy_memory_stats() -> str:
+    def sassy_memory_stats() -> StatsResult:
         """Memory system stats: total memories, priorities, projects, milestones."""
-        return json.dumps(_memory.stats())
+        return _memory.stats()
 
     logger.info("Memory system loaded (persistent cross-session)")

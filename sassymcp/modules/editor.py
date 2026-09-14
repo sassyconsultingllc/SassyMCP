@@ -17,8 +17,8 @@ import shutil
 import time
 from pathlib import Path
 
-from sassymcp.modules._security import is_protected_path
 from sassymcp.modules import audit as _audit
+from sassymcp.modules._security import is_protected_path
 
 _STAGING_FOLDER = "_DELETE_"
 

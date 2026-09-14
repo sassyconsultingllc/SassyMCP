@@ -44,38 +44,40 @@ logger = logging.getLogger("sassymcp")
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
+from sassymcp.license import (
+    fast_revocation_check,
+    get_allowed_groups,
+    validate_license,
+    weekly_validation_check,
+)
 from sassymcp.modules._tool_loader import (
-    get_tracker,
+    TOOL_GROUPS,
+    compute_schema_version,
+    enable_live_reload,
     get_default_modules,
-    get_all_modules,
     get_group_for_tool,
-    get_group_for_module,
+    get_tracker,
     register_tool_group,
     resolve_dependencies,
     validate_tool,
-    enable_live_reload,
-    compute_schema_version,
-    TOOL_GROUPS,
 )
-
-from sassymcp.license import (
-    fast_revocation_check, get_allowed_groups, validate_license, weekly_validation_check,
-)
-
 
 # ── Self-Signed Cert Generation ──────────────────────────────────────
 
 def _generate_self_signed_cert():
     """Generate a self-signed SSL cert for HTTPS mode. Zero external deps."""
-    from sassymcp._paths import HOME as cert_dir, SSL_CERT as cert_path, SSL_KEY as key_path
+    from sassymcp._paths import HOME as cert_dir
+    from sassymcp._paths import SSL_CERT as cert_path
+    from sassymcp._paths import SSL_KEY as key_path
     cert_dir.mkdir(parents=True, exist_ok=True)
 
     try:
+        import datetime
+
         from cryptography import x509
-        from cryptography.x509.oid import NameOID
         from cryptography.hazmat.primitives import hashes, serialization
         from cryptography.hazmat.primitives.asymmetric import rsa
-        import datetime
+        from cryptography.x509.oid import NameOID
 
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         subject = issuer = x509.Name([
@@ -89,8 +91,8 @@ def _generate_self_signed_cert():
             .issuer_name(issuer)
             .public_key(key.public_key())
             .serial_number(x509.random_serial_number())
-            .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
-            .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=365 * 5))
+            .not_valid_before(datetime.datetime.now(datetime.UTC))
+            .not_valid_after(datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=365 * 5))
             .add_extension(
                 x509.SubjectAlternativeName([
                     x509.DNSName("localhost"),
@@ -141,9 +143,10 @@ def _ensure_default_token() -> str | None:
     if env_token:
         return env_token
 
-    from sassymcp._paths import TOKENS_FILE
     import secrets
+
     from sassymcp._atomic import atomic_write_json
+    from sassymcp._paths import TOKENS_FILE
 
     tokens_data: dict = {"tokens": []}
     if TOKENS_FILE.exists():
@@ -338,9 +341,7 @@ def _is_retryable(exc: Exception) -> bool:
         return True
     # sqlite locked
     exc_str = str(exc).lower()
-    if "locked" in exc_str or "busy" in exc_str:
-        return True
-    return False
+    return bool("locked" in exc_str or "busy" in exc_str)
 
 
 def _get_retry_hint(exc: Exception) -> str:
@@ -509,7 +510,7 @@ def _wrap_all_tools():
     """
     try:
         tools = mcp._tool_manager._tools
-        for name, tool in tools.items():
+        for tool in tools.values():
             if hasattr(tool, "fn") and not getattr(tool.fn, "_audit_wrapped", False):
                 # Validate before wrapping
                 validate_tool(tool.fn)
@@ -587,6 +588,20 @@ def _register_shutdown_handlers():
 
 # ── Module Loading ─────────────────────────────────────────────────────
 
+# Strong references to fire-and-forget background tasks. asyncio only holds a
+# WEAK reference to a running task, so a task nobody keeps can be garbage
+# collected mid-flight. Observed directly: the licence checks below were being
+# reaped with "Task was destroyed but it is pending!" before they completed,
+# which silently weakens revocation checking. Entries remove themselves on done.
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
+def _spawn_background(loop, coro) -> None:
+    task = loop.create_task(coro)
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+
+
 def _load_modules():
     """Load all configured modules with infrastructure-first ordering."""
     global _rate_limiter
@@ -638,8 +653,8 @@ def _load_modules():
     # in its context without an explicit sassy_hooks_activate call.
     try:
         from sassymcp.modules._tool_loader import (
-            get_score_boosted_modules,
             auto_activate_hooks_for_modules,
+            get_score_boosted_modules,
         )
         boosted = get_score_boosted_modules()
         if boosted:
@@ -663,6 +678,7 @@ def _load_modules():
     # clean shutdown so the board doesn't show ghosts for stale_seconds.
     try:
         import atexit
+
         from sassymcp.modules.coordination import mark_client_peers_offline
         atexit.register(mark_client_peers_offline)
     except Exception:
@@ -702,10 +718,25 @@ def _load_modules():
     # Both are non-blocking — startup never waits on network.
     try:
         loop = asyncio.get_event_loop()
-        loop.create_task(fast_revocation_check())
-        loop.create_task(weekly_validation_check())
+        _spawn_background(loop, fast_revocation_check())
+        _spawn_background(loop, weekly_validation_check())
     except RuntimeError:
-        pass  # No event loop yet — will run on first request
+        # KNOWN GAP (audited 2026-09-14) — the old comment here read "will run on
+        # first request". Nothing retries, so that is not true.
+        #
+        # _load_modules() is called synchronously from main() BEFORE any loop is
+        # running (mcp.run() / uvicorn.run() come later, and uvicorn builds its
+        # own loop). So get_event_loop() either raises here, or hands back a loop
+        # that is never executed — in a boot harness the tasks were observed being
+        # collected with "Task was destroyed but it is pending!" and
+        # "coroutine ... was never awaited". Either way these two checks do not
+        # run. This is their only scheduling site in the codebase.
+        #
+        # Fixing it changes WHEN licence enforcement fires, so it is deliberately
+        # left to a decision rather than patched in passing. The fix is to start
+        # them from a hook on the loop that actually serves — a uvicorn/ASGI
+        # startup event for HTTP, or the first tool call for stdio.
+        pass
 
 
 # ── Entry Point ────────────────────────────────────────────────────────
@@ -730,6 +761,7 @@ def _check_for_updates_at_startup(timeout_seconds: float = 3.0):
         return None
     try:
         import threading
+
         from sassymcp.modules import updater as _upd_mod
         # Reuse the per-server updater instance if registered, else make one.
         upd = getattr(mcp, "updater", None) or _upd_mod.Updater()
@@ -933,8 +965,9 @@ def _cli_generate_token(argv: list[str]) -> int:
     """`sassymcp.exe generate-token` — create or rotate a bearer token."""
     import argparse
     import secrets
-    from sassymcp._paths import TOKENS_FILE
+
     from sassymcp._atomic import atomic_write_json
+    from sassymcp._paths import TOKENS_FILE
 
     p = argparse.ArgumentParser(
         prog="sassymcp generate-token",
@@ -1006,6 +1039,7 @@ def _cli_generate_token(argv: list[str]) -> int:
 def _cli_show_token(argv: list[str]) -> int:
     """`sassymcp.exe show-token` — print existing tokens (or just the default)."""
     import argparse
+
     from sassymcp._paths import TOKENS_FILE
 
     p = argparse.ArgumentParser(
@@ -1223,7 +1257,8 @@ def main():
     _register_shutdown_handlers()
 
     # First-run detection
-    from sassymcp._paths import HOME as _SASSY_HOME, PERSONA_FILE as _persona
+    from sassymcp._paths import HOME as _SASSY_HOME
+    from sassymcp._paths import PERSONA_FILE as _persona
     first_run = not _persona.exists()
     if args.setup or first_run:
         if args.setup:
@@ -1312,7 +1347,9 @@ def main():
         # SSL support
         if args.ssl:
             from pathlib import Path as _P2
-            from sassymcp._paths import SSL_CERT as _DEFAULT_CERT, SSL_KEY as _DEFAULT_KEY
+
+            from sassymcp._paths import SSL_CERT as _DEFAULT_CERT
+            from sassymcp._paths import SSL_KEY as _DEFAULT_KEY
             ssl_cert = args.ssl_cert or str(_DEFAULT_CERT)
             ssl_key = args.ssl_key or str(_DEFAULT_KEY)
             if not _P2(ssl_cert).exists() or not _P2(ssl_key).exists():

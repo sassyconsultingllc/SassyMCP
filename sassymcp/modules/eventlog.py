@@ -96,7 +96,7 @@ async def _run(argv: list[str], timeout: int = 30) -> str:
         if not out:
             out = stderr.decode("utf-8", errors="replace").strip()
         return out[:5000]
-    except asyncio.TimeoutError:
+    except TimeoutError:
         try:
             proc.kill()
         except Exception:
@@ -151,7 +151,7 @@ def register(server):
         try:
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
             return stdout.decode("utf-8", errors="replace").strip()
-        except asyncio.TimeoutError:
+        except TimeoutError:
             try:
                 proc.kill()
             except Exception:

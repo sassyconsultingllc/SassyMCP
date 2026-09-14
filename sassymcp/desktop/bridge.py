@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-Projects-44ZK4H3W2VJJ
 """JS<->Python bridge for the standalone cockpit. Exposed to the webview as
 `window.pywebview.api`. The React app speaks the same message protocol it uses
 under VS Code; `request()` answers it from the in-process coordination layer.

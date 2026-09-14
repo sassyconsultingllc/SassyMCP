@@ -14,11 +14,12 @@ import os
 import platform
 import sys
 import time
-from pathlib import Path
+from typing import Any
 
 from sassymcp import __version__
 from sassymcp._atomic import atomic_write_json
-from sassymcp._paths import HOME as CONFIG_DIR, CONFIG_FILE
+from sassymcp._paths import CONFIG_FILE
+from sassymcp._paths import HOME as CONFIG_DIR
 
 logger = logging.getLogger("sassymcp.config")
 
@@ -67,7 +68,9 @@ _start_time = time.time()
 
 
 def _load():
-    global _config
+    # No `global _config` needed: this only mutates the dict in place via
+    # .update(), it never rebinds the name. Declaring global here implied a
+    # rebinding that does not happen.
     try:
         if CONFIG_FILE.exists():
             raw = json.loads(CONFIG_FILE.read_text())
@@ -170,7 +173,7 @@ def _get_tool_usage_stats() -> dict:
 def register(server):
 
     @server.tool()
-    async def sassy_get_config() -> str:
+    def sassy_get_config() -> dict[str, Any]:
         """Get full SassyMCP configuration and system info.
 
         Returns: config settings, system info (OS, Python, memory, disk),
@@ -192,10 +195,10 @@ def register(server):
             },
             "toolUsage": _get_tool_usage_stats(),
         }
-        return json.dumps(result, indent=2)
+        return result
 
     @server.tool()
-    async def sassy_set_config(key: str, value: str) -> str:
+    def sassy_set_config(key: str, value: str) -> str:
         """Set a runtime config value.
 
         Supported keys: defaultShell, fileReadLineLimit,
@@ -213,7 +216,7 @@ def register(server):
         return json.dumps({"key": key, "old": old, "new": parsed})
 
     @server.tool()
-    async def sassy_permission(
+    def sassy_permission(
         action: str = "status",
         mode: str = "",
         path: str = "",
@@ -306,7 +309,7 @@ def register(server):
                 "remove_root, add_rule, clear_rules")
 
     @server.tool()
-    async def sassy_panel(action: str = "status") -> str:
+    def sassy_panel(action: str = "status") -> dict[str, Any]:
         """Control the SassyMCP Control Panel — the loopback web UI for the
         permission engine, settings, event log, and classifiers.
 
@@ -328,26 +331,25 @@ def register(server):
         if action == "start":
             info = cp.start_panel(port=port)
             set_val("panel.enabled", True)
-            return json.dumps({"started": cp.is_running(), **info}, indent=2)
+            return {"started": cp.is_running(), **info}
         if action == "stop":
             cp.stop_panel()
             set_val("panel.enabled", False)
-            return json.dumps({"running": cp.is_running(), "note": "auto-start disabled"})
+            return {"running": cp.is_running(), "note": "auto-start disabled"}
         if action == "url":
             # panel_info reports the actual bound port when running, else `port`.
-            return json.dumps(cp.panel_info(port=port), indent=2)
+            return cp.panel_info(port=port)
         # status
-        return json.dumps({"running": cp.is_running(),
+        return {"running": cp.is_running(),
                            "enabled_at_startup": get("panel.enabled", False),
-                           **cp.panel_info(port=port)},
-                          indent=2)
+                           **cp.panel_info(port=port)}
 
     @server.tool()
-    async def sassy_recent_tool_calls(
+    def sassy_recent_tool_calls(
         max_results: int = 50,
         tool_name: str = "",
         since_minutes: int = 0,
-    ) -> str:
+    ) -> dict[str, Any]:
         """Get recent tool call history from audit log.
 
         max_results: how many to return (1-1000)
@@ -356,7 +358,7 @@ def register(server):
         """
         audit_file = CONFIG_DIR / "audit.jsonl"
         if not audit_file.exists():
-            return json.dumps({"calls": [], "note": "No audit log found"})
+            return {"calls": [], "note": "No audit log found"}
 
         cutoff = 0.0
         if since_minutes > 0:
@@ -380,12 +382,12 @@ def register(server):
                     continue
                 calls.append(entry)
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return {"error": str(e)}
 
         # Return most recent N
         calls = calls[-max_results:]
-        return json.dumps({
+        return {
             "calls": calls,
             "count": len(calls),
             "total_in_log": total_lines,
-        }, indent=2)
+        }

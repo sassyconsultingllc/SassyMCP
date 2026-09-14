@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-Projects-DYQVKSMBNE2B
 """Coordination — peer discovery and targeted handoff for SassyMCP.
 
 A thin layer on top of crosslink that turns the free-form message bus into a
@@ -26,7 +29,8 @@ import re
 import sqlite3
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Any
 
 from sassymcp._db import open_db
 from sassymcp._paths import HOME as _HOME
@@ -91,7 +95,7 @@ except Exception:
 
 
 def _now():
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _age_seconds(iso_ts: str) -> float:
@@ -99,7 +103,7 @@ def _age_seconds(iso_ts: str) -> float:
     try:
         dt = datetime.fromisoformat(iso_ts)
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
         return (_now() - dt).total_seconds()
     except (ValueError, TypeError):
         return 10 ** 9
@@ -272,7 +276,7 @@ def mark_client_peers_offline() -> None:
         return
     try:
         cutoff = datetime.fromtimestamp(
-            time.time() - DEFAULT_STALE_SECONDS - 1, tz=timezone.utc
+            time.time() - DEFAULT_STALE_SECONDS - 1, tz=UTC
         ).isoformat()
         peer_ids = [f"client-{_slug(k.split('|', 1)[0])}" for k in _touched]
         conn = open_db(DB_PATH)
@@ -492,14 +496,14 @@ def board_snapshot(stale_seconds: int = DEFAULT_STALE_SECONDS, handoff_limit: in
 def register(server):
 
     @server.tool()
-    async def sassy_peer_announce(
+    def sassy_peer_announce(
         peer_id: str = "",
         name: str = "",
         platform: str = "",
         capabilities: str = "",
         endpoint: str = "",
         ttl_seconds: int = 0,
-    ) -> str:
+    ) -> dict[str, Any]:
         """Announce/refresh this agent as a live peer in the coordination mesh.
 
         peer_id: stable identifier for this agent (auto-generated if empty).
@@ -511,10 +515,10 @@ def register(server):
 
         Re-call periodically to stay 'alive' (see sassy_peer_list stale window).
         """
-        return json.dumps(announce_peer(peer_id, name, platform, capabilities, endpoint, ttl_seconds))
+        return announce_peer(peer_id, name, platform, capabilities, endpoint, ttl_seconds)
 
     @server.tool()
-    async def sassy_peer_list(stale_seconds: int = DEFAULT_STALE_SECONDS) -> str:
+    def sassy_peer_list(stale_seconds: int = DEFAULT_STALE_SECONDS) -> dict[str, Any]:
         """List peers in the coordination mesh, newest heartbeat first.
 
         stale_seconds: a peer with no heartbeat within this window is flagged
@@ -522,19 +526,17 @@ def register(server):
         """
         peers = _recent_peers(stale_seconds)
         alive = [p for p in peers if p["alive"]]
-        return json.dumps(
-            {"peers": peers, "count": len(peers), "alive": len(alive)}, indent=2
-        )
+        return {"peers": peers, "count": len(peers), "alive": len(alive)}
 
     @server.tool()
-    async def sassy_peer_delegate(
+    def sassy_peer_delegate(
         peer_id: str,
         task: str,
         context: str = "",
         next_steps: str = "",
         from_peer: str = "",
         channel: str = HANDOFF_CHANNEL,
-    ) -> str:
+    ) -> dict[str, Any]:
         """Hand a specific task to ONE peer (targeted handoff).
 
         The recipient reads it with sassy_crosslink_recv on the given channel and
@@ -545,19 +547,19 @@ def register(server):
         from_peer: sender id (auto-generated if empty).
         channel: handoff channel (default 'device-handoff').
         """
-        return json.dumps(delegate_task(peer_id, task, context, next_steps, from_peer, channel))
+        return delegate_task(peer_id, task, context, next_steps, from_peer, channel)
 
     @server.tool()
-    async def sassy_coordination_board(
+    def sassy_coordination_board(
         stale_seconds: int = DEFAULT_STALE_SECONDS, handoff_limit: int = 20
-    ) -> str:
+    ) -> dict[str, Any]:
         """One-call coordination snapshot for the Sassy Brain cockpit view.
 
         Returns live peers, channel activity (message counts), the recent handoff
         timeline (peer-delegate + task-handoff), and registered sessions — without
         marking any messages read.
         """
-        return json.dumps(board_snapshot(stale_seconds, handoff_limit), indent=2)
+        return board_snapshot(stale_seconds, handoff_limit)
 
 
 def _main(argv=None):
@@ -566,7 +568,6 @@ def _main(argv=None):
     Subcommands: board (default) | peers | announce | delegate.
     """
     import argparse
-    import sys
 
     parser = argparse.ArgumentParser(prog="python -m sassymcp.modules.coordination")
     sub = parser.add_subparsers(dest="cmd")

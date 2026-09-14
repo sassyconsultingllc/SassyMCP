@@ -1,3 +1,8 @@
+<!--
+   Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+   Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+   CodeMark: SCLLC1-Projects-KX7PBEJFI4TG
+-->
 # SassyMCP Launch + Sales Runbook
 
 > **⚠️ SUPERSEDED IN PART — 2026-07-15 (v1.13.0): tier gating removed.**

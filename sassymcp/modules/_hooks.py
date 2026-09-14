@@ -19,7 +19,6 @@ Architecture:
 - The AI calls sassy_hooks_list to discover what's available
 """
 
-import json
 import logging
 import time
 

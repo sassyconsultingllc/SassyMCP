@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sassymcp import policy  # noqa: E402
+from sassymcp import policy
 
 
 def _patch_cfg(monkeypatch, **cfg):

@@ -13,7 +13,6 @@ a call due to limiter bugs.
 import asyncio
 import logging
 import time
-from typing import Optional
 
 logger = logging.getLogger("sassymcp.ratelimit")
 
@@ -86,7 +85,7 @@ class GroupRateLimiter:
                     capacity=max(calls_per_minute // 6, 5),  # 10-second burst window
                 )
 
-    def _get_semaphore(self, group_name: str) -> Optional[asyncio.BoundedSemaphore]:
+    def _get_semaphore(self, group_name: str) -> asyncio.BoundedSemaphore | None:
         """Get or lazily create BoundedSemaphore for a group.
 
         Called from inside the running event loop. The lock ensures only
@@ -123,7 +122,7 @@ class GroupRateLimiter:
         if sem is not None:
             try:
                 await asyncio.wait_for(sem.acquire(), timeout=timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(f"Concurrency timeout for group '{group_name}'")
                 return False
 
@@ -147,7 +146,7 @@ class GroupRateLimiter:
 
 
 # Module-level singleton
-_limiter: Optional[GroupRateLimiter] = None
+_limiter: GroupRateLimiter | None = None
 
 
 def get_limiter() -> GroupRateLimiter:

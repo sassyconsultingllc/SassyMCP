@@ -56,16 +56,33 @@ def test_mixed_workload_stress(tmp_path: Path):
             [sys.executable, str(worker_script), str(w), str(duration)],
             env=env,
             stdout=subprocess.PIPE,
+            # Capture stderr too. Without this a dying worker's traceback goes to
+            # the inherited stderr and is lost, so the only evidence left is
+            # "worker exited 1" with no cause. This test has failed
+            # intermittently (~2 in 10 full-suite runs, never reproducibly, and
+            # never in isolation or under deliberate load) and the missing
+            # traceback is why it was never diagnosed.
+            stderr=subprocess.PIPE,
             text=True,
         )
         for w in range(workers)
     ]
 
     iterations = []
-    for p in procs:
-        out, _ = p.communicate(timeout=duration + 30)
-        assert p.returncode == 0, f"worker exited {p.returncode}; stdout={out!r}"
-        iterations.append(int(out.strip()))
+    for idx, p in enumerate(procs):
+        out, err = p.communicate(timeout=duration + 30)
+        assert p.returncode == 0, (
+            f"worker {idx} exited {p.returncode}\n"
+            f"--- stdout ---\n{out}\n--- stderr ---\n{err}"
+        )
+        # Parse defensively: int() on empty stdout raises a bare ValueError that
+        # hides which worker misbehaved and what it actually printed.
+        text = (out or "").strip()
+        assert text.isdigit(), (
+            f"worker {idx} exited 0 but printed {text!r} instead of an iteration "
+            f"count\n--- stderr ---\n{err}"
+        )
+        iterations.append(int(text))
 
     print(f"\n  Per-worker iterations: {iterations}")
     print(f"  Total operations: {sum(iterations) * 5}")

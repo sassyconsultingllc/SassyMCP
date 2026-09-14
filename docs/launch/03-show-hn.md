@@ -1,3 +1,8 @@
+<!--
+   Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+   Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+   CodeMark: SCLLC1-Projects-PZYCUVJ2ILGT
+-->
 # Show HN — paste-ready + comment battle plan
 
 HN is the highest-variance channel: a hit is your biggest traffic day ever; a miss sinks quietly.

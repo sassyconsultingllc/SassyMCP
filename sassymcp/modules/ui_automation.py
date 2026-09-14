@@ -16,9 +16,11 @@ AppKit (NSScreen) on macOS, with a pyautogui single-monitor fallback.
 
 import asyncio
 import json
+from typing import Any
 
 from sassymcp import _platform
-from sassymcp.modules._security import validate_path as _validate_path, is_protected_path as _is_protected_path
+from sassymcp.modules._security import is_protected_path as _is_protected_path
+from sassymcp.modules._security import validate_path as _validate_path
 
 
 def _get_monitors():
@@ -148,18 +150,18 @@ async def _mac_desktop_state():
 
 def register(server):
     @server.tool()
-    async def sassy_screen_info() -> str:
+    def sassy_screen_info() -> dict[str, Any]:
         """Get display configuration: all monitors with resolution, position,
         DPI scaling, and which is primary. Essential for multi-monitor setups."""
         monitors = _get_monitors()
         if monitors:
-            return json.dumps({"monitors": monitors, "count": len(monitors)}, indent=2)
+            return {"monitors": monitors, "count": len(monitors)}
         # Fallback
         import pyautogui
         w, h = pyautogui.size()
-        return json.dumps({"monitors": [{"left": 0, "top": 0, "width": w, "height": h,
+        return {"monitors": [{"left": 0, "top": 0, "width": w, "height": h,
             "scale_percent": 100, "primary": True, "note": "single-monitor fallback"}],
-            "count": 1}, indent=2)
+            "count": 1}
 
     @server.tool()
     async def sassy_desktop_state(include_taskbar: bool = False) -> str:
@@ -190,7 +192,7 @@ def register(server):
         return json.dumps(windows, indent=2)
 
     @server.tool()
-    async def sassy_click(x: int, y: int, button: str = "left", clicks: int = 1) -> str:
+    def sassy_click(x: int, y: int, button: str = "left", clicks: int = 1) -> str:
         """Click at absolute screen coordinates (works across multiple monitors).
         Use sassy_screen_info to find monitor positions first."""
         import pyautogui
@@ -198,11 +200,12 @@ def register(server):
         return f"Clicked ({x}, {y}) {button} x{clicks}"
 
     @server.tool()
-    async def sassy_type_text(text: str, target_x: int = 0, target_y: int = 0, interval: float = 0.02) -> str:
+    def sassy_type_text(text: str, target_x: int = 0, target_y: int = 0, interval: float = 0.02) -> str:
         """Type text into a field. Always clears field first with ctrl-a + backspace.
         If target_x/target_y provided, clicks the field first."""
-        import pyautogui
         import time
+
+        import pyautogui
         if target_x and target_y:
             pyautogui.click(target_x, target_y)
             time.sleep(0.1)
@@ -215,7 +218,7 @@ def register(server):
         return f"Typed {len(text)} chars (field cleared first)"
 
     @server.tool()
-    async def sassy_hotkey(keys: str) -> str:
+    def sassy_hotkey(keys: str) -> str:
         """Press keyboard shortcut. Keys separated by +, e.g. ctrl+c."""
         import pyautogui
         key_list = [k.strip() for k in keys.split("+")]
@@ -223,10 +226,11 @@ def register(server):
         return f"Pressed {keys}"
 
     @server.tool()
-    async def sassy_screenshot(path: str = "", region: str = "", monitor: int = -1) -> str:
+    def sassy_screenshot(path: str = "", region: str = "", monitor: int = -1) -> str:
         """Take screenshot. Optional region as x,y,w,h. monitor=-1 for all, 0 for primary, 1+ for others."""
-        import pyautogui
         from pathlib import Path
+
+        import pyautogui
         if not path:
             path = str(Path.home() / "sassymcp_screenshot.png")
         ok, err = _validate_path(path)

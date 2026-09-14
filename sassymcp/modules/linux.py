@@ -30,8 +30,8 @@ import shutil
 from pathlib import Path
 
 from sassymcp import _platform
-from sassymcp.modules._security import detect_delete_intent, validate_command
 from sassymcp.modules import audit as _audit
+from sassymcp.modules._security import detect_delete_intent, validate_command
 
 logger = logging.getLogger("sassymcp.linux")
 
@@ -76,6 +76,10 @@ def _pageant_running() -> bool:
         out = subprocess.run(
             ["tasklist.exe", "/FI", "IMAGENAME eq pageant.exe", "/FO", "CSV", "/NH"],
             capture_output=True, text=True, timeout=2,
+            # check=False is REQUIRED here, not cosmetic: tasklist exits non-zero
+            # when the filter matches nothing, which is the common case. check=True
+            # would turn "pageant isn't running" into an exception.
+            check=False,
         )
         return "pageant.exe" in (out.stdout or "").lower()
     except Exception:
@@ -260,7 +264,7 @@ async def _ssh_exec_stream(cmd: str, timeout: int = 60):
 
     try:
         await asyncio.wait_for(proc.wait(), timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         proc.kill()
         yield f"ERROR: Command timed out after {timeout}s\n"
 

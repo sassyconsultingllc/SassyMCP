@@ -6,7 +6,6 @@
 import asyncio
 import hashlib
 import json
-from pathlib import Path
 
 from sassymcp import _platform
 from sassymcp.modules._security import is_sensitive_read_path
@@ -99,7 +98,7 @@ except Exception:
 
 def register(server):
     @server.tool()
-    async def sassy_hash_file(path: str, algorithm: str = "sha256") -> str:
+    def sassy_hash_file(path: str, algorithm: str = "sha256") -> str:
         """Compute file hash. algorithm: md5, sha1, sha256, sha512.
 
         Refuses paths in the sensitive-read denylist (SSH keys, credential
@@ -144,8 +143,8 @@ def register(server):
     async def sassy_cert_check(target: str, port: int = 443) -> str:
         """Check TLS certificate for a host."""
         import re
-        import ssl
         import socket
+        import ssl
         if not re.match(r'^[A-Za-z0-9\.\-\:]+$', target):
             return f"Error: invalid target: {target!r}"
         # Use synchronous ssl socket — avoids Python 3.14 asyncio
@@ -153,9 +152,11 @@ def register(server):
         ctx = ssl.create_default_context()
         try:
             def _get_cert():
-                with socket.create_connection((target, port), timeout=10) as sock:
-                    with ctx.wrap_socket(sock, server_hostname=target) as ssock:
-                        return ssock.getpeercert()
+                with (
+                    socket.create_connection((target, port), timeout=10) as sock,
+                    ctx.wrap_socket(sock, server_hostname=target) as ssock,
+                ):
+                    return ssock.getpeercert()
             cert = await asyncio.get_event_loop().run_in_executor(None, _get_cert)
         except Exception as e:
             return json.dumps({"error": str(e)})

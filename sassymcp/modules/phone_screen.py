@@ -13,11 +13,11 @@ Scrcpy support retained for live mirroring when available.
 import asyncio
 import base64
 import io
-import json
 import os
 import shutil
 import time
 import xml.etree.ElementTree as ET
+from typing import Any
 
 from sassymcp import _platform
 
@@ -72,7 +72,7 @@ async def _adb(*args, device="", timeout=15):
             if proc.returncode != 0 and not out:
                 return stderr.decode("utf-8", errors="replace").strip()
             return out
-        except asyncio.TimeoutError:
+        except TimeoutError:
             try:
                 proc.kill()
             except Exception:
@@ -94,7 +94,6 @@ def _parse_ui_xml(xml_text: str) -> list[dict]:
         text = node.get("text", "")
         desc = node.get("content-desc", "")
         cls = node.get("class", "")
-        pkg = node.get("package", "")
         bounds = node.get("bounds", "")
         clickable = node.get("clickable") == "true"
         focused = node.get("focused") == "true"
@@ -275,7 +274,7 @@ def register(server):
     # ── Phone Observation (what's on screen) ─────────────────────
 
     @server.tool()
-    async def sassy_phone_ui(device: str = "") -> str:
+    async def sassy_phone_ui(device: str = "") -> dict[str, Any]:
         """Read the phone's UI accessibility tree. Returns every visible element
         with text, description, coordinates, and interaction state.
 
@@ -284,7 +283,7 @@ def register(server):
         """
         xml = await _adb("exec-out", "uiautomator", "dump", "/dev/tty", device=device, timeout=10)
         if not xml or "<hierarchy" not in xml:
-            return json.dumps({"error": "Could not read UI tree. Screen may be locked or uiautomator unavailable."})
+            return {"error": "Could not read UI tree. Screen may be locked or uiautomator unavailable."}
 
         elements = _parse_ui_xml(xml)
         result = {
@@ -296,10 +295,10 @@ def register(server):
         sensitive = _detect_sensitive_context(elements)
         if sensitive:
             result["caution"] = sensitive
-        return json.dumps(result)
+        return result
 
     @server.tool()
-    async def sassy_phone_state(device: str = "") -> str:
+    async def sassy_phone_state(device: str = "") -> dict[str, Any]:
         """Get phone state: foreground app, screen on/off, battery, wifi, notifications.
 
         Quick status check — combine with sassy_phone_ui for full awareness.
@@ -364,14 +363,14 @@ def register(server):
             pass
 
         results["timestamp"] = time.time()
-        return json.dumps(results, indent=2)
+        return results
 
     @server.tool()
     async def sassy_phone_glance(
         device: str = "",
         max_width: int = 480,
         quality: int = 20,
-    ) -> str:
+    ) -> dict[str, Any]:
         """Fast low-res grayscale phone screenshot for AI vision. ~4-8KB.
 
         Uses exec-out to pipe directly (no temp file on device).
@@ -388,7 +387,7 @@ def register(server):
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
 
             if not stdout or len(stdout) < 100:
-                return json.dumps({"error": "Could not capture screen. Device connected?"})
+                return {"error": "Could not capture screen. Device connected?"}
 
             img = Image.open(io.BytesIO(stdout))
             orig_w, orig_h = img.size
@@ -401,16 +400,16 @@ def register(server):
             gray.save(buf, format="JPEG", quality=quality, optimize=True)
             raw = buf.getvalue()
 
-            return json.dumps({
+            return {
                 "image_base64": base64.b64encode(raw).decode("ascii"),
                 "format": "grayscale_jpeg",
                 "original_size": [orig_w, orig_h],
                 "size": list(gray.size),
                 "bytes": len(raw),
                 "timestamp": time.time(),
-            })
+            }
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return {"error": str(e)}
 
     @server.tool()
     async def sassy_phone_watch(
@@ -419,7 +418,7 @@ def register(server):
         device: str = "",
         change_threshold: float = 3.0,
         max_frames: int = 8,
-    ) -> str:
+    ) -> dict[str, Any]:
         """Monitor phone screen for changes. Returns UI tree snapshots when content changes.
 
         Uses uiautomator (fast, structured) for change detection, not pixels.
@@ -473,11 +472,11 @@ def register(server):
             prev_elements = elements
             await asyncio.sleep(interval)
 
-        return json.dumps({
+        return {
             "snapshots": snapshots,
             "snapshot_count": len(snapshots),
             "duration_s": round(time.time() - start, 2),
-        })
+        }
 
     # ── Sensitive Context Detection ────────────────────────────────
 
@@ -552,7 +551,7 @@ def register(server):
     # ── Pause/Resume Controls ────────────────────────────────────
 
     @server.tool()
-    async def sassy_phone_pause(reason: str = "User requested pause") -> str:
+    def sassy_phone_pause(reason: str = "User requested pause") -> dict[str, Any]:
         """Pause all phone interaction. Observation tools still work.
 
         Call when: user says "wait", "hold on", "let me handle this", or when
@@ -566,15 +565,15 @@ def register(server):
         global _phone_paused, _pause_reason
         _phone_paused = True
         _pause_reason = reason
-        return json.dumps({
+        return {
             "status": "paused",
             "reason": reason,
             "note": "Phone interaction paused. Observation tools (ui, glance, watch, state) still work. "
                     "Call sassy_phone_resume when the user is ready to continue.",
-        })
+        }
 
     @server.tool()
-    async def sassy_phone_resume() -> str:
+    def sassy_phone_resume() -> dict[str, Any]:
         """Resume phone interaction after a pause.
 
         Call this when the user says they're done with manual interaction
@@ -585,11 +584,11 @@ def register(server):
         old_reason = _pause_reason
         _phone_paused = False
         _pause_reason = ""
-        return json.dumps({
+        return {
             "status": "resumed",
             "was_paused": was_paused,
             "previous_reason": old_reason,
-        })
+        }
 
     # ── Phone Interaction (touch, type, navigate) ────────────────
     # All interaction tools:
@@ -609,7 +608,7 @@ def register(server):
         return None
 
     @server.tool()
-    async def sassy_phone_tap(x: int, y: int, device: str = "", confirmed: bool = False) -> str:
+    async def sassy_phone_tap(x: int, y: int, device: str = "", confirmed: bool = False) -> dict[str, Any]:
         """Tap a point on the phone screen. Use sassy_phone_ui to find coordinates.
 
         Safety: auto-checks screen for login/payment/permission contexts.
@@ -619,17 +618,17 @@ def register(server):
         paused = _pause_check()
         if paused:
             paused["blocked_action"] = f"tap({x}, {y})"
-            return json.dumps(paused)
+            return paused
 
         if not confirmed:
             warning = await _check_screen_safety(device)
             if warning:
                 warning["blocked_action"] = f"tap({x}, {y})"
                 warning["hint"] = "Tell the user what you see on the phone and ask if they want you to tap. Then call again with confirmed=True."
-                return json.dumps(warning)
+                return warning
 
         result = await _adb("shell", "input", "tap", str(x), str(y), device=device)
-        return json.dumps({"tapped": [x, y], "result": result or "ok"})
+        return {"tapped": [x, y], "result": result or "ok"}
 
     @server.tool()
     async def sassy_phone_swipe(
@@ -637,7 +636,7 @@ def register(server):
         duration_ms: int = 300,
         device: str = "",
         confirmed: bool = False,
-    ) -> str:
+    ) -> dict[str, Any]:
         """Swipe on the phone screen. duration_ms controls speed.
 
         Safety: auto-checks for sensitive contexts before swiping.
@@ -645,24 +644,24 @@ def register(server):
         paused = _pause_check()
         if paused:
             paused["blocked_action"] = f"swipe({x1},{y1} -> {x2},{y2})"
-            return json.dumps(paused)
+            return paused
 
         if not confirmed:
             warning = await _check_screen_safety(device)
             if warning:
                 warning["blocked_action"] = f"swipe({x1},{y1} -> {x2},{y2})"
                 warning["hint"] = "Describe the screen to the user and ask before swiping. Call with confirmed=True after."
-                return json.dumps(warning)
+                return warning
 
         duration_ms = max(100, min(duration_ms, 5000))
         result = await _adb("shell", "input", "swipe",
                             str(x1), str(y1), str(x2), str(y2), str(duration_ms),
                             device=device)
-        return json.dumps({"swiped": [[x1, y1], [x2, y2]], "duration_ms": duration_ms,
-                           "result": result or "ok"})
+        return {"swiped": [[x1, y1], [x2, y2]], "duration_ms": duration_ms,
+                           "result": result or "ok"}
 
     @server.tool()
-    async def sassy_phone_type(text: str, device: str = "", confirmed: bool = False) -> str:
+    async def sassy_phone_type(text: str, device: str = "", confirmed: bool = False) -> dict[str, Any]:
         """Type text on the phone. Requires a text field to be focused.
 
         Safety: auto-checks for login/auth contexts. Won't type into password
@@ -671,24 +670,24 @@ def register(server):
         paused = _pause_check()
         if paused:
             paused["blocked_action"] = f"type('{text[:20]}...')" if len(text) > 20 else f"type('{text}')"
-            return json.dumps(paused)
+            return paused
 
         if not confirmed:
             warning = await _check_screen_safety(device)
             if warning:
                 warning["blocked_action"] = f"type('{text[:20]}...')" if len(text) > 20 else f"type('{text}')"
                 warning["hint"] = "The phone shows a sensitive screen. Describe it to the user and ask what to type. Call with confirmed=True after."
-                return json.dumps(warning)
+                return warning
 
         # Escape special characters for ADB input text
         safe = text.replace("\\", "\\\\").replace(" ", "%s").replace("'", "\\'").replace('"', '\\"')
         safe = safe.replace("&", "\\&").replace("<", "\\<").replace(">", "\\>")
         safe = safe.replace("|", "\\|").replace(";", "\\;").replace("(", "\\(").replace(")", "\\)")
         result = await _adb("shell", "input", "text", safe, device=device)
-        return json.dumps({"typed": text, "chars": len(text), "result": result or "ok"})
+        return {"typed": text, "chars": len(text), "result": result or "ok"}
 
     @server.tool()
-    async def sassy_phone_key(keycode: str, device: str = "") -> str:
+    async def sassy_phone_key(keycode: str, device: str = "") -> dict[str, Any]:
         """Send a key event. Common keycodes: KEYCODE_HOME, KEYCODE_BACK,
         KEYCODE_ENTER, KEYCODE_VOLUME_UP, KEYCODE_VOLUME_DOWN, KEYCODE_POWER,
         KEYCODE_APP_SWITCH (recent apps), KEYCODE_MENU.
@@ -697,15 +696,15 @@ def register(server):
         if not keycode.startswith("KEYCODE_"):
             keycode = f"KEYCODE_{keycode.upper()}"
         result = await _adb("shell", "input", "keyevent", keycode, device=device)
-        return json.dumps({"key": keycode, "result": result or "ok"})
+        return {"key": keycode, "result": result or "ok"}
 
     @server.tool()
-    async def sassy_phone_open(package: str, device: str = "") -> str:
+    async def sassy_phone_open(package: str, device: str = "") -> dict[str, Any]:
         """Open an app by package name. Use sassy_adb_packages to find package names."""
         result = await _adb("shell", "monkey", "-p", package,
                             "-c", "android.intent.category.LAUNCHER", "1",
                             device=device)
-        return json.dumps({"opened": package, "result": result or "ok"})
+        return {"opened": package, "result": result or "ok"}
 
     # ── Scrcpy (retained for live mirroring) ─────────────────────
 
@@ -774,7 +773,7 @@ def register(server):
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
             await asyncio.wait_for(proc.communicate(), timeout=time_limit + 10)
             return f"Recording saved to {output_path}"
-        except asyncio.TimeoutError:
+        except TimeoutError:
             try:
                 proc.kill()
             except Exception:

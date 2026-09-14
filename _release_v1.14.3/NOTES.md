@@ -1,3 +1,8 @@
+<!--
+   Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+   Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+   CodeMark: SCLLC1-Projects-WHFLELVYXV4L
+-->
 ## v1.14.3 — Agent-guidance accuracy fixes
 
 Every tool name the shipped guidance hands to an AI client now resolves to a real tool. Previously six names did not exist, so a model following the playbook would emit failing tool calls.

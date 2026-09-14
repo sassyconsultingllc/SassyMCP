@@ -7,14 +7,13 @@ Runs at startup to inject bundled tools/ into PATH and warn about missing
 required tools. Tesseract is always required (vision/OCR uses it unconditionally).
 """
 
-import json
+import asyncio
 import logging
 import os
 import shutil
 import sys
-import asyncio
 from pathlib import Path
-from typing import Optional
+from typing import Any
 
 from sassymcp import _platform
 
@@ -85,7 +84,7 @@ _TOOL_DEFS = {
 }
 
 
-def _pkg_id(info: dict) -> Optional[str]:
+def _pkg_id(info: dict) -> str | None:
     """Host package-manager id for a tool def, or None if not packaged here."""
     return (info.get("pkg") or {}).get(_platform.OS)
 
@@ -95,13 +94,13 @@ def _pkg_manager() -> str:
     return _platform.pick(windows="winget", macos="brew", linux="apt-get", default="(none)")
 
 
-def _get_exe_dir() -> Optional[Path]:
+def _get_exe_dir() -> Path | None:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent
     return Path(__file__).parent.parent.parent
 
 
-def _find_bundled_tools_dir() -> Optional[Path]:
+def _find_bundled_tools_dir() -> Path | None:
     d = _get_exe_dir()
     if d is None:
         return None
@@ -109,7 +108,7 @@ def _find_bundled_tools_dir() -> Optional[Path]:
     return t if t.is_dir() else None
 
 
-def _which_tool(name: str) -> Optional[str]:
+def _which_tool(name: str) -> str | None:
     info = _TOOL_DEFS.get(name)
     if not info:
         return None
@@ -175,7 +174,7 @@ async def _pkg_install(pkg_id: str, timeout: int = 180) -> dict:
         e = err.decode("utf-8", errors="replace").strip()
         return {"manager": mgr, "exit_code": proc.returncode, "success": proc.returncode == 0,
                 "stdout": o[-500:], "stderr": e[-300:]}
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return {"error": f"{mgr} timed out after {timeout}s", "success": False}
     except FileNotFoundError:
         hint = _platform.pick(
@@ -191,7 +190,7 @@ async def _pkg_install(pkg_id: str, timeout: int = 180) -> dict:
 
 def register(server):
     @server.tool()
-    async def sassy_setup_tools(action: str = "check", tool_name: str = "") -> str:
+    async def sassy_setup_tools(action: str = "check", tool_name: str = "") -> dict[str, Any]:
         """Manage external tool dependencies (tesseract, adb, nmap, plink, scrcpy, cloudflared).
 
         action: check | install | install_required | add_to_path
@@ -217,45 +216,45 @@ def register(server):
                 }
             mreq = [n for n, v in res.items() if not v["found"] and v["required"]]
             mopt = [n for n, v in res.items() if not v["found"] and not v["required"]]
-            return json.dumps({
+            return {
                 "tools": res,
                 "summary": {
                     "installed": [n for n, v in res.items() if v["found"]],
                     "missing_required": mreq, "missing_optional": mopt,
                 },
                 "hint": "Run action=install_required to auto-install missing required tools." if mreq else "All required tools present.",
-            }, indent=2)
+            }
 
         elif action == "install_required":
             miss = [n for n in _REQUIRED_TOOLS if not _which_tool(n)]
             if not miss:
-                return json.dumps({"status": "ok", "message": "All required tools already installed."})
+                return {"status": "ok", "message": "All required tools already installed."}
             r = {}
             for n in miss:
                 r[n] = await _pkg_install(_pkg_id(_TOOL_DEFS[n]))
-            return json.dumps({
+            return {
                 "action": "install_required", "package_manager": _pkg_manager(), "results": r,
                 "next_step": "Restart SassyMCP or call sassy_setup_tools(action=add_to_path) to pick up new binaries.",
-            }, indent=2)
+            }
 
         elif action == "install":
             if not tool_name or tool_name not in _TOOL_DEFS:
-                return json.dumps({"error": f"Unknown tool: {tool_name!r}", "valid_names": list(_TOOL_DEFS.keys())})
+                return {"error": f"Unknown tool: {tool_name!r}", "valid_names": list(_TOOL_DEFS.keys())}
             r = await _pkg_install(_pkg_id(_TOOL_DEFS[tool_name]))
-            return json.dumps({
+            return {
                 "tool": tool_name, "package_manager": _pkg_manager(),
                 "package_id": _pkg_id(_TOOL_DEFS[tool_name]), **r,
                 "next_step": "Restart SassyMCP or call sassy_setup_tools(action=add_to_path) to pick up the new binary.",
-            }, indent=2)
+            }
 
         elif action == "add_to_path":
             r = bootstrap()
             injected = r["injected_paths"]
-            return json.dumps({
+            return {
                 "action": "add_to_path", "injected_paths": injected,
                 "missing_required": r["missing_required"],
                 "message": f"PATH refreshed -- added {len(injected)} tool dirs." if injected else "No bundled tools/ dir found adjacent to exe.",
-            }, indent=2)
+            }
 
-        return json.dumps({"error": f"Unknown action: {action!r}", "valid_actions": ["check", "install", "install_required", "add_to_path"]})
+        return {"error": f"Unknown action: {action!r}", "valid_actions": ["check", "install", "install_required", "add_to_path"]}
 

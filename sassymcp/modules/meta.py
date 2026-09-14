@@ -18,24 +18,23 @@ from typing import Any
 
 logger = logging.getLogger("sassymcp.meta")
 
-from sassymcp.modules._tool_loader import (
-    get_tracker,
-    get_group_info,
-    get_default_modules,
-    get_pruned_tools,
-    get_group_for_tool,
-    TOOL_GROUPS,
-    estimate_tool_context_tokens,
-    minify_github_response,
-)
 from sassymcp.modules._hooks import (
-    get_all_hooks,
-    get_hook,
     activate_hook,
+    clear_active_hooks,
     deactivate_hook,
     get_active_hooks,
-    clear_active_hooks,
+    get_all_hooks,
     suggest_hooks,
+)
+from sassymcp.modules._tool_loader import (
+    TOOL_GROUPS,
+    estimate_tool_context_tokens,
+    get_default_modules,
+    get_group_for_tool,
+    get_group_info,
+    get_pruned_tools,
+    get_tracker,
+    minify_github_response,
 )
 
 
@@ -43,7 +42,7 @@ def register(server):
     """Register meta/introspection tools."""
 
     @server.tool()
-    async def sassy_context_estimate() -> str:
+    def sassy_context_estimate() -> dict[str, Any]:
         """Estimate current context window usage from MCP tool definitions.
 
         Shows: total estimated tokens, % of 200K window, heaviest tools.
@@ -62,11 +61,11 @@ def register(server):
                     })
 
             if not tools:
-                return json.dumps({
+                return {
                     "note": "Could not access tool registry directly.",
                     "est_tool_count": "Check SASSYMCP_LOAD_ALL / SASSYMCP_GROUPS env",
                     "recommendation": "Use sassy_tool_groups to see loaded groups.",
-                })
+                }
 
             result = estimate_tool_context_tokens(tools)
             result["recommendations"] = []
@@ -81,13 +80,13 @@ def register(server):
                     f"{result['tool_count']} tools registered. Disable github_full if not needed."
                 )
 
-            return json.dumps(result, indent=2)
+            return result
 
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return {"error": str(e)}
 
     @server.tool()
-    async def sassy_tool_usage() -> str:
+    def sassy_tool_usage() -> dict[str, Any]:
         """Show tool usage analytics: invocation counts, trends, top tools.
 
         Tracks which tools you actually use to inform smart loading.
@@ -100,20 +99,20 @@ def register(server):
             for name, score in stats["top_10"]
         ]
         stats["top_10"] = formatted_top
-        return json.dumps(stats, indent=2)
+        return stats
 
     @server.tool()
-    async def sassy_tool_groups() -> str:
+    def sassy_tool_groups() -> dict[str, Any]:
         """List available tool groups and their load status.
 
         Shows which groups are loaded, their tool counts, and descriptions.
         Use sassy_tool_group_toggle to enable/disable groups.
         """
         info = get_group_info()
-        return json.dumps(info, indent=2)
+        return info
 
     @server.tool()
-    async def sassy_self_check() -> str:
+    def sassy_self_check() -> dict[str, Any]:
         """Proprioceptive self-check: reconcile the declared module manifest
         against the live tool registry and surface any module that FAILED to
         import — the silent drop _load_modules()'s try/except otherwise hides.
@@ -197,14 +196,14 @@ def register(server):
                 f"to import — its tools are NOT registered: {b['error']}"
             )
 
-        import sys as _sys
         import os as _os
+        import sys as _sys
         # Runtime self-identification so ANY client can tell which instance it
         # is talking to (the opaque-UUID namespace problem solves itself if
         # each server says who it is). 'frozen' == packaged PyInstaller build;
         # 'source' == running from a checkout.
         runtime = "frozen" if (getattr(_sys, "frozen", False) or hasattr(_sys, "_MEIPASS")) else "source"
-        return json.dumps({
+        return json.loads(json.dumps({
             "verdict": "whole" if not broken else "DEGRADED",
             "version": _ver,
             "runtime": runtime,
@@ -222,10 +221,10 @@ def register(server):
                 "design, not a fault — they appear after sassy_tool_group_toggle "
                 "or once usage boosts them."
             ),
-        }, indent=2, default=str)
+        }, default=str))
 
     @server.tool()
-    async def sassy_tool_catalog(group: str = "", query: str = "") -> str:
+    def sassy_tool_catalog(group: str = "", query: str = "") -> dict[str, Any]:
         """Catalog every registered tool: name, one-line purpose, group.
 
         Client-agnostic capability map for ANY MCP wrapper — enumerate what
@@ -254,15 +253,15 @@ def register(server):
         by_group: dict[str, Any] = {}
         for g, name, purpose in rows:
             by_group.setdefault(g, []).append({"name": name, "purpose": purpose})
-        return json.dumps({
+        return json.loads(json.dumps({
             "total": len(rows),
             "group_counts": {g: len(v) for g, v in by_group.items()},
             "filtered_by": {"group": group or None, "query": query or None},
             "tools": by_group,
-        }, indent=2, default=str)
+        }, default=str))
 
     @server.tool()
-    async def sassy_tool_group_toggle(group: str, enable: bool = True) -> str:
+    async def sassy_tool_group_toggle(group: str, enable: bool = True) -> dict[str, Any]:
         """Enable or disable a tool group. Emits tools/list_changed notification.
 
         NOTE: clients vary. MCP clients that handle tools/list_changed
@@ -273,10 +272,10 @@ def register(server):
         enable: True to load, False to unload
         """
         if group not in TOOL_GROUPS:
-            return json.dumps({
+            return {
                 "error": f"Unknown group '{group}'",
                 "valid_groups": list(TOOL_GROUPS.keys()),
-            })
+            }
 
         TOOL_GROUPS[group]["always_load"] = enable
         action = "enabled" if enable else "disabled"
@@ -291,15 +290,15 @@ def register(server):
         except Exception:
             pass
 
-        return json.dumps({
+        return {
             "status": f"Group '{group}' {action}",
             "modules": TOOL_GROUPS[group]["modules"],
             "notification_sent": notified,
             "note": "Restart the server if your MCP client doesn't handle tools/list_changed (e.g. Claude Desktop today)" if not notified else "Client should re-fetch tool list",
-        })
+        }
 
     @server.tool()
-    async def sassy_minify_test(sample_json: str) -> str:
+    def sassy_minify_test(sample_json: str) -> dict[str, Any]:
         """Test the GitHub response minifier on sample JSON.
 
         Paste a GitHub API response and see how much it shrinks.
@@ -314,7 +313,7 @@ def register(server):
 
             savings_pct = round((1 - len(mini) / max(len(orig), 1)) * 100, 1)
 
-            return json.dumps({
+            return {
                 "original_chars": len(orig),
                 "minified_chars": len(mini),
                 "savings_percent": savings_pct,
@@ -322,15 +321,15 @@ def register(server):
                 "minified_est_tokens": len(mini) // 4,
                 "tokens_saved": (len(orig) - len(mini)) // 4,
                 "minified_data": minified,
-            }, indent=2)
+            }
 
         except json.JSONDecodeError as e:
-            return json.dumps({"error": f"Invalid JSON: {e}"})
+            return {"error": f"Invalid JSON: {e}"}
 
     # ── Hook Management ──────────────────────────────────────────
 
     @server.tool()
-    async def sassy_hooks_list() -> str:
+    def sassy_hooks_list() -> dict[str, Any]:
         """List all available operational hooks.
 
         Hooks are expert playbooks that teach the AI HOW to approach a task.
@@ -338,15 +337,15 @@ def register(server):
         "lens" for the job. Use sassy_hooks_activate to load one.
         """
         hooks = get_all_hooks()
-        return json.dumps({
+        return {
             "hooks": hooks,
             "count": len(hooks),
             "active": [h["name"] for h in get_active_hooks()],
             "hint": "Call sassy_hooks_activate with a hook name to load its playbook.",
-        }, indent=2)
+        }
 
     @server.tool()
-    async def sassy_hooks_activate(hook_name: str) -> str:
+    def sassy_hooks_activate(hook_name: str) -> dict[str, Any]:
         """Activate an operational hook. Returns the full expert playbook.
 
         The playbook contains step-by-step instructions for HOW to approach
@@ -360,36 +359,36 @@ def register(server):
             # Try fuzzy match
             all_hooks = get_all_hooks()
             suggestions = [name for name in all_hooks if hook_name.lower() in name.lower()]
-            return json.dumps({
+            return {
                 "error": f"Hook '{hook_name}' not found",
                 "available": list(all_hooks.keys()),
                 "suggestions": suggestions,
-            })
+            }
 
-        return json.dumps({
+        return {
             "activated": hook["name"],
             "module": hook["module"],
             "description": hook["description"],
             "instructions": hook["instructions"],
             "note": "Follow the playbook above. It was written by experts for this exact task.",
-        }, indent=2)
+        }
 
     @server.tool()
-    async def sassy_hooks_deactivate(hook_name: str = "") -> str:
+    def sassy_hooks_deactivate(hook_name: str = "") -> dict[str, Any]:
         """Deactivate a hook or all hooks.
 
         hook_name: specific hook to deactivate, or empty to clear all.
         """
         if not hook_name:
             clear_active_hooks()
-            return json.dumps({"status": "all hooks deactivated"})
+            return {"status": "all hooks deactivated"}
 
         if deactivate_hook(hook_name):
-            return json.dumps({"deactivated": hook_name})
-        return json.dumps({"error": f"Hook '{hook_name}' was not active"})
+            return {"deactivated": hook_name}
+        return {"error": f"Hook '{hook_name}' was not active"}
 
     @server.tool()
-    async def sassy_hooks_suggest(user_text: str) -> str:
+    def sassy_hooks_suggest(user_text: str) -> dict[str, Any]:
         """Suggest hooks based on what the user is trying to do.
 
         Pass the user's request text. Returns matching hooks ranked by relevance.
@@ -398,13 +397,13 @@ def register(server):
         """
         matches = suggest_hooks(user_text)
         if not matches:
-            return json.dumps({
+            return {
                 "suggestions": [],
                 "note": "No hooks match this request. Proceeding without a playbook.",
-            })
+            }
 
-        return json.dumps({
+        return {
             "suggestions": matches,
             "top_match": matches[0]["name"],
             "hint": f"Consider activating '{matches[0]['name']}' — {matches[0]['description']}",
-        }, indent=2)
+        }

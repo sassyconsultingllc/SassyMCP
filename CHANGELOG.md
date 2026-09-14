@@ -10,6 +10,84 @@ All notable changes to SassyMCP. Newest first. Versions follow semver:
 for new tier-visible features, PATCH for fixes that don't move buyer-
 facing surfaces.
 
+## [1.15.0] — 2026-09-14 — Batch fan-out, structured output, event-loop hygiene
+
+Tool results stop arriving double-encoded, blocking work stops running on the
+event loop, and a single call can now fan out across many tools. MINOR, not
+PATCH: the output shape of 93 tools changed.
+
+### Added
+
+- **`sassy_batch`** — run many tools from one call. Takes a JSON array of
+  `{tool, args}`, executes them concurrently under a semaphore, returns one
+  typed result per operation with `ok` / `elapsed_ms` / `result` / `error`.
+  Dispatches through the normal `ToolManager.call_tool` path, so every
+  operation still passes argument validation, the audit wrapper, the security
+  layer and the per-group rate limiter — it changes *when* calls happen, never
+  whether they are allowed. Guards: 50-operation ceiling, concurrency capped at
+  16, no nesting, per-operation timeout, optional `stop_on_error`.
+  Measured: six 0.4s blocking operations at width 6 run in 0.41s vs 2.40s
+  serially.
+
+### Changed — BREAKING for anything parsing tool output
+
+- **93 tools now emit real `structuredContent`** instead of a
+  `{"result": "<json string>"}` envelope. A tool annotated `-> str` returning
+  `json.dumps(...)` reaches the caller double-encoded; these now declare
+  `dict[str, Any]` (83) or a `TypedDict` (10, with field-level `outputSchema`).
+  Clients that parsed the `result` string must read the object directly.
+- **`sassy_memory_recall`** nests the record under `memory` alongside `found`,
+  instead of returning the record flat.
+- **`sassy_memory_forget`** returns `forgotten` as a bool with the key in `key`,
+  instead of `{"forgotten": "<key>"}`.
+- Tools that legitimately return prose (17, e.g. `sassy_write_file`) keep
+  `-> str` — their string really is a string.
+
+### Fixed
+
+- **`sassy_combo_pr_review` never worked.** `pr_data` was read inside the same
+  `asyncio.gather` that binds it, raising `UnboundLocalError` on every call.
+- **`sassy_update_apply` raised `NameError` on every successful download** —
+  `via_gated_url` referenced a `license_key` deleted when the gated mirror was
+  retired.
+- **`sassy_setup_status` served a stale implementation.** A second, richer copy
+  reporting GitHub/SSH integration status was registered after the first;
+  FastMCP keeps the first and only logs "Tool already exists", so the
+  integration fields were unreachable dead code.
+- **70 event-loop blockers removed.** Functions declared `async` with no `await`
+  ran blocking bodies directly on the loop, stalling every other session —
+  the exact failure `_wrap_all_tools` exists to prevent for sync tools. 64 were
+  converted to `def` (so the audit wrapper offloads them to a thread) and 6
+  helpers kept blocking bodies behind `asyncio.to_thread` at the call site.
+  Blocking HTTP, file and subprocess calls inside genuinely-async tools were
+  moved to worker threads.
+- **`vision.py` closure bug** — `_would_overflow` was redefined every frame and
+  closed over a reassigned counter.
+- **Background licence tasks were being garbage-collected mid-flight.** asyncio
+  holds only a weak reference to a running task; they now keep a strong one.
+- **`pytest tests` could not run at all.** `tests/test_intercept.py` is a script
+  (assertions at import, ends in `sys.exit`) named `test_*.py`, so collection
+  aborted with an INTERNALERROR before any test executed.
+
+### Known issue
+
+- **Licence revocation checks do not run.** `fast_revocation_check()` and
+  `weekly_validation_check()` are scheduled from `_load_modules()`, which runs
+  synchronously before any event loop exists — `mcp.run()` / `uvicorn.run()`
+  start later and uvicorn builds its own loop. This is their only scheduling
+  site, and nothing retries. A revoked or refunded licence is therefore not
+  detected at runtime. Fixing it changes when enforcement fires, so it is
+  deliberately deferred rather than patched inside this release. See the
+  KNOWN GAP note at the scheduling site in `server.py`.
+
+### Tooling
+
+- **ruff was configured but never installed**, so it had never run. 695 findings
+  triaged to zero: 239 auto-fixed, the rest fixed by hand, and three
+  defensive-exception rules (`BLE001`, `S110`, `S112` — ~390 findings) ignored
+  with rationale, because degrading a failing tool into a structured error
+  rather than crashing the process is this server's deliberate architecture.
+
 ## [1.14.4] — 2026-08-14 — Offline fallback + dependency security
 
 When the link drops, the server now probes honestly, refuses internet-only

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-Projects-AH3TOQF57NKW
 """Standalone Sassy Brain window. Inlines the built React cockpit (IIFE bundle)
 into a pywebview window and bridges it to the in-process coordination layer."""
 

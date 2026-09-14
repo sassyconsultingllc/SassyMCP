@@ -211,7 +211,7 @@ def _mask_args(args: dict) -> dict:
     return out
 
 
-def log_tool_call(tool_name: str, args: dict, elapsed_ms: int = 0, error: str = None):
+def log_tool_call(tool_name: str, args: dict, elapsed_ms: int = 0, error: str | None = None):
     """Log a tool invocation. Called by the audit wrapper in server.py.
 
     Args:
@@ -330,7 +330,7 @@ def register(server):
         for r in rows:
             out.append(
                 f"{r.get('ts','?')} | {r.get('event','?'):<15} | "
-                f"{str(r.get('pattern','?')):<25} | {str(r.get('command',''))[:120]}"
+                f"{r.get('pattern','?')!s:<25} | {str(r.get('command',''))[:120]}"
             )
         return "\n".join(out)
 

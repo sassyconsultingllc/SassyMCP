@@ -32,8 +32,6 @@ import sys
 import time
 from pathlib import Path
 
-import pytest
-
 
 def _fresh_modules(monkeypatch, sassy_home: Path):
     """Reload license + _lemonsqueezy + _paths under a fresh SASSYMCP_HOME.
@@ -329,7 +327,7 @@ def test_deactivate_network_error_keeps_local_file(tmp_path, monkeypatch):
 
 
 def test_deactivate_with_no_license_is_safe(tmp_path, monkeypatch):
-    lic, ls = _fresh_modules(monkeypatch, tmp_path / "h")
+    lic, _ls = _fresh_modules(monkeypatch, tmp_path / "h")
     result = lic.deactivate_via_lemonsqueezy()
     assert result["status"] == "no_license"
 
@@ -413,7 +411,7 @@ def test_fast_revocation_check_skips_legacy_keys(tmp_path, monkeypatch):
 
 
 def test_fast_revocation_check_no_file_is_safe(tmp_path, monkeypatch):
-    lic, ls = _fresh_modules(monkeypatch, tmp_path / "h")
+    lic, _ls = _fresh_modules(monkeypatch, tmp_path / "h")
     # No license file at all
     removed = asyncio.run(lic.fast_revocation_check())
     assert removed is False
@@ -447,7 +445,7 @@ def test_license_key_hash_is_stable(tmp_path, monkeypatch):
     """The hash function is the public contract between the local
     install and the billing Worker. Pin a known value so a future
     refactor can't break the lookup silently."""
-    lic, ls = _fresh_modules(monkeypatch, tmp_path / "h")
+    _lic, ls = _fresh_modules(monkeypatch, tmp_path / "h")
     import hashlib
     sample = "ABCD-EFGH-IJKL-MNOP"
     expected = hashlib.sha256(sample.encode("utf-8")).hexdigest()

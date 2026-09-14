@@ -36,20 +36,18 @@ import os
 import re
 import shlex
 import shutil
-import sys
 import uuid
 from pathlib import Path
 
 from sassymcp import _platform
+from sassymcp.modules import _confirm
+from sassymcp.modules import audit as _audit
 from sassymcp.modules._security import (
     detect_delete_intent,
     is_protected_path,
     pattern_tier,
     validate_command_tiered,
 )
-from sassymcp.modules import _confirm
-from sassymcp.modules import audit as _audit
-
 
 _MAX_TIMEOUT = 300
 # Below the MCP client-side response wall (~240s). Any sassy_shell call
@@ -76,8 +74,7 @@ _SHELL_MAP = _platform.SHELL_MAP
 # CMD flag allowlist — only these short /X tokens are treated as flags.
 # Everything else starting with "/" is a POSIX-style path target.
 _CMD_FLAG_ALLOWLIST = {
-    "/s", "/q", "/f", "/p", "/a", "/ah", "/ar", "/as", "/aa", "/q",
-    "/r", "/e", "/d", "/b", "/v", "/l", "/y", "/-y",
+    "/s", "/q", "/f", "/p", "/a", "/ah", "/ar", "/as", "/aa", "/r", "/e", "/d", "/b", "/v", "/l", "/y", "/-y",
 }
 
 # PowerShell flags whose next token is NOT a deletion target
@@ -209,7 +206,7 @@ def _sandbox_check_shell(command: str) -> str | None:
     return None
 
 
-async def _safe_move_to_staging(targets: list[str], keyword: str, raw_command: str) -> str:
+def _safe_move_to_staging(targets: list[str], keyword: str, raw_command: str) -> str:
     """Move deletion targets to a _DELETE_ staging folder in the same directory."""
     if not targets:
         msg = (
@@ -311,9 +308,7 @@ def _looks_like_bare_native_exe(command: str) -> bool:
     if any(lower.startswith(p) for p in _NATIVE_EXE_PREFIXES):
         # Skip wrapping if the caller already piped, redirected, or used
         # the call operator — they know what they're doing.
-        if "|" in command or ">" in command or command.lstrip().startswith("&"):
-            return False
-        return True
+        return not ("|" in command or ">" in command or command.lstrip().startswith("&"))
     return False
 
 
@@ -413,7 +408,7 @@ async def _run_subprocess(shell: str, command: str, timeout_seconds: int) -> str
         if output: parts.append(output)
         if errors: parts.append(f"STDERR: {errors}")
         return "\n".join(parts)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         if proc is not None:
             try:
                 proc.kill()
@@ -579,7 +574,7 @@ def register(server):
             seg = _leading_delete_segment(command, kw_root) if kw_root in _DELETE_KEYWORDS else None
             if seg is not None:
                 targets = _parse_delete_targets(seg)
-                return await _safe_move_to_staging(targets, keyword, command)
+                return await asyncio.to_thread(_safe_move_to_staging, targets, keyword, command)
 
             # Pattern match, or an embedded delete keyword. allow_pattern with
             # a SPECIFIC label is the

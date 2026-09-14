@@ -15,8 +15,8 @@ import time
 import pytest
 
 import sassymcp.modules.coordination as coord
-import sassymcp.modules.crosslink as crosslink
 from sassymcp._db import open_db
+from sassymcp.modules import crosslink
 
 
 @pytest.fixture()

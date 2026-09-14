@@ -34,7 +34,6 @@ import re
 import stat
 import time
 from pathlib import Path
-from typing import Optional
 
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.auth.settings import AuthSettings
@@ -42,6 +41,7 @@ from mcp.server.auth.settings import AuthSettings
 logger = logging.getLogger("sassymcp.auth")
 
 from sassymcp._paths import TOKENS_FILE as _TOKENS_FILE
+
 _MIN_TOKEN_LENGTH = 16
 _MAX_TOKEN_LENGTH = 512
 
@@ -102,6 +102,9 @@ def _check_windows_acl(path: Path) -> bool:
         result = subprocess.run(
             ["icacls.exe", str(path)],
             capture_output=True, text=True, timeout=5,
+            # check=False: a non-zero icacls exit is handled by inspecting
+            # `result` below, not by raising.
+            check=False,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired) as e:
         logger.warning(
@@ -150,6 +153,8 @@ def _lockdown_windows_acl(path: Path) -> bool:
              "/inheritance:r",
              "/grant:r", f"{username}:F"],
             capture_output=True, text=True, timeout=5,
+            # check=False: failure is reported from `result`, not raised.
+            check=False,
         )
         if result.returncode != 0:
             logger.warning(
@@ -182,7 +187,7 @@ class SassyTokenVerifier(TokenVerifier):
     """
 
     def __init__(self):
-        self._static_token: Optional[str] = os.environ.get("SASSYMCP_AUTH_TOKEN")
+        self._static_token: str | None = os.environ.get("SASSYMCP_AUTH_TOKEN")
         self._token_map: dict[str, dict] = {}  # keyed by sha256 hash of token
         self._load_tokens()
 
@@ -286,7 +291,7 @@ class SassyTokenVerifier(TokenVerifier):
         )
 
 
-def get_auth_config(server_url: str = "http://localhost:21001") -> Optional[dict]:
+def get_auth_config(server_url: str = "http://localhost:21001") -> dict | None:
     """Return auth kwargs for FastMCP if auth is configured.
 
     Returns None if auth is not configured (no token env var, no tokens file).

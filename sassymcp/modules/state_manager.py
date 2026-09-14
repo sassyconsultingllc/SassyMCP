@@ -9,10 +9,8 @@ Uses the same SQLite backend as Crosslink for zero extra deps.
 
 import json
 import logging
-import sqlite3
 from contextlib import closing
-from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from sassymcp._db import open_db
 from sassymcp._paths import HOME as _SASSY_HOME
@@ -55,7 +53,7 @@ class ToolStateManager:
             return json.loads(row[0])
         return default
 
-    def clear(self, tool: str = None):
+    def clear(self, tool: str | None = None):
         with closing(open_db(STATE_DB)) as conn:
             if tool:
                 conn.execute("DELETE FROM state WHERE tool=?", (tool,))
@@ -80,10 +78,10 @@ def register(server):
         return f"State saved: {tool_name}.{key}"
 
     @server.tool()
-    def sassy_state_get(tool_name: str, key: str) -> str:
+    def sassy_state_get(tool_name: str, key: str) -> dict[str, Any]:
         """Retrieve persistent state for a tool. Returns JSON-encoded value."""
         value = _state_manager.get(tool_name, key)
-        return json.dumps(value)
+        return value
 
     @server.tool()
     def sassy_state_clear(tool_name: str = "") -> str:

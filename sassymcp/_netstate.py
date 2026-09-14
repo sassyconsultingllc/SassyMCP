@@ -33,7 +33,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Optional
+from typing import Any
 
 # ── Probe configuration ───────────────────────────────────────────────
 
@@ -218,7 +218,7 @@ def note_tool_failure(tool_name: str, exc: BaseException) -> None:
 
 # ── Local model discovery ─────────────────────────────────────────────
 
-def _http_json(url: str, timeout: float = 1.5) -> Optional[dict]:
+def _http_json(url: str, timeout: float = 1.5) -> dict | None:
     try:
         req = urllib.request.Request(url, headers={"Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -321,7 +321,7 @@ _PREFIX_RULES: tuple[tuple[str, str], ...] = (
     ("sassy_arp_table", "lan"),
 )
 
-def _group_default(group: Optional[str]) -> str:
+def _group_default(group: str | None) -> str:
     """Fall back to the group's declared `network` field in TOOL_GROUPS.
 
     Single source of truth: the group table declares the family requirement,
@@ -338,7 +338,7 @@ def _group_default(group: Optional[str]) -> str:
     return val if val in ("none", "lan", "internet") else "none"
 
 
-def classify_tool(tool_name: str, group: Optional[str] = None) -> str:
+def classify_tool(tool_name: str, group: str | None = None) -> str:
     """Return 'none' | 'lan' | 'internet' — what this tool needs to work."""
     best = ("", "")
     for prefix, req in _PREFIX_RULES:
@@ -353,32 +353,32 @@ def classify_tool(tool_name: str, group: Optional[str] = None) -> str:
 # lines the model reads when it hits the gate, so they name a concrete next
 # action rather than restating that the network is down.
 _ALTERNATIVES: tuple[tuple[str, str], ...] = (
-    ("sassy_gh_", "Work locally: `sassy_shell` git add/commit on a branch. Stage the PR "
+    ("sassy_gh_", ("Work locally: `sassy_shell` git add/commit on a branch. Stage the PR "
                   "title/body with `sassy_memory_remember key=\"task_pr_<repo>_state\"` and "
-                  "push + open the PR when the link returns."),
+                  "push + open the PR when the link returns.")),
     ("sassy_ghq_", "Same as sassy_gh_*: commit locally, queue the PR text in memory, push later."),
-    ("sassy_url_", "No offline substitute for live page fetches. Use a previously saved copy "
-                   "via `sassy_read_file`, or `sassy_search_files` over a local mirror."),
-    ("sassy_http", "Only loopback targets work offline — point it at 127.0.0.1 (e.g. the local "
-                   "Ollama endpoint). Remote hosts will fail."),
-    ("sassy_update_", "Update checks require the release feed. Skip until online; "
-                      "SASSYMCP_NO_UPDATE_CHECK=1 silences the startup probe."),
-    ("sassy_setup_github", "Token setup needs api.github.com. Defer; the rest of the wizard "
-                           "(`sassy_setup_status`, `sassy_setup_check_tools`) works offline."),
-    ("sassy_setup_license", "License validation is fail-open by design — your existing license "
-                            "stays valid offline. Nothing to do."),
-    ("sassy_cert_check", "Remote TLS inspection needs egress. For a local cert, "
-                         "`sassy_read_file` the PEM and inspect it directly."),
-    ("sassy_dns_lookup", "Resolver is unreachable. Check the hosts file with `sassy_read_file`, "
-                         "or use a known IP directly."),
-    ("sassy_traceroute", "Needs egress. `sassy_arp_table` and `sassy_netstat` still map the "
-                         "local segment."),
-    ("sassy_combo_pr_review", "Its GitHub leg is down. Use `sassy_combo_codebase_grep` and "
-                              "`sassy_diff` to review the working tree locally."),
+    ("sassy_url_", ("No offline substitute for live page fetches. Use a previously saved copy "
+                   "via `sassy_read_file`, or `sassy_search_files` over a local mirror.")),
+    ("sassy_http", ("Only loopback targets work offline — point it at 127.0.0.1 (e.g. the local "
+                   "Ollama endpoint). Remote hosts will fail.")),
+    ("sassy_update_", ("Update checks require the release feed. Skip until online; "
+                      "SASSYMCP_NO_UPDATE_CHECK=1 silences the startup probe.")),
+    ("sassy_setup_github", ("Token setup needs api.github.com. Defer; the rest of the wizard "
+                           "(`sassy_setup_status`, `sassy_setup_check_tools`) works offline.")),
+    ("sassy_setup_license", ("License validation is fail-open by design — your existing license "
+                            "stays valid offline. Nothing to do.")),
+    ("sassy_cert_check", ("Remote TLS inspection needs egress. For a local cert, "
+                         "`sassy_read_file` the PEM and inspect it directly.")),
+    ("sassy_dns_lookup", ("Resolver is unreachable. Check the hosts file with `sassy_read_file`, "
+                         "or use a known IP directly.")),
+    ("sassy_traceroute", ("Needs egress. `sassy_arp_table` and `sassy_netstat` still map the "
+                         "local segment.")),
+    ("sassy_combo_pr_review", ("Its GitHub leg is down. Use `sassy_combo_codebase_grep` and "
+                              "`sassy_diff` to review the working tree locally.")),
 )
 
 
-def offline_alternative(tool_name: str) -> Optional[str]:
+def offline_alternative(tool_name: str) -> str | None:
     best = ("", None)
     for prefix, alt in _ALTERNATIVES:
         if tool_name.startswith(prefix) and len(prefix) > len(best[0]):
@@ -408,7 +408,7 @@ def gate_mode() -> str:
     return mode if mode in ("auto", "off") else "auto"
 
 
-def gate(tool_name: str, group: Optional[str], kwargs: dict[str, Any]) -> Optional[dict]:
+def gate(tool_name: str, group: str | None, kwargs: dict[str, Any]) -> dict | None:
     """Return a structured refusal dict when this call cannot possibly succeed,
     else None. The refusal is the graceful part: an immediate, accurate answer
     with a named substitute, instead of a 10-30s DNS or TLS timeout."""
@@ -445,7 +445,17 @@ def gate(tool_name: str, group: Optional[str], kwargs: dict[str, Any]) -> Option
 
 
 __all__ = [
-    "snapshot", "refresh_now", "is_online", "confirmed_offline", "note_tool_failure",
-    "local_models", "fallback_ready", "classify_tool", "offline_alternative",
-    "targets_loopback", "gate", "gate_mode", "LOCAL_BACKENDS",
+    "LOCAL_BACKENDS",
+    "classify_tool",
+    "confirmed_offline",
+    "fallback_ready",
+    "gate",
+    "gate_mode",
+    "is_online",
+    "local_models",
+    "note_tool_failure",
+    "offline_alternative",
+    "refresh_now",
+    "snapshot",
+    "targets_loopback",
 ]

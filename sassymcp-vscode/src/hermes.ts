@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+// Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+// CodeMark: SCLLC1-Projects-4VDRSGZ2XYD5
 // Hermes controller — starts/stops the local Ollama peer node (hermes_node.py)
 // as a child process and streams its output to the cockpit. This is the
 // "second head": Claude leads, Hermes joins the `joint` crosslink channel.

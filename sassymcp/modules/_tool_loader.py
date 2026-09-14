@@ -21,31 +21,29 @@ Features:
 Storage: ~/.sassymcp/tool_usage.json
 """
 
-import asyncio
 import hashlib
 import importlib
 import inspect
 import json
 import logging
 import math
-import os
 import threading
 import time
-from collections import defaultdict
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger("sassymcp.loader")
 
 # Optional live reload (pip install watchdog)
 try:
-    from watchdog.observers import Observer
     from watchdog.events import FileSystemEventHandler
+    from watchdog.observers import Observer
     WATCHDOG_AVAILABLE = True
 except ImportError:
     WATCHDOG_AVAILABLE = False
 
 from sassymcp._paths import HOME as USAGE_DIR
+
 USAGE_FILE = USAGE_DIR / "tool_usage.json"
 DECAY_HALF_LIFE = 7 * 86400  # 7 days in seconds — older usage decays
 
@@ -155,7 +153,7 @@ class ToolUsageTracker:
 # Module-level singleton. Guarded by a lock so a race during server
 # startup (where module register() calls and the audit wrapper both
 # invoke get_tracker() back-to-back) can't end up with two trackers.
-_tracker: Optional[ToolUsageTracker] = None
+_tracker: ToolUsageTracker | None = None
 _TRACKER_LOCK = threading.Lock()
 
 
@@ -176,8 +174,8 @@ def get_tracker() -> ToolUsageTracker:
 
 TOOL_GROUPS = {
     "meta": {
-        "modules": ["meta"],
-        "description": "Context estimation, tool usage stats, group management (always loaded)",
+        "modules": ["meta", "batch"],
+        "description": "Context estimation, tool usage stats, group management, batch fan-out (always loaded)",
         "always_load": True,
         "network": "none",
         "max_concurrent": 10,
@@ -338,7 +336,7 @@ for _gname, _ginfo in TOOL_GROUPS.items():
         _MODULE_TO_GROUP[_mod] = _gname
 
 
-def get_group_for_module(module_name: str) -> Optional[str]:
+def get_group_for_module(module_name: str) -> str | None:
     """Return the group name a module belongs to, or None."""
     return _MODULE_TO_GROUP.get(module_name)
 
@@ -353,7 +351,7 @@ def register_tool_group(tool_name: str, module_name: str):
         _TOOL_TO_GROUP[tool_name] = group
 
 
-def get_group_for_tool(tool_name: str) -> Optional[str]:
+def get_group_for_tool(tool_name: str) -> str | None:
     """Reverse lookup: tool name → group name. Uses explicit registry built at load time."""
     return _TOOL_TO_GROUP.get(tool_name)
 
@@ -509,9 +507,8 @@ def auto_activate_hooks_for_modules(module_names: list[str]) -> list[str]:
     target_modules = set(module_names)
     activated: list[str] = []
     for hook_name, hook_data in _HOOKS.items():
-        if hook_data.get("module") in target_modules:
-            if activate_hook(hook_name) is not None:
-                activated.append(hook_name)
+        if hook_data.get("module") in target_modules and activate_hook(hook_name) is not None:
+            activated.append(hook_name)
     if activated:
         logger.info(f"auto-activated hooks for boosted modules: {activated}")
     return activated
@@ -542,7 +539,7 @@ def get_group_info() -> dict:
 
 # ── Schema Versioning ────────────────────────────────────────────────
 
-_schema_version: Optional[str] = None
+_schema_version: str | None = None
 
 
 def compute_schema_version(tool_definitions: list[dict]) -> str:
@@ -559,7 +556,7 @@ def compute_schema_version(tool_definitions: list[dict]) -> str:
     return _schema_version
 
 
-def get_schema_version() -> Optional[str]:
+def get_schema_version() -> str | None:
     """Return the last computed schema version hash."""
     return _schema_version
 

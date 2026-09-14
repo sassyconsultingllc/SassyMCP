@@ -45,25 +45,25 @@ from typing import TypeVar
 T = TypeVar("T")
 
 __all__ = [
-    "IS_WINDOWS",
-    "IS_MACOS",
     "IS_LINUX",
+    "IS_MACOS",
     "IS_POSIX",
+    "IS_WINDOWS",
     "OS",
     "OS_LABEL",
-    "UnsupportedPlatform",
-    "pick",
-    "unsupported",
-    "which",
-    "first_existing",
-    "default_shell",
     "SHELL_MAP",
-    "shell_argv",
+    "UnsupportedPlatform",
+    "adb_candidates",
     "clipboard_get_argv",
     "clipboard_set_argv",
-    "open_path_argv",
+    "default_shell",
+    "first_existing",
     "open_app_argv",
-    "adb_candidates",
+    "open_path_argv",
+    "pick",
+    "shell_argv",
+    "unsupported",
+    "which",
 ]
 
 

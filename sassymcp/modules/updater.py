@@ -25,8 +25,8 @@ import logging
 import os
 import re
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -322,7 +322,12 @@ class Updater:
             "downloaded_to": str(dest),
             "size_bytes": dest.stat().st_size,
             "next_step": f"Run: {run_cmd}",
-            "via_gated_url": bool(license_key),
+            # The license-gated download mirror was retired (see the note above);
+            # `license_key` no longer exists in this scope and referencing it
+            # raised NameError on every successful download. Always False now.
+            # The key is kept rather than dropped so existing callers that read
+            # it keep working.
+            "via_gated_url": False,
             "checksum": checksum_status,
         }
 
@@ -334,7 +339,7 @@ def register(server) -> None:
     _frozen = getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS")
 
     @server.tool()
-    async def sassy_update_check(force: bool = False) -> dict:
+    def sassy_update_check(force: bool = False) -> dict:
         """Check for a newer SassyMCP release (apt-update equivalent).
 
         Caches the result for 5 minutes; pass force=True to bypass the cache.
@@ -342,7 +347,7 @@ def register(server) -> None:
         return upd.check(force=force)
 
     @server.tool()
-    async def sassy_update_list(tag: str | None = None) -> dict:
+    def sassy_update_list(tag: str | None = None) -> dict:
         """List downloadable assets for a release (apt-list-upgradable equivalent).
 
         tag defaults to the latest release.
@@ -350,12 +355,12 @@ def register(server) -> None:
         return upd.list_assets(tag=tag)
 
     @server.tool()
-    async def sassy_update_changelog(tag: str | None = None) -> dict:
+    def sassy_update_changelog(tag: str | None = None) -> dict:
         """Return the release notes body for a tag (defaults to latest)."""
         return upd.changelog(tag=tag)
 
     @server.tool()
-    async def sassy_update_apply(asset_name: str, tag: str | None = None, dest_dir: str | None = None) -> dict:
+    def sassy_update_apply(asset_name: str, tag: str | None = None, dest_dir: str | None = None) -> dict:
         """Download an asset to staging. Returns the path + a run command.
 
         Does NOT execute the installer — the user runs the returned command

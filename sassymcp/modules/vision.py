@@ -17,9 +17,11 @@ import io
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 from sassymcp import _platform
-from sassymcp.modules._security import validate_path as _validate_path, is_protected_path as _is_protected_path
+from sassymcp.modules._security import is_protected_path as _is_protected_path
+from sassymcp.modules._security import validate_path as _validate_path
 
 
 async def _mac_list_windows(include_hidden: bool = False):
@@ -158,7 +160,7 @@ def register(server):
         max_width: int = 1280,
         quality: int = 70,
         save_path: str = "",
-    ) -> str:
+    ) -> dict[str, Any]:
         """Capture screen as compressed base64 JPEG for inline viewing.
 
         No args = full primary screen. window_title = capture specific window.
@@ -173,12 +175,12 @@ def register(server):
             if window_title:
                 rect = _find_window_rect(window_title)
                 if rect is None:
-                    return json.dumps({"error": f"Window not found: {window_title}"})
+                    return {"error": f"Window not found: {window_title}"}
                 img = pyautogui.screenshot(region=rect)
             elif region:
                 parts = [int(x.strip()) for x in region.split(",")]
                 if len(parts) != 4:
-                    return json.dumps({"error": "Region must be x,y,w,h"})
+                    return {"error": "Region must be x,y,w,h"}
                 img = pyautogui.screenshot(region=tuple(parts))
             else:
                 img = pyautogui.screenshot()
@@ -195,29 +197,29 @@ def register(server):
             if save_path:
                 ok, err = _validate_path(save_path)
                 if not ok:
-                    return json.dumps({"error": err})
+                    return {"error": err}
                 prot, reason = _is_protected_path(Path(save_path).absolute())
                 if prot:
-                    return json.dumps({"error": f"Refused: save_path is protected ({reason})"})
+                    return {"error": f"Refused: save_path is protected ({reason})"}
                 img.save(save_path)
 
-            return json.dumps({
+            return {
                 "image_base64": b64,
                 "format": "jpeg",
                 "original_size": [orig_w, orig_h],
                 "captured_size": list(img.size),
                 "bytes": len(buf.getvalue()),
                 "saved_to": save_path or None,
-            })
+            }
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return {"error": str(e)}
 
     @server.tool()
     def sassy_screen_ocr(
         window_title: str = "",
         region: str = "",
         language: str = "eng",
-    ) -> str:
+    ) -> dict[str, Any]:
         """Screenshot + OCR in one call. Returns extracted text.
 
         window_title or region to scope. Auto-detects dark themes and inverts
@@ -230,14 +232,14 @@ def register(server):
         except ImportError:
             import sys as _sys
             if getattr(_sys, "frozen", False):
-                return json.dumps({"error": "OCR is not bundled in the shipped sassymcp.exe (keeps the binary lean). To enable OCR, run from source: `git clone https://github.com/sassyconsultingllc/SassyMCP && uv sync && uv pip install pytesseract && playwright install chromium`. The Tesseract OCR binary itself ships in deploy/tools/tesseract/."})
-            return json.dumps({"error": "pytesseract not installed. Install: pip install pytesseract — also requires Tesseract binary: https://github.com/tesseract-ocr/tesseract"})
+                return {"error": "OCR is not bundled in the shipped sassymcp.exe (keeps the binary lean). To enable OCR, run from source: `git clone https://github.com/sassyconsultingllc/SassyMCP && uv sync && uv pip install pytesseract && playwright install chromium`. The Tesseract OCR binary itself ships in deploy/tools/tesseract/."}
+            return {"error": "pytesseract not installed. Install: pip install pytesseract — also requires Tesseract binary: https://github.com/tesseract-ocr/tesseract"}
 
         try:
             if window_title:
                 rect = _find_window_rect(window_title)
                 if rect is None:
-                    return json.dumps({"error": f"Window not found: {window_title}"})
+                    return {"error": f"Window not found: {window_title}"}
                 img = pyautogui.screenshot(region=rect)
             elif region:
                 parts = [int(x.strip()) for x in region.split(",")]
@@ -245,19 +247,19 @@ def register(server):
             else:
                 img = pyautogui.screenshot()
 
-            from PIL import ImageStat, ImageOps
+            from PIL import ImageOps, ImageStat
             stat = ImageStat.Stat(img.convert("L"))
             dark = stat.mean[0] < 128
             ocr_img = ImageOps.invert(img.convert("RGB")) if dark else img
 
             text = pytesseract.image_to_string(ocr_img, lang=language)
-            return json.dumps({
+            return {
                 "text": text.strip(),
                 "lines": len([l for l in text.strip().split("\n") if l.strip()]),
                 "dark_theme_detected": dark,
-            })
+            }
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return {"error": str(e)}
 
     @server.tool()
     def sassy_find_text_on_screen(
@@ -265,7 +267,7 @@ def register(server):
         window_title: str = "",
         click: bool = False,
         language: str = "eng",
-    ) -> str:
+    ) -> dict[str, Any]:
         """Find text on screen via OCR and return coordinates. Optionally click it.
 
         search_text = case-insensitive substring. window_title scopes the search.
@@ -278,21 +280,21 @@ def register(server):
         except ImportError:
             import sys as _sys
             if getattr(_sys, "frozen", False):
-                return json.dumps({"error": "OCR is not bundled in the shipped sassymcp.exe (keeps the binary lean). To enable OCR, run from source: `git clone https://github.com/sassyconsultingllc/SassyMCP && uv sync && uv pip install pytesseract && playwright install chromium`. The Tesseract OCR binary itself ships in deploy/tools/tesseract/."})
-            return json.dumps({"error": "pytesseract not installed. Install: pip install pytesseract — also requires Tesseract binary: https://github.com/tesseract-ocr/tesseract"})
+                return {"error": "OCR is not bundled in the shipped sassymcp.exe (keeps the binary lean). To enable OCR, run from source: `git clone https://github.com/sassyconsultingllc/SassyMCP && uv sync && uv pip install pytesseract && playwright install chromium`. The Tesseract OCR binary itself ships in deploy/tools/tesseract/."}
+            return {"error": "pytesseract not installed. Install: pip install pytesseract — also requires Tesseract binary: https://github.com/tesseract-ocr/tesseract"}
 
         try:
             offset_x, offset_y = 0, 0
             if window_title:
                 rect = _find_window_rect(window_title)
                 if rect is None:
-                    return json.dumps({"error": f"Window not found: {window_title}"})
+                    return {"error": f"Window not found: {window_title}"}
                 img = pyautogui.screenshot(region=rect)
                 offset_x, offset_y = rect[0], rect[1]
             else:
                 img = pyautogui.screenshot()
 
-            from PIL import ImageStat, ImageOps
+            from PIL import ImageOps, ImageStat
             stat = ImageStat.Stat(img.convert("L"))
             ocr_img = ImageOps.invert(img.convert("RGB")) if stat.mean[0] < 128 else img
 
@@ -328,7 +330,7 @@ def register(server):
                             break
 
             if not matches:
-                return json.dumps({"found": False, "search": search_text})
+                return {"found": False, "search": search_text}
 
             result = {"found": True, "matches": matches, "count": len(matches)}
 
@@ -337,16 +339,16 @@ def register(server):
                 pyautogui.click(m["center_x"], m["center_y"])
                 result["clicked"] = {"x": m["center_x"], "y": m["center_y"]}
 
-            return json.dumps(result)
+            return result
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return {"error": str(e)}
 
     @server.tool()
     def sassy_screen_region(
         x: int, y: int, width: int, height: int,
         max_width: int = 1024,
         quality: int = 80,
-    ) -> str:
+    ) -> dict[str, Any]:
         """Capture a specific screen region. Returns compressed base64 JPEG.
 
         Useful for zooming into UI elements, error dialogs, etc.
@@ -365,15 +367,15 @@ def register(server):
             img.convert("RGB").save(buf, format="JPEG", quality=quality, optimize=True)
             b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
-            return json.dumps({
+            return {
                 "image_base64": b64,
                 "format": "jpeg",
                 "region": [x, y, width, height],
                 "captured_size": list(img.size),
                 "bytes": len(buf.getvalue()),
-            })
+            }
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return {"error": str(e)}
 
     # ── Dynamic Desktop Vision ───────────────────────────────────
 
@@ -413,7 +415,7 @@ def register(server):
         region: str = "",
         max_width: int = 640,
         quality: int = 20,
-    ) -> str:
+    ) -> dict[str, Any]:
         """Fast low-res grayscale capture optimized for AI vision. ~3-6KB per frame.
 
         Much smaller than sassy_screen_capture. Designed for frequent polling —
@@ -424,23 +426,23 @@ def register(server):
             if window_title:
                 capture_region = _find_window_rect(window_title)
                 if capture_region is None:
-                    return json.dumps({"error": f"Window not found: {window_title}"})
+                    return {"error": f"Window not found: {window_title}"}
             elif region:
                 parts = [int(x.strip()) for x in region.split(",")]
                 if len(parts) != 4:
-                    return json.dumps({"error": "Region must be x,y,w,h"})
+                    return {"error": "Region must be x,y,w,h"}
                 capture_region = tuple(parts)
 
             gray, raw, b64 = _capture_grayscale(capture_region, max_width, quality)
-            return json.dumps({
+            return {
                 "image_base64": b64,
                 "format": "grayscale_jpeg",
                 "size": list(gray.size),
                 "bytes": len(raw),
                 "timestamp": time.time(),
-            })
+            }
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return {"error": str(e)}
 
     @server.tool()
     async def sassy_screen_watch(
@@ -452,7 +454,7 @@ def register(server):
         max_frames: int = 10,
         max_width: int = 480,
         quality: int = 15,
-    ) -> str:
+    ) -> dict[str, Any]:
         """Monitor screen for changes over a duration. Returns only frames where content changed.
 
         Captures grayscale frames at interval, compares consecutive frames,
@@ -476,11 +478,11 @@ def register(server):
         if window_title:
             capture_region = _find_window_rect(window_title)
             if capture_region is None:
-                return json.dumps({"error": f"Window not found: {window_title}"})
+                return {"error": f"Window not found: {window_title}"}
         elif region:
             parts = [int(x.strip()) for x in region.split(",")]
             if len(parts) != 4:
-                return json.dumps({"error": "Region must be x,y,w,h"})
+                return {"error": "Region must be x,y,w,h"}
             capture_region = tuple(parts)
 
         # Defense-in-depth: even with the max_frames cap, a malicious or
@@ -503,12 +505,10 @@ def register(server):
                 elapsed = round(time.time() - start_time, 2)
                 frame_size = len(raw)
 
-                def _would_overflow(extra: int) -> bool:
-                    return total_bytes_emitted + extra > _MAX_TOTAL_BYTES
 
                 if prev_img is None:
                     # Always include first frame
-                    if _would_overflow(frame_size):
+                    if total_bytes_emitted + frame_size > _MAX_TOTAL_BYTES:
                         byte_cap_hit = True
                         prev_img = gray
                         break
@@ -523,7 +523,7 @@ def register(server):
                 else:
                     diff_pct = _image_diff_percent(prev_img, gray)
                     if diff_pct >= change_threshold:
-                        if _would_overflow(frame_size):
+                        if total_bytes_emitted + frame_size > _MAX_TOTAL_BYTES:
                             byte_cap_hit = True
                             prev_img = gray
                             break
@@ -558,9 +558,9 @@ def register(server):
                     f"cumulative-byte cap of {_MAX_TOTAL_BYTES} bytes reached "
                     f"before time/frame budget exhausted"
                 )
-            return json.dumps(result)
+            return result
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return {"error": str(e)}
 
     @server.tool()
     async def sassy_screen_diff(
@@ -568,7 +568,7 @@ def register(server):
         region: str = "",
         wait_seconds: float = 2.0,
         max_width: int = 640,
-    ) -> str:
+    ) -> dict[str, Any]:
         """Capture before/after screenshots and show what changed.
 
         Takes a frame now, waits wait_seconds, takes another frame.
@@ -581,11 +581,11 @@ def register(server):
         if window_title:
             capture_region = _find_window_rect(window_title)
             if capture_region is None:
-                return json.dumps({"error": f"Window not found: {window_title}"})
+                return {"error": f"Window not found: {window_title}"}
         elif region:
             parts = [int(x.strip()) for x in region.split(",")]
             if len(parts) != 4:
-                return json.dumps({"error": "Region must be x,y,w,h"})
+                return {"error": "Region must be x,y,w,h"}
             capture_region = tuple(parts)
 
         try:
@@ -610,16 +610,16 @@ def register(server):
 
             change_pct = _image_diff_percent(before_img, after_img)
 
-            return json.dumps({
+            return {
                 "before": {"image_base64": before_b64, "bytes": len(before_raw)},
                 "after": {"image_base64": after_b64, "bytes": len(after_raw)},
                 "diff": {"image_base64": diff_b64, "bytes": len(diff_buf.getvalue())},
                 "change_percent": change_pct,
                 "wait_seconds": wait_seconds,
                 "changed": change_pct > 1.0,
-            })
+            }
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return {"error": str(e)}
 
     @server.tool()
     async def sassy_list_windows(include_hidden: bool = False) -> str:
@@ -634,8 +634,8 @@ def register(server):
             return json.dumps({"error": _platform.unsupported(
                 "window enumeration on Linux (needs wmctrl)")})
         try:
-            from pywinauto import Desktop
             import psutil
+            from pywinauto import Desktop
         except ImportError:
             return json.dumps({"error": "pywinauto or psutil not installed"})
 

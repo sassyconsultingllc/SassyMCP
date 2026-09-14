@@ -17,8 +17,8 @@ import sys
 
 sys.path.insert(0, r"V:\Projects\SassyMCP")
 
-from sassymcp.modules import shell as shell_mod
 from sassymcp.modules import session as session_mod
+from sassymcp.modules import shell as shell_mod
 
 PASS = 0
 FAIL = 0

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-Projects-FAP5A3TWR6X4
 """Overlay entry point. Tk runs on the main thread; the tray (daemon thread) and
 the global hotkey marshal commands through a queue the Tk loop drains — tkinter
 is not thread-safe, so nothing else touches it directly."""
@@ -10,16 +13,17 @@ import threading
 class OverlayApp:
     def __init__(self):
         import tkinter as tk
+
+        from . import mesh
+        from .hotkey import register_hotkey
         from .launcher import Launcher
         from .tray import build_tray
-        from .hotkey import register_hotkey
-        from . import mesh
 
         self.mesh = mesh
         self.root = tk.Tk()
         self.root.withdraw()
         self.root.title("Sassy Brain Overlay")
-        self.q: "queue.Queue[str]" = queue.Queue()
+        self.q: queue.Queue[str] = queue.Queue()
         self.launcher = Launcher(self.root, self)
         self.tray = build_tray(self.enqueue)
         self.hotkey_ok = register_hotkey(lambda: self.enqueue("toggle"))

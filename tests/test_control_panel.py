@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sassymcp import control_panel as cp  # noqa: E402
+from sassymcp import control_panel as cp
 
 
 def _mem_cfg(monkeypatch, store):
@@ -49,7 +49,7 @@ def test_settings_get(monkeypatch):
 def test_settings_post_valid(monkeypatch):
     store = {}
     _mem_cfg(monkeypatch, store)
-    s, o = cp.handle_api("POST", "/api/settings", {}, {"mode": "bypass"})
+    s, _o = cp.handle_api("POST", "/api/settings", {}, {"mode": "bypass"})
     assert s == 200
     assert store["permission.mode"] == "bypass"
 
@@ -57,7 +57,7 @@ def test_settings_post_valid(monkeypatch):
 def test_settings_post_invalid_mode(monkeypatch):
     store = {}
     _mem_cfg(monkeypatch, store)
-    s, o = cp.handle_api("POST", "/api/settings", {}, {"mode": "wideopen"})
+    s, _o = cp.handle_api("POST", "/api/settings", {}, {"mode": "wideopen"})
     assert s == 400
     assert "permission.mode" not in store
 
@@ -65,14 +65,14 @@ def test_settings_post_invalid_mode(monkeypatch):
 def test_settings_post_bad_roots_type(monkeypatch):
     store = {}
     _mem_cfg(monkeypatch, store)
-    s, o = cp.handle_api("POST", "/api/settings", {}, {"sandboxRoots": "not-a-list"})
+    s, _o = cp.handle_api("POST", "/api/settings", {}, {"sandboxRoots": "not-a-list"})
     assert s == 400
 
 
 def test_rules_post_valid(monkeypatch):
     store = {}
     _mem_cfg(monkeypatch, store)
-    s, o = cp.handle_api("POST", "/api/rules", {}, {"rules": [{"action": "deny", "command": "rm"}]})
+    s, _o = cp.handle_api("POST", "/api/rules", {}, {"rules": [{"action": "deny", "command": "rm"}]})
     assert s == 200
     assert len(store["permission.rules"]) == 1
 
@@ -80,7 +80,7 @@ def test_rules_post_valid(monkeypatch):
 def test_rules_post_invalid_action(monkeypatch):
     store = {}
     _mem_cfg(monkeypatch, store)
-    s, o = cp.handle_api("POST", "/api/rules", {}, {"rules": [{"action": "nope"}]})
+    s, _o = cp.handle_api("POST", "/api/rules", {}, {"rules": [{"action": "nope"}]})
     assert s == 400
     assert "permission.rules" not in store
 
@@ -94,7 +94,7 @@ def test_classifiers_route():
 
 
 def test_unknown_route():
-    s, o = cp.handle_api("GET", "/api/nope", {}, None)
+    s, _o = cp.handle_api("GET", "/api/nope", {}, None)
     assert s == 404
 
 
@@ -213,7 +213,7 @@ def test_cockpit_catalog_shape():
 
 
 def test_cockpit_unknown_view():
-    s, o = cp.handle_api("GET", "/api/cockpit", {"view": ["does-not-exist"]}, None)
+    s, _o = cp.handle_api("GET", "/api/cockpit", {"view": ["does-not-exist"]}, None)
     assert s == 404
 
 

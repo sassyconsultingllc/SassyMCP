@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from sassymcp import _netstate
-from sassymcp.modules._tool_loader import TOOL_GROUPS, get_group_for_tool
+from sassymcp.modules._tool_loader import get_group_for_tool
 
 logger = logging.getLogger("sassymcp.offline")
 
@@ -230,7 +230,7 @@ def register(server):
     """Register offline/local-fallback tools."""
 
     @server.tool()
-    async def sassy_offline_status(probe: bool = True) -> str:
+    def sassy_offline_status(probe: bool = True) -> dict[str, Any]:
         """Link state, local-model readiness, and the full offline capability split.
 
         One call answers: am I online, is DNS actually resolving, which
@@ -247,7 +247,7 @@ def register(server):
         hermes = _hermes_paths()
 
         degraded = st["link"] in ("offline", "dns_only")
-        return json.dumps({
+        return json.loads(json.dumps({
             "link": {
                 "state": st["link"],
                 "online": st["online"],
@@ -291,10 +291,10 @@ def register(server):
                 "model; sassy_offline_handoff to move the task to Hermes."
                 if degraded else "Link is healthy — nothing to degrade."
             ),
-        }, indent=2, default=str)
+        }, default=str))
 
     @server.tool()
-    async def sassy_offline_commands(group: str = "", verbose: bool = False) -> str:
+    def sassy_offline_commands(group: str = "", verbose: bool = False) -> dict[str, Any]:
         """The offline-safe command listing — every tool that works with no egress.
 
         Derived live from the tool registry, so it never drifts. Sized to be
@@ -316,7 +316,7 @@ def register(server):
             entry = {"name": t["name"], "purpose": t["purpose"]} if verbose else t["name"]
             by_group.setdefault(t["group"], []).append(entry)
 
-        return json.dumps({
+        return json.loads(json.dumps({
             "usable_offline": sum(len(v) for v in by_group.values()),
             "note": (
                 "LAN tools (linux SSH, wifi, port scan, adb wifi) are included: "
@@ -332,7 +332,7 @@ def register(server):
                 "Shell, files, editor, sessions, memory, and audit all work "
                 "normally; commit locally and push when the link returns."
             ),
-        }, indent=2, default=str)
+        }, default=str))
 
     @server.tool()
     async def sassy_offline_handoff(
@@ -340,7 +340,7 @@ def register(server):
         channel: str = "joint",
         next_steps: str = "",
         start_node: bool = False,
-    ) -> str:
+    ) -> dict[str, Any]:
         """Hand the current task to the local model and keep working.
 
         Writes a structured handoff to the sassy brain (key
@@ -422,7 +422,7 @@ def register(server):
                 except Exception as e:
                     started = {"error": f"session start failed: {type(e).__name__}: {e}"}
 
-        return json.dumps({
+        return json.loads(json.dumps({
             "handoff": payload,
             "memory_written": wrote_memory,
             "crosslink_posted": posted,
@@ -443,4 +443,4 @@ def register(server):
                 f"sassy_crosslink_send to reply. sassy_session_read name=\"hermes-{channel}\" "
                 "for node stdout."
             ),
-        }, indent=2, default=str)
+        }, default=str))

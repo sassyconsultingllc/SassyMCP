@@ -9,12 +9,13 @@ read_multiple_files for batch reads, and image rendering support.
 """
 
 import json
-import shutil
 import re
+import shutil
 import time
 from pathlib import Path
-from sassymcp.modules._security import is_protected_path, validate_path
+
 from sassymcp.modules import audit as _audit
+from sassymcp.modules._security import is_protected_path, validate_path
 
 
 def _check_path(path: str) -> str | None:

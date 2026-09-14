@@ -90,11 +90,11 @@ try:
     _register_hooks()
 except Exception:
     pass
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger("sassymcp.github_ops")
 
-from sassymcp.modules._github_client import get_client, GitHubAPIError
+from sassymcp.modules._github_client import GitHubAPIError, get_client
 
 
 def _ok(data: Any) -> str:

@@ -6,25 +6,47 @@
 Self-modification tools were removed; these tests no longer register selfmod.
 """
 import asyncio
+import inspect
 import json
 
 from mcp.server.fastmcp import FastMCP
 
-import sassymcp.modules.meta as meta
-import sassymcp.modules.persona as persona
-import sassymcp.modules.prompts as prompts
+from sassymcp.modules import meta, persona, prompts
 from sassymcp.modules._tool_loader import TOOL_GROUPS
 
 
 def _call(tool):
-    return asyncio.run(tool.fn())
+    """Invoke a registered tool body from a synchronous test.
+
+    A tool body may be sync or async and both are legitimate: in production
+    server._wrap_all_tools offloads a sync body to asyncio.to_thread, so `def`
+    is the *preferred* form for blocking work — an `async def` with a blocking
+    body runs on the event loop and stalls every other session. These tests
+    register modules directly, without that wrapper, so `tool.fn` is the raw
+    function and may be either. Assuming a coroutine here made the suite fail
+    the moment a tool was correctly converted to sync.
+    """
+    result = tool.fn()
+    return asyncio.run(result) if inspect.isawaitable(result) else result
+
+
+def _obj(tool):
+    """Tool result as a parsed object, whatever the tool's return annotation is.
+
+    Tools are migrating from `-> str` (returning json.dumps(...)) to
+    `-> dict[str, Any]` so FastMCP emits real structuredContent instead of a
+    {"result": "<json string>"} envelope. json.loads() on an already-parsed dict
+    raises TypeError, so normalise here rather than at every call site.
+    """
+    r = _call(tool)
+    return json.loads(r) if isinstance(r, str) else r
 
 
 def test_self_check_reports_whole_and_runtime():
     s = FastMCP("t-selfcheck")
     meta.register(s)
     assert "sassy_self_check" in s._tool_manager._tools
-    out = json.loads(_call(s._tool_manager._tools["sassy_self_check"]))
+    out = _obj(s._tool_manager._tools["sassy_self_check"])
     assert out["verdict"] == "whole", out.get("broken")
     assert out["runtime"] == "source"
     # selfmod group removed — one fewer module than the old 36
@@ -46,7 +68,7 @@ def test_selfmod_group_removed():
 def test_tool_catalog_enumerates_registry():
     s = FastMCP("t-catalog")
     meta.register(s)
-    out = json.loads(_call(s._tool_manager._tools["sassy_tool_catalog"]))
+    out = _obj(s._tool_manager._tools["sassy_tool_catalog"])
     assert out["total"] >= 1
     for rows in out["tools"].values():
         for row in rows:

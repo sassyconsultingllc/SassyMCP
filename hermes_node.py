@@ -1,4 +1,7 @@
 #!/usr/bin/env python
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-Projects-NNMDZO4U43VO
 """hermes_node.py - Hermes (local LLM) peer node for a joined session over SassyMCP crosslink.
 
     [ Claude / lead ]  --ch:"joint"--+

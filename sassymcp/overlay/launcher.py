@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-Projects-J5Z3HY4ODZUI
 """Frameless, always-on-top launcher window (Spotlight-style). Type to filter,
 arrow keys to move, Enter to run, Esc to dismiss. Shows the live heads-count and
 a fuzzy action list. Pure tkinter (stdlib) — no heavy GUI dependency."""

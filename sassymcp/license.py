@@ -26,10 +26,8 @@ import logging
 import os
 import secrets
 import time
-from pathlib import Path
 
 from sassymcp._atomic import atomic_write_json
-
 from sassymcp._paths import LICENSE_FILE  # re-exported for back-compat
 
 logger = logging.getLogger("sassymcp.license")
@@ -153,7 +151,7 @@ def parse_license_key(key_string: str) -> dict | None:
         return None
 
 
-def validate_license(key_string: str = None) -> dict:
+def validate_license(key_string: str | None = None) -> dict:
     if key_string is None:
         if not LICENSE_FILE.exists():
             return {"valid": False, "tier": "free", "addons": [], "reason": "no_license_file"}
@@ -399,6 +397,7 @@ async def fast_revocation_check() -> bool:
         return False  # legacy / self-signed keys never revoke via the oracle
 
     import asyncio
+
     from sassymcp import _lemonsqueezy as ls
 
     result = await asyncio.to_thread(ls.quick_revocation_check, ls_key)
@@ -476,6 +475,7 @@ async def _ls_revalidate(data: dict, ls_key: str, ls_instance: str) -> None:
     block the event loop, so we offload it via asyncio.to_thread.
     """
     import asyncio
+
     from sassymcp import _lemonsqueezy as ls
 
     resp = await asyncio.to_thread(ls.validate, ls_key, ls_instance)

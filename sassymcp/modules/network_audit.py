@@ -93,7 +93,7 @@ async def _run_exec(*args, timeout=30):
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         out = stdout.decode("utf-8", errors="replace").strip()
         return out or stderr.decode("utf-8", errors="replace").strip()
-    except asyncio.TimeoutError:
+    except TimeoutError:
         proc.kill()
         return f"Timed out after {timeout}s"
     except FileNotFoundError:
@@ -125,7 +125,7 @@ async def _py_port_scan(target: str, ports_spec: str, connect_timeout: float = 0
             writer = None
             try:
                 fut = asyncio.open_connection(target, port)
-                reader, writer = await asyncio.wait_for(fut, timeout=connect_timeout)
+                _reader, writer = await asyncio.wait_for(fut, timeout=connect_timeout)
                 open_ports.append(port)
             except Exception:
                 pass

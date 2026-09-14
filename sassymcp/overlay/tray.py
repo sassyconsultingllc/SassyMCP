@@ -1,7 +1,10 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-Projects-RHH2FH2HNAFK
 """System-tray icon for the overlay. Menu items enqueue commands (thread-safe);
 the Tk main thread drains the queue. pystray runs in a daemon thread."""
 
-from typing import Callable
+from collections.abc import Callable
 
 import pystray
 from PIL import Image, ImageDraw

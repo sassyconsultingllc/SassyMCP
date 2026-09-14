@@ -24,8 +24,6 @@ import sys
 import time
 from pathlib import Path
 
-import pytest
-
 
 def _all_known_groups() -> set[str]:
     from sassymcp.modules._tool_loader import TOOL_GROUPS

@@ -22,8 +22,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-from pathlib import Path
-
 
 # ── Terminal helpers ──────────────────────────────────────────────────
 
@@ -102,7 +100,10 @@ def _gather_status() -> dict:
     """
     from sassymcp import __version__
     from sassymcp._paths import (
-        PERSONA_FILE, LICENSE_FILE, TOKENS_FILE, CONFIG_FILE, HOME,
+        HOME,
+        LICENSE_FILE,
+        PERSONA_FILE,
+        TOKENS_FILE,
     )
 
     info: dict = {
@@ -155,7 +156,7 @@ def _print_banner(info: dict):
         print(f"  license      : {_dim(info['license_reason'])}")
     if info["license_email"]:
         print(f"  registered to: {info['license_email']}")
-    print(f"  persona      : "
+    print("  persona      : "
           + (_green('configured') if info['persona_exists'] else _yellow('not yet set up')))
     print(f"  auth tokens  : {info['tokens_count']}")
     print(f"  billing URL  : {info['billing_base']}")
@@ -237,6 +238,7 @@ def _action_license(info: dict):
         _pause()
     elif sel == "3":
         import asyncio
+
         from sassymcp.license import LICENSE_FILE, _ls_revalidate, validate_license
         if not LICENSE_FILE.exists():
             print(_yellow("No license file — nothing to validate."))

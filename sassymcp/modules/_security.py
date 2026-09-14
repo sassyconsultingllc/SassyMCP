@@ -21,7 +21,6 @@ import re
 import socket
 import sys
 from pathlib import Path
-from typing import Optional
 from urllib.parse import urlparse
 
 logger = logging.getLogger("sassymcp.security")
@@ -38,7 +37,7 @@ def _get_config_value(key: str, default=None):
 
 # ── Path Validation ──────────────────────────────────────────────────
 
-def validate_path(path: str) -> tuple[bool, Optional[str]]:
+def validate_path(path: str) -> tuple[bool, str | None]:
     """Check if a path is within allowedDirectories.
 
     If allowedDirectories is empty or not configured, all paths are allowed
@@ -111,7 +110,7 @@ def _word_boundary_pattern(needle: str):
     return pat
 
 
-def validate_command(command: str) -> tuple[bool, Optional[str]]:
+def validate_command(command: str) -> tuple[bool, str | None]:
     """Check if a shell command is blocked.
 
     Matches against the hardcoded block list and the user-configurable
@@ -124,7 +123,7 @@ def validate_command(command: str) -> tuple[bool, Optional[str]]:
     return ok, err
 
 
-def validate_command_tiered(command: str) -> tuple[bool, str, Optional[str]]:
+def validate_command_tiered(command: str) -> tuple[bool, str, str | None]:
     """Block-list scan that distinguishes real matches from string-literal hits.
 
     Returns (ok, tier, error_message).
@@ -144,7 +143,7 @@ def validate_command_tiered(command: str) -> tuple[bool, str, Optional[str]]:
 
     scan_literals = bool(_get_config_value("interceptor.scanStringLiterals", False))
 
-    def _classify(needle: str, label: str) -> tuple[bool, str, Optional[str]]:
+    def _classify(needle: str, label: str) -> tuple[bool, str, str | None]:
         # Single-word entries get standalone-token matching so PowerShell
         # verb-Noun pairs ("Format-Table", "-Format", "Format-List") and
         # English prose ("the format of the file") don't trip the block.
@@ -188,7 +187,7 @@ _ADB_DEVICE_PATTERN = re.compile(r"^[A-Za-z0-9.:_\-]+$")
 _ADB_PACKAGE_PATTERN = re.compile(r"^[A-Za-z0-9._\-]+$")
 
 
-def validate_adb_device(device: str) -> tuple[bool, Optional[str]]:
+def validate_adb_device(device: str) -> tuple[bool, str | None]:
     """Validate ADB device identifier."""
     if not device:
         return True, None  # empty = default device
@@ -197,7 +196,7 @@ def validate_adb_device(device: str) -> tuple[bool, Optional[str]]:
     return True, None
 
 
-def validate_adb_package(package: str) -> tuple[bool, Optional[str]]:
+def validate_adb_package(package: str) -> tuple[bool, str | None]:
     """Validate Android package name."""
     if not _ADB_PACKAGE_PATTERN.match(package):
         return False, f"Invalid package name: {package}"
@@ -225,7 +224,7 @@ def _is_private_ip(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     return any(addr in net for net in _PRIVATE_RANGES)
 
 
-def validate_url(url: str, allow_private: bool = False) -> tuple[bool, Optional[str]]:
+def validate_url(url: str, allow_private: bool = False) -> tuple[bool, str | None]:
     """Validate a URL for SSRF protection.
 
     Blocks: private IPs (literal or via DNS resolution), link-local, cloud
@@ -437,7 +436,7 @@ def _strip_quoted_strings(s: str) -> str:
     return _QUOTED_RUN.sub(replacer, s)
 
 
-def _decode_powershell_base64(payload: str) -> Optional[str]:
+def _decode_powershell_base64(payload: str) -> str | None:
     """Best-effort decode of a PowerShell -EncodedCommand argument.
 
     PowerShell encodes with UTF-16-LE then base64. Returns decoded text
@@ -512,7 +511,7 @@ def _scan_segment(seg_lower: str, seg_orig: str) -> tuple[bool, str]:
                 if len(inner) >= 2 and inner[0] == inner[-1] and inner[0] in ("'", '"'):
                     inner = inner[1:-1]
                 return detect_delete_intent(inner)
-            if tok.startswith("-") or tok.startswith("/"):
+            if tok.startswith(("-", "/")):
                 i += 1
                 continue
             # First positional token after a shell name — treat as command.
@@ -563,7 +562,7 @@ def _protected_roots() -> list[Path]:
     return roots
 
 
-def is_protected_path(path: str | Path) -> tuple[bool, Optional[str]]:
+def is_protected_path(path: str | Path) -> tuple[bool, str | None]:
     """Check if a path is protected from deletion/overwrite.
 
     Uses resolve() for the check so that:
@@ -618,7 +617,7 @@ def is_protected_path(path: str | Path) -> tuple[bool, Optional[str]]:
 
 # ── Input Size Validation ────────────────────────────────────────────
 
-def validate_input_size(value: str, max_bytes: int = 10_000_000, label: str = "input") -> tuple[bool, Optional[str]]:
+def validate_input_size(value: str, max_bytes: int = 10_000_000, label: str = "input") -> tuple[bool, str | None]:
     """Reject inputs that exceed a size threshold."""
     if len(value) > max_bytes:
         return False, f"{label} exceeds maximum size ({len(value)} > {max_bytes} bytes)"
@@ -655,7 +654,7 @@ def _sensitive_read_roots() -> list[Path]:
     ]
     # SassyMCP's own token store — even read access here is a credential leak
     try:
-        from sassymcp._paths import TOKENS_FILE, LICENSE_FILE
+        from sassymcp._paths import LICENSE_FILE, TOKENS_FILE
         roots += [TOKENS_FILE, LICENSE_FILE]
     except Exception:
         pass
@@ -701,7 +700,7 @@ def _sensitive_read_roots() -> list[Path]:
     return roots
 
 
-def is_sensitive_read_path(path: str | Path) -> tuple[bool, Optional[str]]:
+def is_sensitive_read_path(path: str | Path) -> tuple[bool, str | None]:
     """Return (True, reason) if `path` is in a sensitive-read denylist.
 
     Tools that take an LLM-supplied path and surface its bytes (hash,

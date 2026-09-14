@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+// Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+// CodeMark: SCLLC1-Projects-GNPNPK2D7TA4
 // Cockpit data provider — sources the coordination board from the WAL-aware
 // Python (single source of truth: sassymcp.modules.coordination.board_snapshot),
 // spawned the same way installer.ts spawns `sassymcp install`. We deliberately

@@ -10,14 +10,13 @@ Essential for long-running processes like cargo build, wrangler dev, npm start.
 """
 
 import asyncio
-import json
 import logging
 import time
-from typing import Optional
+from typing import Any
 
 from sassymcp import _platform
-from sassymcp.modules._security import detect_delete_intent, validate_command
 from sassymcp.modules import audit as _audit
+from sassymcp.modules._security import detect_delete_intent, validate_command
 
 
 def _register_hooks():
@@ -120,7 +119,7 @@ class _Session:
         self.created = time.time()
         self.buffer = ""
         self.read_cursor = 0
-        self._reader_task: Optional[asyncio.Task] = None
+        self._reader_task: asyncio.Task | None = None
 
     async def start_reader(self):
         """Background task that continuously reads stdout into buffer."""
@@ -163,7 +162,7 @@ class _Session:
             try:
                 self.proc.terminate()
                 await asyncio.wait_for(self.proc.wait(), timeout=5)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 self.proc.kill()
 
 
@@ -227,7 +226,7 @@ async def start_session_impl(name: str, shell: str = "", command: str = "") -> d
 def register(server):
 
     @server.tool()
-    async def sassy_session_start(name: str, shell: str = "", command: str = "") -> str:
+    async def sassy_session_start(name: str, shell: str = "", command: str = "") -> dict[str, Any]:
         """Start a persistent terminal session.
 
         name: unique session identifier (e.g. 'build', 'dev-server')
@@ -236,10 +235,10 @@ def register(server):
         command: optional initial command to run immediately
         """
         result = await start_session_impl(name, shell, command)
-        return json.dumps(result)
+        return result
 
     @server.tool()
-    async def sassy_session_send(name: str, input_text: str) -> str:
+    async def sassy_session_send(name: str, input_text: str) -> dict[str, Any]:
         """Send input to a running session.
 
         Like typing in a terminal. Newline is appended automatically.
@@ -249,59 +248,59 @@ def register(server):
         """
         sess = _sessions.get(name)
         if not sess:
-            return json.dumps({"error": f"No session '{name}'. Use sassy_session_list to see active sessions."})
+            return {"error": f"No session '{name}'. Use sassy_session_list to see active sessions."}
         if not sess.is_alive():
-            return json.dumps({"error": f"Session '{name}' has exited (code: {sess.proc.returncode})"})
+            return {"error": f"Session '{name}' has exited (code: {sess.proc.returncode})"}
 
         # Gate the input same as a fresh shell invocation would be gated.
         ok, err = validate_command(input_text)
         if not ok:
             _audit.log_intercept("sassy_session_send", "blocklist", input_text, [], [err or "blocked"])
-            return json.dumps({"error": err})
+            return {"error": err}
         is_del, kw = detect_delete_intent(input_text)
         if is_del:
             _audit.log_intercept("sassy_session_send", kw, input_text, [], ["send blocked"])
-            return json.dumps({
+            return {
                 "error": (
                     f"Delete command blocked by interceptor ('{kw}'). "
                     "sassy_session_send cannot bypass the _DELETE_ staging policy. "
                     "Use sassy_shell (which stages targets) or sassy_safe_delete(path)."
                 ),
                 "session": name,
-            })
+            }
 
         try:
             await sess.send(input_text)
             await asyncio.sleep(0.3)  # Brief pause for output
             new_output = sess.get_new_output()
-            return json.dumps({
+            return {
                 "sent": input_text,
                 "new_output": new_output[-5000:] if new_output else "(no output yet)",
                 "session": name,
-            })
+            }
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return {"error": str(e)}
 
     @server.tool()
-    async def sassy_session_read(name: str) -> str:
+    def sassy_session_read(name: str) -> dict[str, Any]:
         """Read new output from a session without sending input.
 
         Returns only text that arrived since the last read.
         """
         sess = _sessions.get(name)
         if not sess:
-            return json.dumps({"error": f"No session '{name}'."})
+            return {"error": f"No session '{name}'."}
 
         new_output = sess.get_new_output()
-        return json.dumps({
+        return {
             "session": name,
             "alive": sess.is_alive(),
             "new_output": new_output[-10000:] if new_output else "(no new output)",
             "total_buffer_size": len(sess.buffer),
-        })
+        }
 
     @server.tool()
-    async def sassy_session_list() -> str:
+    def sassy_session_list() -> dict[str, Any]:
         """List all active terminal sessions."""
         now = time.time()
         sessions = []
@@ -315,25 +314,25 @@ def register(server):
                 "buffer_size": len(sess.buffer),
                 "exit_code": sess.proc.returncode,
             })
-        return json.dumps({"sessions": sessions, "count": len(sessions)}, indent=2)
+        return {"sessions": sessions, "count": len(sessions)}
 
     @server.tool()
-    async def sassy_session_stop(name: str) -> str:
+    async def sassy_session_stop(name: str) -> dict[str, Any]:
         """Stop and clean up a terminal session."""
         sess = _sessions.pop(name, None)
         if not sess:
-            return json.dumps({"error": f"No session '{name}'."})
+            return {"error": f"No session '{name}'."}
 
         final_output = sess.get_new_output()
         await sess.stop()
-        return json.dumps({
+        return {
             "stopped": name,
             "exit_code": sess.proc.returncode,
             "final_output": final_output[-3000:] if final_output else "(empty)",
-        })
+        }
 
     @server.tool()
-    async def sassy_session_stop_all() -> str:
+    async def sassy_session_stop_all() -> dict[str, Any]:
         """Stop all active terminal sessions."""
         names = list(_sessions.keys())
         results = []
@@ -341,4 +340,4 @@ def register(server):
             sess = _sessions.pop(name)
             await sess.stop()
             results.append({"name": name, "exit_code": sess.proc.returncode})
-        return json.dumps({"stopped": results, "count": len(results)})
+        return {"stopped": results, "count": len(results)}

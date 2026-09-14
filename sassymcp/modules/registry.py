@@ -11,11 +11,11 @@ Linux.
 """
 
 import asyncio
-
-from sassymcp import _platform
-from sassymcp.modules._security import validate_path as _validate_path, is_protected_path as _is_protected_path
 from pathlib import Path
 
+from sassymcp import _platform
+from sassymcp.modules._security import is_protected_path as _is_protected_path
+from sassymcp.modules._security import validate_path as _validate_path
 
 # macOS / Linux persistence inventories (run via /bin/sh -c; no user input).
 _MAC_AUTORUNS = (
@@ -98,7 +98,7 @@ async def _reg(*args, timeout=15):
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         out = stdout.decode("utf-8", errors="replace").strip()
         return out if out else stderr.decode("utf-8", errors="replace").strip()
-    except asyncio.TimeoutError:
+    except TimeoutError:
         try:
             proc.kill()
         except Exception:
@@ -150,7 +150,12 @@ def register(server):
         ok, err = _validate_path(output_file)
         if not ok:
             return f"Error: {err}"
-        prot, reason = _is_protected_path(Path(output_file).absolute())
+        # Path.absolute() calls os.getcwd() and the protected-path check stats
+        # the filesystem — both block. Cheap individually, but this tool is
+        # async and the thread hop keeps the loop clean.
+        prot, reason = await asyncio.to_thread(
+            lambda: _is_protected_path(Path(output_file).absolute())
+        )
         if prot:
             return f"Refused: output_file is protected ({reason})"
         result = await _reg("export", key_path, output_file, "/y", timeout=30)

@@ -9,17 +9,18 @@ Updated with:
 """
 
 import asyncio
-import json
 import os
-import psutil
-import signal
-import time
 import platform
+import time
+from typing import Any
+
+import psutil
+
 
 def register(server):
 
     @server.tool()
-    async def sassy_processes(filter_str: str = "", sort_by: str = "cpu") -> str:
+    def sassy_processes(filter_str: str = "", sort_by: str = "cpu") -> dict[str, Any]:
         """List running processes. sort_by: cpu, memory, name."""
         procs = []
         for p in psutil.process_iter(["pid", "name", "cpu_percent", "memory_info"]):
@@ -37,10 +38,10 @@ def register(server):
                 continue
         key = {"cpu": "cpu", "memory": "mem_mb", "name": "name"}.get(sort_by, "cpu")
         procs.sort(key=lambda x: x[key], reverse=(key != "name"))
-        return json.dumps(procs[:50], indent=2)
+        return procs[:50]
 
     @server.tool()
-    async def sassy_kill_process(pid: int, force: bool = False) -> str:
+    def sassy_kill_process(pid: int, force: bool = False) -> str:
         """Kill a process by PID."""
         try:
             p = psutil.Process(pid)
@@ -68,7 +69,7 @@ def register(server):
                 *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
             return stdout.decode("utf-8", errors="replace").strip()
-        except asyncio.TimeoutError:
+        except TimeoutError:
             try:
                 proc.kill()
             except Exception:
@@ -80,14 +81,14 @@ def register(server):
             return f"Error: {e}"
 
     @server.tool()
-    async def sassy_system_info() -> str:
+    def sassy_system_info() -> dict[str, Any]:
         """Get system resource summary."""
         cpu = psutil.cpu_percent(interval=1)
         mem = psutil.virtual_memory()
         disk_path = "C:\\" if os.name == "nt" else "/"
         disk = psutil.disk_usage(disk_path)
         uptime = time.time() - psutil.boot_time()
-        return json.dumps({
+        return {
             "hostname": platform.node(),
             "os": f"{platform.system()} {platform.release()}",
             "cpu_percent": cpu,
@@ -98,10 +99,10 @@ def register(server):
             "disk_total_gb": round(disk.total / 1073741824, 1),
             "disk_percent": disk.percent,
             "uptime": f"{int(uptime//3600)}h {int((uptime%3600)//60)}m",
-        }, indent=2)
+        }
 
     @server.tool()
-    async def sassy_kill_all_sassymcp(force: bool = False) -> str:
+    async def sassy_kill_all_sassymcp(force: bool = False) -> dict[str, Any]:
         """One-click nuclear option: kill every SassyMCP, uv, and MCP-client-spawned Python process.
 
         Fixes the "another program is currently using this process" lock that
@@ -146,12 +147,12 @@ def register(server):
 
         await asyncio.sleep(0.5)  # Give Windows time to release file locks
 
-        return json.dumps({
+        return {
             "status": "killed",
             "count": len(killed),
             "processes": killed,
             "note": "All SassyMCP-related processes terminated. You can now safely restart Grok Desktop / SassyMCP."
-        }, indent=2)
+        }
 
 
 # Shutdown is handled by server.py — do not register competing signal handlers here.

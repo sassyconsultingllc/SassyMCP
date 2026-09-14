@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-Projects-UNYJWFHDOPMI
 """Phone (Android/ADB) device snapshot for the Sassy Brain cockpit.
 
 Lists connected ADB devices so the cockpit can show the phone as a coordinated
@@ -28,7 +31,9 @@ def snapshot() -> dict:
         return {"devices": [], "adb": False,
                 "error": "adb not found — install platform-tools or set SASSYMCP_ADB"}
     try:
-        out = subprocess.run([adb, "devices", "-l"], capture_output=True, text=True, timeout=10)
+        # check=False: the exit code is ignored on purpose — stdout is parsed below.
+        out = subprocess.run([adb, "devices", "-l"], capture_output=True, text=True,
+                             timeout=10, check=False)
     except Exception as e:
         return {"devices": [], "adb": True, "error": f"adb error: {e}"}
 

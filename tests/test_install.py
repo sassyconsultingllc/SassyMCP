@@ -5,26 +5,18 @@
 from __future__ import annotations
 
 import json
-import os
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
 from sassymcp.install import (
     ClientInfo,
-    PatchResult,
+    _load_existing_config,
     detect_clients,
+    main,
     patch_client,
     unpatch_client,
-    find_self_exe,
-    main,
-    _CLIENT_REGISTRY,
-    _apply_server_entry,
-    _load_existing_config,
 )
-
 
 # --- detect_clients ---
 
@@ -118,8 +110,10 @@ def test_patch_takes_backup_on_first_write(tmp_path: Path):
 def test_patch_does_not_take_second_backup(tmp_path: Path):
     client = _make_client(tmp_path)
     client.config_path.write_text(json.dumps({"mcpServers": {"existing": {"command": "x"}}}))
-    r1 = patch_client(client, Path("C:/sassy/sassymcp.exe"))
-    r2 = patch_client(client, Path("C:/different/sassymcp.exe"))
+    # Both return values are intentionally unused — the assertion below is about
+    # the backup count on disk, not the per-call result.
+    patch_client(client, Path("C:/sassy/sassymcp.exe"))
+    patch_client(client, Path("C:/different/sassymcp.exe"))
     backups = list(tmp_path.glob("test_config.json.sassymcp-backup-*"))
     assert len(backups) == 1
 
