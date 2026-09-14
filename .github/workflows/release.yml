@@ -231,9 +231,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-13   # Intel (x86_64)
+          # macos-13 was RETIRED by GitHub and is no longer in the hosted image
+          # list, so a job requesting it queues forever and never schedules.
+          # That silently killed the v1.14.3 and v1.14.4 releases (both runs
+          # ended `cancelled`) and stalled v1.15.0: ubuntu jobs published to
+          # PyPI fine, macos-14 built fine, and this leg never started — while
+          # `release` and `publish-registry` both `needs:` it, so the GitHub
+          # Release and the MCP Registry listing never happened.
+          # macos-15-intel is the current Intel x64 label.
+          - runner: macos-15-intel   # Intel (x86_64)
             arch: x86_64
-          - runner: macos-14   # Apple Silicon (arm64)
+          # macos-14 is now marked deprecated in the same image list; move to
+          # macos-15 before it goes the same way as macos-13.
+          - runner: macos-15         # Apple Silicon (arm64)
             arch: arm64
     steps:
       - uses: actions/checkout@v4
@@ -450,6 +460,13 @@ jobs:
 
       - name: Publish to PyPI (Trusted Publishing)
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Without this, re-running a release whose PyPI upload already
+          # succeeded fails on "file already exists" — and because
+          # publish-registry `needs: publish-pypi`, that failure also blocks the
+          # MCP Registry listing. Exactly the trap hit on v1.15.0, where PyPI
+          # went out but the registry publish could not be retried.
+          skip-existing: true
 
   publish-registry:
     name: Publish to MCP Registry

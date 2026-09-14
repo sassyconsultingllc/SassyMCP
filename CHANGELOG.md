@@ -10,6 +10,30 @@ All notable changes to SassyMCP. Newest first. Versions follow semver:
 for new tier-visible features, PATCH for fixes that don't move buyer-
 facing surfaces.
 
+## [1.15.1] — 2026-09-14 — Release pipeline repair
+
+No functional change to the server. 1.15.0 reached PyPI but its GitHub Release
+and MCP Registry listing never happened, for the same reason 1.14.3 and 1.14.4
+never did.
+
+### Fixed
+
+- **The release workflow could not complete.** `build-macos` requested the
+  `macos-13` runner, which GitHub has retired — it is no longer in the hosted
+  image list, so the job queued indefinitely and was never scheduled. Both
+  `release` and `publish-registry` declare `needs:` on it, so every tagged
+  release since 1.14.3 published to PyPI (ubuntu runners) and then stalled,
+  producing no GitHub Release and no registry entry. The v1.14.3 and v1.14.4
+  runs both ended `cancelled` for this reason, which is why `/releases/latest`
+  reported v1.14.2. Now `macos-15-intel`.
+- **`macos-14` moved to `macos-15`** — macos-14 is itself now marked deprecated
+  in the same image list.
+- **PyPI publish is now `skip-existing: true`.** Without it, re-running a
+  release whose upload already succeeded fails on a duplicate file, and since
+  `publish-registry` needs `publish-pypi`, that failure also blocks the registry
+  listing — making a partially-published release unrecoverable without a version
+  bump. That is exactly what happened to 1.15.0.
+
 ## [1.15.0] — 2026-09-14 — Batch fan-out, structured output, event-loop hygiene
 
 Tool results stop arriving double-encoded, blocking work stops running on the
