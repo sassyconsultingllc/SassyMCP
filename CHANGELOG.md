@@ -10,6 +10,50 @@ All notable changes to SassyMCP. Newest first. Versions follow semver:
 for new tier-visible features, PATCH for fixes that don't move buyer-
 facing surfaces.
 
+## [1.15.2] — 2026-09-20 — Security: SSH local-execution options bypassed the interceptor
+
+Security release. Upgrade immediately. Affects every version that shipped
+`sassy_shell`. Reported externally on 2026-09-19 by 23W-8H (GitHub), ref
+issue #38.
+
+### Security
+
+- **`ssh -o ProxyCommand="<anything>" host` executed `<anything>` locally and
+  passed the command interceptor as clean.** OpenSSH runs `ProxyCommand`,
+  `LocalCommand` (armed by `PermitLocalCommand`) and `KnownHostsCommand` on the
+  local machine through the local shell; the remote host never has to exist,
+  because `ProxyCommand` runs before the connection does. Two gaps composed
+  into it: `detect_delete_intent()` only recurses into the shells in
+  `_WRAPPER_CMDS` and `ssh` is not one of them, so option values were never
+  scanned; and `validate_command_tiered()` downgrades block-list hits inside
+  quoted strings to tier `low`, which `sassy_shell` logs and then runs — and an
+  ssh option value is always quoted. Net effect: `ssh -o ProxyCommand="rm -rf
+  /" u@h` was the payload the gate was most confident about.
+
+  Fixed by `detect_ssh_exec_option()` in `sassymcp/modules/_security.py`, called
+  at the top of `validate_command_tiered()` — ahead of the block-list loops and
+  ahead of the permission-policy engine, returning tier `high` so neither the
+  string-literal downgrade nor `permission.mode=bypass` nor an `allow` rule can
+  reach past it. It scans raw text rather than the quote-stripped view, and
+  requires an ssh-family binary *as well as* the option so that commands merely
+  mentioning the words still run. `-F` and `-o Include=` are refused only when
+  the config file sits outside `~/.ssh`. Refusals point at ProxyJump
+  (`ssh -J jumphost target`), which spawns no shell.
+
+  The guard lives at the shared validator, so it covers all five command
+  surfaces: `sassy_shell`, `sassy_linux_exec`, `sassy_session_start`,
+  `sassy_session_send`, `sassy_adb_shell`. The report attributed the bypass to
+  `harden_ssh()` in `hermes_node.py`, which is an ergonomics shim that forces
+  `BatchMode=yes` and was never a sanitiser — its docstring now says so.
+
+  Breaking only for commands that relied on the bypass. Known gap, tracked for
+  follow-up: `git -c core.sshCommand=`, `GIT_SSH_COMMAND` and `rsync -e` reach
+  the same channel and are not yet covered.
+
+  Coverage: `tests/test_ssh_exec_guard.py`, 26 cases, including a
+  false-positive set (`ssh -J`, `ssh -f`, `ssh -i`, `grep -o proxycommand`)
+  that must keep running.
+
 ## [1.15.1] — 2026-09-14 — Release pipeline repair
 
 No functional change to the server. 1.15.0 reached PyPI but its GitHub Release

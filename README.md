@@ -10,7 +10,7 @@
 
 **274 tools | 36 modules | 18 tool groups | Replaces 75+ MCP servers | 34MB standalone exe**
 
-*Last updated: 2026-08-14 — v1.14.4 | all tools unlocked; optional supporter license*
+*Last updated: 2026-09-20 — v1.15.2 | all tools unlocked; optional supporter license*
 
 Compatible with Claude Desktop, Grok Desktop, Cursor, Windsurf, and any MCP client.
 
@@ -348,7 +348,7 @@ Download `sassymcp.dxt` from the [latest release](https://github.com/sassyconsul
 
 ### VS Code extension
 
-Install **[SassyMCP](https://marketplace.visualstudio.com/items?itemName=sassyconsultingllc.sassymcp)** from the VS Code marketplace. The extension locates `sassymcp.exe` (PATH or the `sassymcp.exePath` setting), runs the same auto-config CLI, and adds a status bar item showing your license tier and brain health. Five commands cover Setup Wizard, Reinstall Configs, Open Audit Log, Open `_DELETE_` Folder, Show Brain Status.
+Install the VS Code extension from the [GitHub Release `.vsix`](https://github.com/sassyconsultingllc/SassyMCP/releases/latest) (`sassymcp-1.15.2.vsix`) until the Visual Studio Marketplace listing is live. The extension locates `sassymcp.exe` (PATH or the `sassymcp.exePath` setting), runs the same auto-config CLI, and adds a status bar item showing supporter-tier label and brain health. Command palette: Open Sassy Brain Cockpit, Run Setup Wizard, Reinstall Client Configs, Open Audit Log, Open `_DELETE_` Folder, Show Brain Status.
 
 ### Manual auto-config CLI
 

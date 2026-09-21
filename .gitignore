@@ -2,6 +2,11 @@ __pycache__/
 *.pyc
 *.pyo
 .venv/
+
+# Local env / secrets — never ship
+.env
+.env.*
+!.env.example
 dist/
 *.egg-info/
 .ruff_cache/

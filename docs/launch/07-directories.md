@@ -95,11 +95,38 @@ Clients tested: Claude Desktop, Cursor, Windsurf, VS Code Copilot, Cline, Contin
 
 Then record where each listing lives so you can update them on each release.
 
+## VS Code Marketplace (not a directory — arming notes)
+
+The extension publisher id is `sassyconsultingllc`. `vsce package` already
+works (CI `build-vsix` + local dry-run). Live `vsce publish` is gated in
+`.github/workflows/release.yml` job `publish-vsix`:
+
+1. Azure DevOps / Marketplace: create publisher **sassyconsultingllc** if it
+   does not exist.
+2. GitHub repo **secret** `VSCE_PAT` — a Marketplace PAT with Acquire +
+   Publish. Never commit the token.
+3. GitHub repo **variable** `PUBLISH_VSIX` = `true`.
+4. Push a **new** version tag (do not re-tag `v1.15.1`). The job only runs on
+   `refs/tags/v*.*.*` **and** `vars.PUBLISH_VSIX == 'true'`.
+   `workflow_dispatch` builds artifacts but does **not** publish PyPI, the
+   MCP registry, or the Marketplace.
+
+Until that listing exists, point users at
+https://github.com/sassyconsultingllc/SassyMCP/releases/latest
+(`sassymcp-1.15.1.vsix`). Do not advertise
+`marketplace.visualstudio.com/items?itemName=sassyconsultingllc.sassymcp`
+as live — gallery search returns 0 hits.
+
 ## Submitted so far
 
 | Directory | Date | Status | Where |
 |---|---|---|---|
-| CuratedMCP (curatedmcp.com) | 2026-07-29 | Resubmit with v1.14.2 | SHA256-pinned `sassymcp-v1.14.2.mcpb` (`f5609947…b3d1`); SelfMod removed; proprietary license; frozen `update_apply` disabled; tip → https://sassyconsultingllc.com/store#sassymcp |
+| Official MCP Registry | 2026-09-14 | Live 1.15.1 | https://registry.modelcontextprotocol.io/v0.1/servers/io.github.sassyconsultingllc%2Fsassymcp/versions/latest |
+| PyPI `sassymcp` | 2026-09-14 | Live 1.15.1 (`info.version`) | https://pypi.org/project/sassymcp/1.15.1/ — local `pip show` may still report 1.14.3 until upgraded |
+| GitHub Release | 2026-09-14 | Live v1.15.1 | exe, mcpb, dxt, vsix, macos |
+| Glama | auto-index | Listed, README was stale at 1.14.4 until sidecar sync | https://glama.ai/mcp/servers/sassyconsultingllc/SassyMCP — claim in Glama UI (login) |
+| CuratedMCP (curatedmcp.com) | 2026-07-29 | Stale at v1.14.2; human resubmit 1.15.1 mcpb | SHA256 `06366a12…62780` on `sassymcp-v1.15.1.mcpb`; tip → https://sassyconsultingllc.com/store#sassymcp |
+| Smithery / mcp.so / PulseMCP / awesome-mcp-servers / Open VSX / VS Marketplace | 2026-09-16 | Not listed; need human login or PAT | See Marketplace arming above; awesome-list is a PR to punkpeye/awesome-mcp-servers |
 
 ## Maintenance (what directories reward)
 Per the 2026 directory feedback: they surface **last-commit date, production-readiness, client

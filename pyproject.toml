@@ -9,6 +9,25 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "Proprietary"}
 authors = [{name = "SassyMCP Contributors"}]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: Other/Proprietary License",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development",
+]
+
+[project.urls]
+Homepage = "https://sassyconsultingllc.com/store"
+Repository = "https://github.com/sassyconsultingllc/SassyMCP"
+Issues = "https://github.com/sassyconsultingllc/SassyMCP/issues"
+Changelog = "https://github.com/sassyconsultingllc/SassyMCP/blob/main/CHANGELOG.md"
 
 dependencies = [
     "mcp>=1.28.1,<2.0.0",
