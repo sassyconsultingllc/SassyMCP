@@ -110,6 +110,120 @@ def _word_boundary_pattern(needle: str):
     return pat
 
 
+# ── SSH local-execution option guard ─────────────────────────────────
+#
+# OpenSSH runs the VALUE of a handful of options on the LOCAL machine,
+# through the local shell, while setting up a connection. They turn a
+# benign-looking `ssh user@host` into an arbitrary local command runner.
+#
+# This is a complete bypass of every other gate in this module, because:
+#   - the payload lives inside a quoted option value, and
+#     validate_command_tiered() downgrades block-list hits inside string
+#     literals to "low" — which sassy_shell logs and then RUNS; and
+#   - detect_delete_intent() only recurses into the shells listed in
+#     _WRAPPER_CMDS, and `ssh` is not one of them, so nothing inside the
+#     option value is ever scanned at all.
+#
+# Net effect before this guard: `ssh -o ProxyCommand="rm -rf /" u@h`
+# passed the interceptor as a clean command and executed. Reported as
+# RCE against the sassy_shell gate, 2026-09-19.
+#
+# ProxyJump (-J host) is the safe replacement for jump hosts — ssh wires
+# the hop internally and spawns no shell — so the refusal below always
+# has somewhere to send the caller.
+
+_SSH_BINARIES = frozenset({
+    "ssh", "scp", "sftp", "slogin", "sshpass", "autossh", "ssh-copy-id",
+})
+
+# Options whose value ssh executes locally. PermitLocalCommand is the
+# switch that arms LocalCommand; it is useless on its own but always part
+# of that chain, so refusing it keeps the diagnostic honest.
+_SSH_EXEC_OPTIONS = frozenset({
+    "proxycommand", "localcommand", "permitlocalcommand", "knownhostscommand",
+})
+
+# Accepts every spelling ssh does: `-o Name=v`, `-oName=v`, `-o "Name v"`.
+_SSH_EXEC_OPTION_RE = re.compile(
+    r"-o\s*[\"']?\s*(" + "|".join(sorted(_SSH_EXEC_OPTIONS)) + r")\b",
+    re.IGNORECASE,
+)
+
+# `-F path` / `-Fpath` and `-o Include=path` both pull in a client config
+# that can itself carry ProxyCommand — the same RCE, one hop removed.
+# Refused only when the file is outside the user's own ~/.ssh, so real
+# multi-config workflows (`ssh -F ~/.ssh/config.work`) keep working.
+#
+# -F is deliberately CASE-SENSITIVE: lowercase `-f` is "go to background",
+# an ordinary flag whose next token is the destination, not a config file.
+# Matching it case-insensitively would refuse every `ssh -f user@host cmd`.
+_SSH_CONFIG_FLAG_RE = re.compile(r"(?:^|\s)-F\s*([^\s\"';|&]+)")
+_SSH_INCLUDE_OPT_RE = re.compile(
+    r"-o\s*[\"']?\s*include\s*[=\s]\s*([^\s\"';|&]+)",
+    re.IGNORECASE,
+)
+
+# A bare `ssh` token, not `sshd` and not a substring of some other word.
+_SSH_BINARY_RE = re.compile(
+    r"(?:^|[\s\"'/\\=(;|&])(" + "|".join(sorted(_SSH_BINARIES)) + r")(?:\.exe)?\b",
+    re.IGNORECASE,
+)
+
+
+def _is_trusted_ssh_config(path: str) -> bool:
+    """True when `path` resolves inside the user's own ~/.ssh directory.
+
+    Expands %VARS%/$VARS and `~` first so `%USERPROFILE%\\.ssh\\config` and
+    `$HOME/.ssh/config` are recognised, and resolves so that
+    `~/.ssh/../../tmp/evil` cannot pose as trusted.
+    """
+    try:
+        p = Path(os.path.expandvars(path)).expanduser()
+        if not p.is_absolute():
+            p = Path.cwd() / p
+        p = p.resolve(strict=False)
+        ssh_dir = (Path.home() / ".ssh").resolve(strict=False)
+    except (OSError, ValueError):
+        return False
+    return p == ssh_dir or ssh_dir in p.parents
+
+
+def detect_ssh_exec_option(command: str) -> tuple[bool, str, str]:
+    """Detect an ssh-family invocation that would run a LOCAL command.
+
+    Returns (is_hit, label, detail). Scans the RAW command — not the
+    quoted-string-stripped view the block list uses — because the whole
+    point of this attack is that the payload sits inside a quoted value.
+
+    Requires an ssh-family binary to be present as well as the option, so
+    that unrelated commands which merely mention these words (for example
+    `grep -o proxycommand ~/.ssh/config`) are not refused.
+    """
+    if not command:
+        return False, "", ""
+    if not _SSH_BINARY_RE.search(command):
+        return False, "", ""
+
+    m = _SSH_EXEC_OPTION_RE.search(command)
+    if m:
+        opt = m.group(1).lower()
+        return True, f"ssh-exec-option:{opt}", (
+            f"ssh option '{m.group(1)}' runs its value as a local command, "
+            "and that value is invisible to the command interceptor"
+        )
+
+    for pattern in (_SSH_CONFIG_FLAG_RE, _SSH_INCLUDE_OPT_RE):
+        for cm in pattern.finditer(command):
+            cfg_path = cm.group(1).strip("\"'")
+            if not _is_trusted_ssh_config(cfg_path):
+                return True, "ssh-exec-option:config-file", (
+                    f"ssh would load client config from '{cfg_path}', which is "
+                    f"outside {Path.home() / '.ssh'} and can set ProxyCommand"
+                )
+
+    return False, "", ""
+
+
 def validate_command(command: str) -> tuple[bool, str | None]:
     """Check if a shell command is blocked.
 
@@ -137,7 +251,22 @@ def validate_command_tiered(command: str) -> tuple[bool, str, str | None]:
     The strict raw-text scan can be re-enabled via the
     `interceptor.scanStringLiterals` config key — when true, a "low" hit
     is reported as "high" so existing strict callers see no behavior change.
+
+    Structural check first: ssh options that execute a local command are
+    refused at "high" unconditionally. They must not be subject to the
+    string-literal downgrade below, because their payload is ALWAYS a
+    quoted value — downgrading it to "low" is exactly what let
+    `ssh -o ProxyCommand="rm -rf /" u@h` through. See
+    detect_ssh_exec_option().
     """
+    ssh_hit, _ssh_label, ssh_detail = detect_ssh_exec_option(command)
+    if ssh_hit:
+        return False, "high", (
+            f"Command blocked (safety): {ssh_detail}. Use ProxyJump "
+            "('ssh -J jumphost target') for jump hosts, or run this ssh "
+            "invocation outside the MCP tool surface."
+        )
+
     cmd_raw = command.strip().lower()
     cmd_stripped = _strip_quoted_strings(cmd_raw)
 

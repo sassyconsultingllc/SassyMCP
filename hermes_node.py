@@ -44,7 +44,11 @@ import urllib.request
 from sassymcp._paths import CROSSLINK_DB
 from sassymcp._db import open_db
 from sassymcp.modules.crosslink import _post_message, _read_messages, _register_session
-from sassymcp.modules._security import validate_command_tiered, detect_delete_intent
+from sassymcp.modules._security import (
+    detect_delete_intent,
+    detect_ssh_exec_option,
+    validate_command_tiered,
+)
 from sassymcp.modules.shell import _run_subprocess
 from sassymcp.modules import audit as _audit
 from sassymcp.modules.memory import MemoryStore
@@ -84,7 +88,14 @@ def audit(event, pattern, command, meta=None):
 
 
 def harden_ssh(cmd):
-    """SassyMCP edge: sassy_shell wedges on interactive SSH. Force non-interactive."""
+    """SassyMCP edge: sassy_shell wedges on interactive SSH. Force non-interactive.
+
+    Ergonomics, NOT a security filter — it only stops ssh blocking on a
+    prompt. The gate that refuses ssh options which execute a local
+    command (ProxyCommand and friends) is detect_ssh_exec_option(), which
+    classify() reaches through validate_command_tiered() and run_command()
+    re-checks below. Do not treat this function as a sanitiser.
+    """
     if cmd.strip().lower().startswith("ssh ") and "batchmode" not in cmd.lower():
         return cmd.replace("ssh ", "ssh -o BatchMode=yes -o ConnectTimeout=5 ", 1)
     return cmd
@@ -110,6 +121,14 @@ def classify(cmd):
 
 
 def run_command(cmd, shell):
+    # Last line of defence before a model-authored string reaches a real
+    # shell. classify() already refuses these via validate_command_tiered,
+    # but run_command is the only thing standing between HERMES_AUTORUN=1
+    # and execution, so it re-checks rather than trusting its caller.
+    ssh_hit, label, detail = detect_ssh_exec_option(cmd)
+    if ssh_hit:
+        audit("hermes_node_refuse", label, cmd, {"shell": shell})
+        return f"[REFUSED] {detail}"
     out = asyncio.run(_run_subprocess(shell, harden_ssh(cmd), 60))
     return out if isinstance(out, str) else str(out)
 
