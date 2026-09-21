@@ -23,12 +23,6 @@ classifiers = [
     "Topic :: Software Development",
 ]
 
-[project.urls]
-Homepage = "https://sassyconsultingllc.com/store"
-Repository = "https://github.com/sassyconsultingllc/SassyMCP"
-Issues = "https://github.com/sassyconsultingllc/SassyMCP/issues"
-Changelog = "https://github.com/sassyconsultingllc/SassyMCP/blob/main/CHANGELOG.md"
-
 dependencies = [
     "mcp>=1.28.1,<2.0.0",
     "psutil>=5.9.0",
@@ -46,6 +40,16 @@ dependencies = [
     "pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'",
     "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
 ]
+
+# Must stay BELOW `dependencies` — a [project.urls] table opened above it
+# makes TOML read the following `dependencies = [...]` as a key of THAT
+# table, and the build dies with "URL `dependencies` of field
+# `project.urls` must be a string". That killed the first v1.15.2 run.
+[project.urls]
+Homepage = "https://sassyconsultingllc.com/store"
+Repository = "https://github.com/sassyconsultingllc/SassyMCP"
+Issues = "https://github.com/sassyconsultingllc/SassyMCP/issues"
+Changelog = "https://github.com/sassyconsultingllc/SassyMCP/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff", "mypy"]
