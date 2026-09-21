@@ -117,6 +117,50 @@ https://github.com/sassyconsultingllc/SassyMCP/releases/latest
 `marketplace.visualstudio.com/items?itemName=sassyconsultingllc.sassymcp`
 as live — gallery search returns 0 hits.
 
+## What is automated vs what needs a human (verified 2026-09-20)
+
+Checked properly rather than assumed. Three of these were wrong in the table below before.
+
+**Automated — a tag push does it.** `.github/workflows/release.yml` publishes GitHub
+Release, PyPI, and the **official MCP Registry** (`publish-registry`, `mcp-publisher`,
+GitHub OIDC — no secret). That job succeeded on v1.15.1 and is the whole "get listed"
+path for the registry.
+
+**VS Code / Microsoft is two separate things — do not conflate them.**
+
+1. *VS Code MCP gallery* (the `@mcp` list in the Extensions view, and `MCP: Browse
+   Servers`). This ingests from the OSS MCP Community Registry via the GitHub MCP
+   Registry. **Publishing to the official registry lists us here automatically** —
+   there is no separate Microsoft submission. Already covered by `publish-registry`.
+2. *Visual Studio Marketplace* (the `sassymcp` VSIX extension). Still blocked. See the
+   arming steps above: needs an Azure DevOps publisher, the `VSCE_PAT` repo secret, and
+   `PUBLISH_VSIX=true`. As of 2026-09-20 `gh variable list` and `gh secret list` both
+   return empty, so `publish-vsix` has `skipped` on every tag including v1.15.2.
+
+**CuratedMCP cannot be automated, and we were never listed.** The old row claiming
+"stale at v1.14.2" was wrong. Verified against their live catalog API:
+`GET https://curatedmcp.com/api/servers/sassymcp` → 404, and paging all 4 pages of
+`/api/servers` (79 servers) finds no `sassy*` slug. Their catalog MCP server
+(`oneprofile-dev/curatedmcp-catalog-mcp`) is read-only by design — its CONTRIBUTING.md
+explicitly lists "write access to the catalog" under *what we don't accept*. Listings
+are authored by logged-in accounts on curatedmcp.com (GitHub/Google OAuth). So this is
+a human web submission; there is no PR or API path.
+
+**Anthropic Connectors Directory — we would be rejected today.** Desktop extensions
+(MCPB) go through a web form at https://clau.de/desktop-extention-submission, not the
+Claude.ai portal (that one is remote servers only, and needs a Team/Enterprise org).
+Three hard gates we currently fail:
+
+| Requirement | Our state |
+|---|---|
+| `privacy_policies` array in `mcpb/manifest.json` (0.2+) | missing |
+| "Privacy Policy" section in `README.md` | missing |
+| Every tool carries `title` + `readOnlyHint`/`destructiveHint` | 0 annotations across 274 tools |
+
+Their docs: *"Missing or incomplete privacy policies result in immediate rejection."*
+So the privacy policy is the cheap blocker and the annotation sweep is the expensive
+one. Do not submit until all three are done.
+
 ## Submitted so far
 
 | Directory | Date | Status | Where |
@@ -125,7 +169,9 @@ as live — gallery search returns 0 hits.
 | PyPI `sassymcp` | 2026-09-14 | Live 1.15.1 (`info.version`) | https://pypi.org/project/sassymcp/1.15.1/ — local `pip show` may still report 1.14.3 until upgraded |
 | GitHub Release | 2026-09-14 | Live v1.15.1 | exe, mcpb, dxt, vsix, macos |
 | Glama | auto-index | Listed, README was stale at 1.14.4 until sidecar sync | https://glama.ai/mcp/servers/sassyconsultingllc/SassyMCP — claim in Glama UI (login) |
-| CuratedMCP (curatedmcp.com) | 2026-07-29 | Stale at v1.14.2; human resubmit 1.15.1 mcpb | SHA256 `06366a12…62780` on `sassymcp-v1.15.1.mcpb`; tip → https://sassyconsultingllc.com/store#sassymcp |
+| CuratedMCP (curatedmcp.com) | — | **NOT LISTED** (verified 2026-09-20 via their catalog API — 404 on the slug, absent from all 79 entries). Earlier "stale at v1.14.2" row was wrong. Needs a human OAuth login on curatedmcp.com; no PR or API path exists | https://curatedmcp.com — paste the metadata block at the top of this file |
+| VS Code MCP gallery | 2026-09-14 | Live, via the official registry — no separate submission | Extensions view → `@mcp` |
+| Anthropic Connectors Directory (MCPB) | — | Not submitted. Would be **rejected today**: no `privacy_policies` in manifest, no README privacy section, 0 tool annotations | https://clau.de/desktop-extention-submission |
 | Smithery / mcp.so / PulseMCP / awesome-mcp-servers / Open VSX / VS Marketplace | 2026-09-16 | Not listed; need human login or PAT | See Marketplace arming above; awesome-list is a PR to punkpeye/awesome-mcp-servers |
 
 ## Maintenance (what directories reward)
