@@ -84,8 +84,21 @@ def register(server):
         return value
 
     @server.tool()
-    def sassy_state_clear(tool_name: str = "") -> str:
-        """Clear state for a specific tool or all tools."""
+    def sassy_state_clear(tool_name: str = "", confirm: str = "") -> str:
+        """Clear state for a specific tool or all tools.
+
+        Irreversible — deleted state cannot be recovered, so every clear
+        requires confirm='YES' (exact, case-sensitive), matching the
+        convention of sassy_permission privilege mutations and
+        sassy_audit_clear. (Finer per-tool scoping of this gate is deferred.)
+        """
+        if confirm != "YES":
+            scope = f"tool '{tool_name}'" if tool_name else "ALL tools"
+            return (
+                f"Refused: clearing state for {scope} is irreversible. "
+                "Re-run with confirm='YES' (exact, case-sensitive) to "
+                "acknowledge the permanent data loss."
+            )
         _state_manager.clear(tool_name if tool_name else None)
         return "State cleared"
 

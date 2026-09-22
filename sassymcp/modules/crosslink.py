@@ -20,7 +20,10 @@ instance its own SASSYMCP_HOME so they get separate DBs, AND override
 DEFAULT_PORT via the sassy_crosslink_register port arg.
 """
 
+import hmac
+import ipaddress
 import json
+import logging
 import os
 import sqlite3
 import threading
@@ -81,6 +84,41 @@ except Exception:
 _server_thread = None
 _server_instance = None
 _auth_token = None  # Set when server starts
+
+# Only the crosslink web UI origin is ever reflected in ACAO. A literal
+# "null" origin would let sandboxed/file:// pages read the message queue,
+# so disallowed origins get NO Access-Control-Allow-Origin header at all.
+_ALLOWED_ORIGINS = frozenset({"http://localhost:9377", "http://127.0.0.1:9377"})
+
+
+def _timing_safe_eq(a: str, b: str) -> bool:
+    """hmac.compare_digest over UTF-8 bytes (never raises on str input)."""
+    return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
+
+
+logger = logging.getLogger("sassymcp.crosslink")
+
+
+# Loopback origins allowed to reach the crosslink API when NO token is
+# configured (see _check_auth). The whole 127/8 block counts as loopback;
+# a literal "null" origin is deliberately NOT allowed — sandboxed/file://
+# attacker pages send Origin: null, and admitting it would re-open the
+# no-cors queue-write the null-ACAO fix just closed.
+_LOOPBACK_ORIGIN_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _is_loopback_origin(origin: str) -> bool:
+    """True if an Origin header's host is a loopback address."""
+    try:
+        host = (urlparse(origin).hostname or "").lower()
+    except Exception:
+        return False
+    if host in _LOOPBACK_ORIGIN_HOSTS:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def _ensure_db():
@@ -168,36 +206,64 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
 
     def _check_auth(self) -> bool:
+        # Auth precedence: the Authorization header is checked FIRST and is
+        # the preferred channel. ?token= is kept only for backward
+        # compatibility (clients that cannot set headers); its use is logged
+        # as a deprecation warning because query strings end up in server
+        # logs, browser history and referers.
+        #
+        # When NO token is configured the API is unauthenticated, so apply
+        # an Origin check instead: a non-loopback Origin means a web page is
+        # driving the queue — refuse it. Missing/empty Origin is allowed so
+        # legitimate local clients (curl, scripts, no-cors form writes
+        # without an Origin header) keep working.
+        self._deny_detail = ""
         if not _auth_token:
+            origin = self.headers.get("Origin", "")
+            if origin and not _is_loopback_origin(origin):
+                self._deny_detail = (
+                    "Cross-origin request from a non-loopback Origin refused. "
+                    "Set SASSYMCP_CROSSLINK_TOKEN to allow browser access."
+                )
+                return False
             return True
         auth = self.headers.get("Authorization", "")
-        if auth == f"Bearer {_auth_token}":
+        if _timing_safe_eq(auth, f"Bearer {_auth_token}"):
             return True
         qs = parse_qs(urlparse(self.path).query)
-        return qs.get("token", [None])[0] == _auth_token
+        presented = qs.get("token", [None])[0]
+        if presented is not None and _timing_safe_eq(presented, _auth_token):
+            logger.warning(
+                "crosslink: token accepted via deprecated ?token= query "
+                "param — switch to the Authorization: Bearer header"
+            )
+            return True
+        return False
 
     def _json(self, data, status=200):
         origin = self.headers.get("Origin", "")
-        allowed_origins = {"http://localhost:9377", "http://127.0.0.1:9377"}
-        cors_origin = origin if origin in allowed_origins else "null"
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
-        self.send_header("Access-Control-Allow-Origin", cors_origin)
+        # Never emit a literal "null" origin: disallowed origins get no
+        # ACAO header at all, so sandboxed/file:// pages cannot read us.
+        if origin in _ALLOWED_ORIGINS:
+            self.send_header("Access-Control-Allow-Origin", origin)
         self.end_headers(); self.wfile.write(json.dumps(data).encode())
 
-    def _unauthorized(self):
-        self._json({"error": "Unauthorized. Use Authorization: Bearer <token> header or ?token= query param."}, 401)
+    def _unauthorized(self, detail: str = ""):
+        msg = detail or "Unauthorized. Use Authorization: Bearer <token> header or ?token= query param."
+        self._json({"error": msg}, 401)
 
     def do_OPTIONS(self):
         origin = self.headers.get("Origin", "")
-        allowed_origins = {"http://localhost:9377", "http://127.0.0.1:9377"}
-        cors_origin = origin if origin in allowed_origins else "null"
         self.send_response(200)
-        for h, v in [("Access-Control-Allow-Origin", cors_origin), ("Access-Control-Allow-Methods","GET,POST,OPTIONS"),("Access-Control-Allow-Headers","Content-Type,Authorization")]: self.send_header(h, v)
+        if origin in _ALLOWED_ORIGINS:
+            self.send_header("Access-Control-Allow-Origin", origin)
+        for h, v in [("Access-Control-Allow-Methods","GET,POST,OPTIONS"),("Access-Control-Allow-Headers","Content-Type,Authorization")]: self.send_header(h, v)
         self.end_headers()
 
     def do_GET(self):
-        if not self._check_auth(): self._unauthorized(); return
+        if not self._check_auth(): self._unauthorized(self._deny_detail); return
         p = urlparse(self.path); qs = parse_qs(p.query)
         if p.path == "/health": self._json({"status": "ok", "service": "sassymcp-crosslink", "auth_enabled": _auth_token is not None})
         elif p.path == "/sessions": self._json({"sessions": _list_sessions()})
@@ -206,7 +272,7 @@ class _Handler(BaseHTTPRequestHandler):
         else: self._json({"error": "Not found"}, 404)
 
     def do_POST(self):
-        if not self._check_auth(): self._unauthorized(); return
+        if not self._check_auth(): self._unauthorized(self._deny_detail); return
         p = urlparse(self.path)
         content_len = int(self.headers.get("Content-Length", 0) or 0)
         if content_len > 1_048_576:  # 1MB max

@@ -171,11 +171,22 @@ _SENSITIVE_KEY_FRAGMENTS = (
 
 # Value-level regex matches for shapes that are credentials regardless of
 # what key they came in under (catches `command="ssh -p ghp_..." too).
+#
+# Conservative by design: only prefixes/shapes with near-zero collision
+# risk against ordinary prose. RESIDUAL (accepted, 2026-09-21): arbitrary
+# non-standard secrets echoed in exception text (custom token formats,
+# passwords, API keys with no distinctive prefix) cannot be recognized
+# here — no regex distinguishes them from ordinary words. Key-based
+# masking (_SENSITIVE_KEY_FRAGMENTS) is the backstop for those; values
+# under innocuous keys with no recognizable shape remain visible.
 _VALUE_SECRET_PATTERNS = (
     re.compile(r"\bghp_[A-Za-z0-9]{30,}\b"),           # GitHub fine-grained PAT prefix
     re.compile(r"\bgithub_pat_[A-Za-z0-9_]{50,}\b"),   # GitHub fine-grained PAT
     re.compile(r"\bsk-[A-Za-z0-9_\-]{20,}\b"),         # OpenAI/Anthropic-style
     re.compile(r"\bxoxb-[A-Za-z0-9-]{20,}\b"),         # Slack bot token
+    re.compile(r"\bxoxp-[A-Za-z0-9-]{20,}\b"),         # Slack user token
+    re.compile(r"\bxoxe-[A-Za-z0-9-]{20,}\b"),         # Slack external/enterprise token
+    re.compile(r"\bAIza[A-Za-z0-9_\-]{35}\b"),         # Google API key
     re.compile(r"\bAKIA[A-Z0-9]{16}\b"),               # AWS access key id
     re.compile(r"\bASIA[A-Z0-9]{16}\b"),               # AWS STS key id
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |)PRIVATE KEY-----"),

@@ -5,13 +5,13 @@
 -->
 # SassyMCP
 
-*Last updated: 2026-07-15 — v1.13.0*
+*Last updated: 2026-09-21 — v1.16.0*
 
 One MCP server replacing 75+. After installing, sassymcp will automatically detect and patch every OTHER MCP client on your machine (Cursor, VS Code, Windsurf, Continue, Cline, Zed, Grok Desktop) so all your AI tools share the same brain.
 
 ## What you get
 
-- 274 tools across 36 modules in 18 groups — file ops, shell, GitHub, Android, vision, security audit, persona, memory, multi-AI coordination, self-update
+- 278 tools across 39 modules in 18 groups — file ops, shell, GitHub, Android, iPhone (experimental), vision, security audit, persona, memory, multi-AI coordination, self-update
 - Smart tool loading (only the groups you use; default ~5K tokens of context)
 - Cross-session memory and crosslink messaging (your Claude conversation can hand off to a Cursor session)
 - Safe delete (rm/del/Remove-Item are intercepted; targets staged to _DELETE_/ for review)

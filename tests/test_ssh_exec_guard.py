@@ -45,6 +45,20 @@ BLOCKED = [
     # Config-file injection: same RCE, one hop removed.
     "ssh -F /tmp/evil_config u@h",
     "ssh -o Include=/tmp/evil_config u@h",
+    # Backtick-wrapped invocations: POSIX command substitution means the
+    # ssh invocation (and its local ProxyCommand payload) still runs (F1).
+    "`ssh -o ProxyCommand=calc u@h`",
+    "'`ssh -o ProxyCommand=calc u@h`'",
+    '"`ssh -o ProxyCommand=calc u@h`"',
+    # Command substitution in the -o OPTION-NAME position: the substitution
+    # executes in the caller's shell before ssh parses its options, so the
+    # named-option scan above can never see the resulting ProxyCommand=...
+    # (F2, 2026-09-21). Refused as its own label at "high" tier.
+    "ssh -o `echo ProxyCommand=id` u@h",
+    "ssh -o $(echo ProxyCommand=id) u@h",
+    "ssh -o`echo ProxyCommand=id` u@h",
+    'ssh -o"$(echo ProxyCommand=id)" u@h',
+    "scp -o $(echo ProxyCommand=id) a b",
 ]
 
 # Must keep working — the guard is not allowed to break ordinary ssh use.
@@ -59,6 +73,11 @@ ALLOWED = [
     # Mentions the option name but is not an ssh invocation.
     "grep -o proxycommand /etc/ssh_config.bak",
     "cat ~/.ssh/config",
+    # Command substitution OUTSIDE the -o option-name position is ordinary
+    # shell use and must keep working — the substitution guard is scoped
+    # to `-o` followed by backtick/$( only.
+    'ssh user@host "echo $(hostname)"',
+    "ssh user@host 'uptime; echo $(date)'",
 ]
 
 
@@ -94,6 +113,12 @@ def test_labels_identify_the_offending_option():
     assert label == "ssh-exec-option:proxycommand"
     _hit, label, _d = detect_ssh_exec_option("ssh -F /tmp/evil u@h")
     assert label == "ssh-exec-option:config-file"
+    # Substitution in the -o option-name position gets its own label so the
+    # diagnostic tells the caller what actually fired.
+    _hit, label, _d = detect_ssh_exec_option("ssh -o $(echo ProxyCommand=id) u@h")
+    assert label == "ssh-exec-option:substitution"
+    _hit, label, _d = detect_ssh_exec_option("ssh -o `echo ProxyCommand=id` u@h")
+    assert label == "ssh-exec-option:substitution"
 
 
 def test_untiered_validate_command_also_refuses():

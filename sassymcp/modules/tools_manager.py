@@ -54,6 +54,19 @@ _TOOL_DEFS = {
         "description": "Android screen mirror -- sassy_scrcpy_start, sassy_scrcpy_record",
         "optional_for": "android",
     },
+    "idevice": {
+        # Representative binary; the suite ships idevice_id, ideviceinfo,
+        # idevicescreenshot, idevicesyslog, ideviceinstaller, idevicepair.
+        "binary": "idevice_id", "subdir": "libimobiledevice",
+        # No reliable winget id on Windows -- install happens in WSL2 or on
+        # a macOS/Linux host instead.
+        "pkg": {"windows": None, "macos": "libimobiledevice", "linux": "libimobiledevice-utils"},
+        "extra_paths": _platform.pick(
+            macos=["/opt/homebrew/bin/idevice_id", "/usr/local/bin/idevice_id"],
+            linux=["/usr/bin/idevice_id"], default=[]),
+        "description": "libimobiledevice suite -- required for all sassy_iphone_* tools (experimental iOS support)",
+        "optional_for": "iphone",
+    },
     "nmap": {
         "binary": "nmap", "subdir": "nmap",
         "pkg": {"windows": "Insecure.Nmap", "macos": "nmap", "linux": "nmap"},

@@ -7,8 +7,154 @@
 
 All notable changes to SassyMCP. Newest first. Versions follow semver:
 `MAJOR.MINOR.PATCH` — MAJOR for breaking config / API changes, MINOR
-for new tier-visible features, PATCH for fixes that don't move buyer-
+for new user-visible features, PATCH for fixes that don't move buyer-
 facing surfaces.
+
+## [1.16.0] — 2026-09-21 — Tool description and annotation overhaul
+
+All 278 tool descriptions rewritten from per-tool implementation analysis:
+explicit read-only/mutating/destructive disclosure, defined vague terms with
+ordering and result caps, parameter semantics with defaults and interactions
+(compensating for 0% schema parameter-description coverage), and named
+sibling guidance ("use X instead of Y when Z"). MCP `ToolAnnotations`
+(`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) now
+set explicitly on every tool: 154 read-only, 40 destructive, 212 idempotent,
+146 open-world. Metadata lives in generated `sassymcp/tool_descriptions.py`
+and `sassymcp/tool_annotations.py`, applied at registration in
+`server._apply_tool_metadata()`; per-tool source untouched.
+
+### Tool profiles
+
+Per-session gating of the MCP tool set, controlled from the Control Panel
+(new **Profiles** tab; `GET`/`POST /api/profile`). Seven profiles — `full`
+(default), `developer`, `forensics`, `devices`, `sysadmin`, `readonly`
+(computed per-tool from the curated `readOnlyHint` annotations: 154
+tools), and `custom` (an explicit group set ticked in the dashboard).
+Activation swaps the FastMCP tool manager's registry to the allowed subset,
+so a tool hidden from `tools/list` is also uncallable via `tools/call`
+(including fan-out through `sassy_batch`, which dispatches through the
+same manager). Privilege boundary: no MCP tool can switch profiles, so a
+session can never widen its own tool set; `meta` stays on in every profile
+(introspection); any switch that would expose a currently-hidden tool
+requires `confirm='YES'` and is audit-logged old→new. State is
+runtime-only and resets to `full` on restart. See README "Tool profiles".
+
+### Pre-release security audit fixes
+
+A source-code audit of the release candidate found and fixed, before tagging:
+
+- **SSH guard bypass (residual from 1.15.2):** the exec-option regex missed
+  `` `ssh -o ProxyCommand=...` `` inside backticks; the boundary class now
+  covers command substitution. Guard test battery extended (29 cases).
+- **Sensitive-read denylist enforced:** `is_sensitive_read_path()` (`~/.ssh`,
+  tokens, SAM hives, `/etc/shadow`, …) is now called by every file-content
+  read path (`sassy_read_file`, `sassy_read_multiple`, `sassy_search_files`,
+  `sassy_file_info`, `sassy_diff`, `sassy_edit_block`, `sassy_edit_multi`);
+  refusals are enforced in all permission modes and audit-logged.
+- **Privilege-escalation gating:** `sassy_permission` switching to
+  `mode=bypass` now requires `confirm='YES'`; control-panel settings/rules
+  mutations now write audit events with actor and old→new values.
+- **Annotation coherence:** adopted one `destructiveHint` policy (destructive
+  only for data deletion, silent overwrites of non-designated output, or
+  system/device/registry mutation — not for writing requested export files)
+  and corrected 13 contradictions (`sassy_reg_write`, `sassy_reg_export`,
+  `sassy_audit_clear`, `sassy_gh_protect_branch`, screenshot/archive tools…).
+- **Zip-slip:** `sassy_unzip` now validates with `os.path.commonpath`.
+- **Transport hardening:** crosslink no longer reflects
+  `Access-Control-Allow-Origin: null`; `server.key` and the panel token get
+  `0600` + Windows ACL lockdown; `SASSYMCP_AUTH_TOKEN` charset is validated
+  at startup (fail closed).
+- **Android failure contracts:** `phone_screen` tools now report explicit
+  missing-adb/timeout errors instead of silent empty strings.
+
+### Experimental iPhone support
+
+New `iphone` tool group (6 tools) backed by
+[libimobiledevice](https://libimobiledevice.org/): `sassy_iphone_list`,
+`sassy_iphone_info`, `sassy_iphone_screenshot`, `sassy_iphone_syslog`
+(bounded capture), `sassy_iphone_apps`, `sassy_iphone_install`
+(`confirm='YES'`). Per-host-OS install hints, `udid` targeting for multiple
+devices, and iOS 17+ pairing notes throughout; graceful degradation when the
+binaries or a trusted device are absent. See README "iPhone support
+(experimental)".
+
+### Medium/low hardening (~60 fixes from the same audit)
+
+- **SSH guard:** command substitution in the `-o` option-name position is now
+  refused at high tier; `_WRAPPER_CMDS` extended (`dash`/`ksh`/`fish`/`ash`,
+  `iex`/`Invoke-Expression`); env-var indirection documented as accepted
+  residual risk; bypass-mode forfeiting safe-delete staging documented.
+- **File safety:** `sassy_copy`/`sassy_move` now refuse sources on the
+  sensitive-read denylist (read-equivalent exfiltration); `sassy_zip`/
+  `sassy_tar` warn in the result and audit-log when archives include
+  denylist members (operation proceeds so legitimate backups keep working).
+- **Privilege/panel:** `add_rule`/`add_root`/`clear_rules` now require
+  `confirm='YES'`; panel `POST /api/settings` requires `confirm:"YES"` to
+  set `mode=bypass` (panel UI updated); `sassy_panel` `status` no longer
+  reveals the bearer token (explicit `url` action only); new `rotate` action
+  for panel token rotation; `?token=` query form deprecated but still
+  accepted (header preferred); `sandboxRoots` must be absolute paths;
+  `sassy_state_clear` requires `confirm='YES'`; wizard EOF/Ctrl+C exits
+  cleanly; closed-stdin startup falls back to HTTP instead of crashing;
+  `persona.md` gets a one-deep `.bak` backup; panel tokenized URLs no longer
+  logged at startup.
+- **Transports/auth:** opt-in `SASSYMCP_STRICT_RATE_LIMIT=1` fail-closed mode;
+  offline-gate and rate-limit refusals are now audit-logged; self-signed cert
+  SAN includes the bind host; token preview reduced to 4 chars;
+  `SASSYMCP_NO_AUTH=1` + non-loopback logs a warning; token-file check also
+  rejects group/world write bits; crosslink validates `Origin` against
+  loopback when tokenless; PowerShell launch quoting in offline handoff;
+  `start-tunnel.bat`/`autostart-bridge.bat` check process ownership before
+  killing `:21001`; tunnel docs gained a token rotation cadence.
+- **Tools:** `sassy_adb_install` annotation corrected to destructive;
+  `SASSYMCP_ADB` honored via shared `_platform.resolve_adb()`;
+  `sassy_android_logcat` validation unified with `sassy_adb_logcat`; GitHub
+  `owner`/`repo` validated centrally; `sassy_screenshot` errors on malformed
+  `region`; `sassy_update_apply` next-steps branch per OS; adb
+  unauthorized/offline remediation hints; hook-registration failures now log
+  warnings; `sassy_memory_handoff` reports `crosslink_posted`; audit
+  error-text masking extended (Slack `xoxp-`/`xoxe-`, Google `AIza`).
+- **Docs/packaging:** `docs/releases/v1.16.0.md` added; README VSIX filename,
+  tier wording, and exe size staleness fixed; MSI documented as manual-only;
+  Linux install documented as pip-only; new `docs/ERROR_ENVELOPES.md` and
+  `docs/SUPPLY_CHAIN.md`; VSIX README bumped to 1.16.0.
+
+Deferred (documented, non-blocking): offline signature trust anchor for
+updates, macOS code signing/notarization (needs an Apple Developer
+identity), moving 5 android-adjacent tools from `system` to `android`,
+`github_quick`→`github_full` thin-wrapper refactor, full error-envelope
+normalization at the wrapper layer.
+
+### Pre-tag additions
+
+Final additions before tagging v1.16.0 (verified against source, tests
+passing):
+
+- **`UPGRADING-1.16.md` (repo root):** version-upgrade guide documenting
+  the ten behavior changes in this release (confirm gates, panel token
+  hygiene, `?token=` deprecation, copy/move denylist refusals, zip/tar
+  warnings, state-clear gating, screenshot region validation,
+  tokens.json fail-closed permissions, strict rate-limit opt-in). Note:
+  `MIGRATION.md` remains a competitor-switching guide (from v1.4.1), not
+  a version-upgrade guide — the upgrade guide says so explicitly.
+- **`tests/test_tool_metadata.py`:** regression tripwire asserting
+  278/278 description and annotation coverage for every registered tool,
+  all-four-boolean annotations, at-least-one-destructive policy check, a
+  curated known-read-only list (`sassy_read_file`, `sassy_iphone_list`,
+  …), and destructive-disclosure wording in descriptions. Adding a tool
+  without curated metadata now fails the suite.
+- **`scripts/generate_tools_doc.py` + `docs/TOOLS.md`:** generated
+  per-group tool reference (278 tools, 18 groups, curated descriptions),
+  re-runnable via the script (`--check` fails CI on a stale doc).
+
+### Fixed
+
+- **`sassy_launch_app` command injection (Linux).** The `name` argument was
+  interpolated into a `/bin/sh -c` string, so a name containing shell
+  metacharacters ran as commands. Now passed through `shlex.quote`. The
+  Windows and macOS branches build an argv list and were never affected.
+  Present since at least 1.14.2, so 1.14.2, 1.15.0 and 1.15.2 carry it —
+  upgrade if you run SassyMCP on Linux or macOS.
 
 ## [1.15.2] — 2026-09-20 — Security: SSH local-execution options bypassed the interceptor
 

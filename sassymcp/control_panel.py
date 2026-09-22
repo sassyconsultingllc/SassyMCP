@@ -14,12 +14,17 @@ Three panes:
   - Event log   — tails audit.jsonl (tool calls, intercepts, policy events)
   - Settings    — permission mode, sandbox roots, tier, key config
   - Classifiers — destructive-pattern tiers + allow/ask/deny rules
+  - Profiles    — per-session tool gating (which tools the session sees/calls)
 
 API (all under /api, token-gated):
   GET  /api/status
   GET  /api/events?limit=N
   GET  /api/settings      POST /api/settings   {mode, sandboxRoots, destructiveAction}
+                                               (mode:"bypass" also needs confirm:"YES")
   GET  /api/rules         POST /api/rules       {rules: [...]}
+  GET  /api/profile       POST /api/profile     {profile, [groups], [confirm]}
+                                               (per-session tool gating;
+                                                widening needs confirm:"YES")
 
 The request routing is a pure function — handle_api(method, path, query,
 body) -> (status, obj) — so it is unit-testable without binding a socket.
@@ -30,6 +35,7 @@ import json
 import logging
 import os
 import secrets
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -50,6 +56,41 @@ def _token_file() -> Path:
     return HOME / "control_panel.token"
 
 
+def _lockdown_token_acl(path: Path) -> None:
+    """Best-effort Windows ACL lockdown for the panel token file.
+
+    Mirrors auth._lockdown_windows_acl: strip inherited ACEs and grant
+    only the current user full control. No-op on POSIX, where the file
+    is created with mode 0o600. Failures only log a warning — the bearer
+    auth itself is still in force; this is defense-in-depth.
+    """
+    if os.name != "nt":
+        return
+    try:
+        import subprocess
+        username = os.environ.get("USERNAME") or os.environ.get("USER") or ""
+        if not username:
+            logger.warning("USERNAME env var empty; cannot lock down panel token file")
+            return
+        # /inheritance:r removes inherited ACEs; /grant:r replaces any
+        # existing grant to the current user with explicit Full control.
+        result = subprocess.run(
+            ["icacls.exe", str(path),
+             "/inheritance:r",
+             "/grant:r", f"{username}:F"],
+            capture_output=True, text=True, timeout=5,
+            # check=False: failure is reported from `result`, not raised.
+            check=False,
+        )
+        if result.returncode != 0:
+            logger.warning(
+                f"icacls lockdown on panel token file failed: "
+                f"{result.stderr.strip()[:200]}"
+            )
+    except Exception as e:
+        logger.warning(f"icacls lockdown of panel token file skipped: {e}")
+
+
 def panel_token() -> str:
     """Load or create the per-install panel token (owner-only file)."""
     global _token
@@ -67,19 +108,59 @@ def panel_token() -> str:
     except Exception:
         pass
     _token = secrets.token_urlsafe(32)
+    _persist_token_file(_token)
+    return _token
+
+
+_persist_stderr_warned = False
+
+
+def _persist_token_file(token: str) -> bool:
+    """Write the panel token to the token file, owner-only. Returns True on
+    success. On failure the caller keeps an ephemeral in-memory token so the
+    panel still works this session (audit C F5) — the failure is logged AND
+    surfaced on stderr once so operators notice the token won't survive a
+    restart."""
+    global _persist_stderr_warned
+    tf = _token_file()
     try:
         tf.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(str(tf), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
-            os.write(fd, _token.encode())
+            os.write(fd, token.encode())
         finally:
             os.close(fd)
         try:
             tf.chmod(0o600)
         except OSError:
             pass
+        _lockdown_token_acl(tf)  # Windows: strip inherited ACEs, best-effort
+        return True
     except Exception as e:
         logger.warning(f"Could not persist panel token: {e}")
+        if not _persist_stderr_warned:
+            _persist_stderr_warned = True
+            print("SassyMCP Control Panel: WARNING — could not write the panel "
+                  f"token file ({tf}): {e}. The panel will use an ephemeral "
+                  "token this session; a NEW token will be generated on every "
+                  "restart.",
+                  file=sys.stderr)
+        return False
+
+
+def rotate_panel_token() -> str:
+    """Generate a fresh panel bearer token, persist it, invalidate the old one.
+
+    The request handler compares against the in-memory token on every
+    request, so the old token stops working immediately — no restart needed.
+    Returns the new token. Note: if SASSYMCP_PANEL_TOKEN is set, the env value
+    wins again on the next process start, so rotation is only effective for
+    the current session in that case.
+    """
+    global _token
+    _token = secrets.token_urlsafe(32)
+    _persist_token_file(_token)
+    logger.info("Control Panel token rotated")
     return _token
 
 
@@ -131,6 +212,30 @@ def _audit_events(limit: int = 100) -> list[dict]:
     return out
 
 
+def _audit_panel_mutation(actor: str, api_path: str, changes: dict) -> None:
+    """Best-effort audit event for a panel settings/rules mutation.
+
+    Mirrors the MCP tool path: goes through log_tool_call so the entry
+    lands in audit.log/audit.jsonl with the standard ts/timestamp fields
+    and the existing two-layer redaction (audit._mask_args masks values
+    key-named like token/secret/password and redacts credential-shaped
+    substrings). `changes` maps config key -> {"old": ..., "new": ...}.
+    Never raises — audit must not break the panel.
+    """
+    if not changes:
+        return
+    try:
+        from sassymcp.modules.audit import log_tool_call
+    except Exception:
+        return
+    try:
+        args = {"actor": actor, "api": api_path}
+        args.update(changes)
+        log_tool_call("control_panel", args, 0)
+    except Exception:
+        pass
+
+
 def _status() -> dict:
     from sassymcp import policy
     from sassymcp.modules.runtime_config import get
@@ -171,24 +276,48 @@ def _settings() -> dict:
     }
 
 
-def _apply_settings(body: dict) -> tuple[int, dict]:
+def _apply_settings(body: dict, actor: str = "control_panel") -> tuple[int, dict]:
     from sassymcp import policy
-    from sassymcp.modules.runtime_config import set_val
+    from sassymcp.modules.runtime_config import get, set_val
+    changes: dict = {}
     if "mode" in body:
         m = str(body["mode"] or "").strip().lower()
         if m and m not in policy.VALID_MODES:
             return 400, {"error": f"invalid mode {m!r}", "valid": list(policy.VALID_MODES)}
+        # Trust-tier parity with the sassy_permission MCP tool (set_mode to
+        # bypass requires confirm='YES' there): the panel must not be a
+        # confirm-free backdoor to bypass mode. BEHAVIOR CHANGE: POSTs that
+        # set mode=bypass without confirm:"YES" now get 400 instead of 200.
+        if m == "bypass" and str(body.get("confirm") or "") != "YES":
+            return 400, {"error": ("setting permission.mode to 'bypass' requires "
+                                   'confirm:"YES" in the POST body')}
+        old = get("permission.mode", "")
         set_val("permission.mode", m)
+        changes["permission.mode"] = {"old": old, "new": m}
     if "sandboxRoots" in body:
         roots = body["sandboxRoots"]
         if not isinstance(roots, list) or not all(isinstance(r, str) for r in roots):
+            # audit any mutation already applied above before rejecting
+            _audit_panel_mutation(actor, "/api/settings", changes)
             return 400, {"error": "sandboxRoots must be a list of strings"}
+        # the UI labels these "absolute paths" — enforce it server-side
+        bad = [r for r in roots if not os.path.isabs(r)]
+        if bad:
+            _audit_panel_mutation(actor, "/api/settings", changes)
+            return 400, {"error": "sandboxRoots must be absolute paths",
+                         "bad": bad}
+        old_roots = list(get("permission.sandboxRoots", []) or [])
         set_val("permission.sandboxRoots", roots)
+        changes["permission.sandboxRoots"] = {"old": old_roots, "new": list(roots)}
     if "destructiveAction" in body:
         da = str(body["destructiveAction"] or "block").strip().lower()
         if da not in ("block", "confirm"):
+            _audit_panel_mutation(actor, "/api/settings", changes)
             return 400, {"error": "destructiveAction must be 'block' or 'confirm'"}
+        old_da = get("interceptor.destructiveAction", "block")
         set_val("interceptor.destructiveAction", da)
+        changes["interceptor.destructiveAction"] = {"old": old_da, "new": da}
+    _audit_panel_mutation(actor, "/api/settings", changes)
     return 200, _settings()
 
 
@@ -212,16 +341,80 @@ def _rules() -> dict:
     return {"rules": list(get("permission.rules", []) or [])}
 
 
-def _apply_rules(body: dict) -> tuple[int, dict]:
-    from sassymcp.modules.runtime_config import set_val
+def _apply_rules(body: dict, actor: str = "control_panel") -> tuple[int, dict]:
+    from sassymcp.modules.runtime_config import get, set_val
     rules = body.get("rules")
     if not isinstance(rules, list):
         return 400, {"error": "body must be {\"rules\": [...]}"}
     for r in rules:
         if not isinstance(r, dict) or str(r.get("action", "")).lower() not in ("allow", "ask", "deny"):
             return 400, {"error": "each rule needs action in allow|ask|deny", "bad": r}
+    old_rules = list(get("permission.rules", []) or [])
     set_val("permission.rules", rules)
+    _audit_panel_mutation(
+        actor, "/api/rules",
+        {"permission.rules": {"old": old_rules, "new": list(rules)}},
+    )
     return 200, _rules()
+
+
+# ── Tool profiles (per-session MCP tool gating, human-only) ─────────────
+#
+# Profiles decide which registered tools the current MCP session can see
+# (tools/list) and call (tools/call). Switching is HUMAN-surface only: the
+# routes below are the only writers, and no MCP tool can change the active
+# profile, so a session can never widen its own tool set.
+#
+# State is session-scoped and runtime-only (never persisted); a server
+# restart always comes back up on "full".
+
+def _tool_manager():
+    """The server's FastMCP ToolManager, or None if not assembled yet.
+
+    Lazy import (same pattern as _loaded_tools) so the panel module stays
+    importable in isolation for unit tests.
+    """
+    try:
+        from sassymcp.server import mcp
+        return getattr(mcp, "_tool_manager", None)
+    except Exception:
+        return None
+
+
+def _profile() -> dict:
+    from sassymcp.modules import tool_profiles as tp
+    return tp.profile_status()
+
+
+def _apply_profile(body: dict, actor: str = "control_panel") -> tuple[int, dict]:
+    from sassymcp.modules import tool_profiles as tp
+    name = str(body.get("profile") or "").strip().lower()
+    if not name:
+        return 400, {"error": "body must be {\"profile\": <name>, ...}"}
+    tm = _tool_manager()
+    if tm is None or not tp.is_bound():
+        return 503, {"error": "tool profiles not initialized (server still starting?)"}
+    confirm = str(body.get("confirm") or "").strip().upper() == "YES"
+    old = tp.get_active()
+    old_custom = tp.get_custom_groups()
+    kwargs: dict = {"confirm": confirm}
+    if name == "custom":
+        groups = body.get("groups")
+        if not isinstance(groups, list):
+            return 400, {"error": "custom profile needs {\"groups\": [...]}"}
+        kwargs["groups"] = [str(g) for g in groups]
+    try:
+        result = tp.activate_profile(name, tm, **kwargs)
+    except tp.ConfirmRequired as e:
+        return 400, {"error": str(e), "confirm_required": True}
+    except ValueError as e:
+        return 400, {"error": str(e)}
+    changes = {"profile": {"old": old, "new": result["active"]}}
+    if name == "custom":
+        changes["custom_groups"] = {
+            "old": old_custom, "new": result["custom_groups"]}
+    _audit_panel_mutation(actor, "/api/profile", changes)
+    return 200, result
 
 
 # ── Cockpit: read-only tool visualizers ───────────────────────────────
@@ -395,8 +588,14 @@ def _cockpit_view(key: str) -> tuple[int, dict]:
 
 # ── Pure router (unit-testable) ───────────────────────────────────────
 
-def handle_api(method: str, path: str, query: dict, body: dict | None) -> tuple[int, dict]:
-    """Route an API request to a (status_code, json_obj). No I/O on sockets."""
+def handle_api(method: str, path: str, query: dict, body: dict | None,
+               actor: str = "control_panel") -> tuple[int, dict]:
+    """Route an API request to a (status_code, json_obj). No I/O on sockets.
+
+    `actor` identifies the mutation source for the audit trail (do_POST
+    derives it from how the panel token was presented); POST /api/settings
+    and POST /api/rules mutations are audit-logged with it.
+    """
     body = body or {}
     if path == "/api/status" and method == "GET":
         return 200, _status()
@@ -411,7 +610,7 @@ def handle_api(method: str, path: str, query: dict, body: dict | None) -> tuple[
         if method == "GET":
             return 200, _settings()
         if method == "POST":
-            return _apply_settings(body)
+            return _apply_settings(body, actor)
     if path == "/api/cockpit" and method == "GET":
         view = (query.get("view") or [None])[0]
         if view:
@@ -423,18 +622,29 @@ def handle_api(method: str, path: str, query: dict, body: dict | None) -> tuple[
         if method == "GET":
             return 200, _rules()
         if method == "POST":
-            return _apply_rules(body)
+            return _apply_rules(body, actor)
+    if path == "/api/profile":
+        if method == "GET":
+            return 200, _profile()
+        if method == "POST":
+            return _apply_profile(body, actor)
     return 404, {"error": f"no route for {method} {path}"}
 
 
 # ── HTTP handler ──────────────────────────────────────────────────────
 
 def _provided_token(handler: BaseHTTPRequestHandler, query: dict) -> str | None:
+    # Preferred: X-Panel-Token header. The ?token= query form is deprecated
+    # (tokens leak into browser history, shell history, and any log that
+    # captures the URL) but still accepted for backward compatibility with
+    # the panel UI's first-load flow and existing bookmarks.
     h = handler.headers.get("X-Panel-Token")
     if h:
         return h
     q = query.get("token")
     if q:
+        logger.warning("panel token supplied via ?token= query string "
+                       "(deprecated); prefer the X-Panel-Token header")
         return q[0]
     return None
 
@@ -496,7 +706,10 @@ class _PanelHandler(BaseHTTPRequestHandler):
         except (ValueError, json.JSONDecodeError):
             self._json(400, {"error": "body must be JSON"})
             return
-        status, obj = handle_api("POST", parsed.path, query, body)
+        # Actor identity for the audit trail: the panel has a single bearer
+        # token, so the best available identity is how it was presented.
+        actor = "panel:" + ("header" if self.headers.get("X-Panel-Token") else "query")
+        status, obj = handle_api("POST", parsed.path, query, body, actor=actor)
         self._json(status, obj)
 
 
@@ -543,7 +756,9 @@ def start_panel(port: int = DEFAULT_PORT) -> dict:
         _thread = threading.Thread(target=srv.serve_forever, name="sassymcp-panel", daemon=True)
         _thread.start()
         info = panel_info()
-        logger.info(f"Control Panel on {info['url']}")
+        # Log the TOKENLESS url — the tokenized one must never land in logs
+        # (query-string tokens leak into log aggregators; audit C F4).
+        logger.info(f"Control Panel on {panel_base_url()}")
         return info
     logger.warning(f"Control Panel could not bind a port: {last_err}")
     return {"url": None, "token": panel_token(), "error": str(last_err)}
@@ -561,13 +776,31 @@ def stop_panel() -> None:
     _thread = None
 
 
+def panel_base_url(port: int | None = None) -> str:
+    """Tokenless panel URL — safe for logs, status output, and LLM callers.
+
+    The bearer token must never be logged or printed; it is revealed only
+    through the explicit `sassy_panel url` / `rotate` tool actions.
+    """
+    p = current_port() or coerce_port(DEFAULT_PORT if port is None else port)
+    return f"http://{_LOOPBACK}:{p}/"
+
+
 def panel_info(port: int | None = None) -> dict:
     """URL + token. When the panel is running, reports the ACTUAL bound
     port (which may differ from `port` if the preferred one was taken);
-    otherwise falls back to `port` (or the default) as a best guess."""
+    otherwise falls back to `port` (or the default) as a best guess.
+
+    The `url` embeds the token as ?token= for convenience (bookmarks, the
+    auth-hint page). That query-string form is deprecated: prefer sending
+    the token in the X-Panel-Token header, which the panel UI itself uses.
+    The query path stays accepted for backward compatibility, and its use
+    is logged as a warning by the request handler. Never log or print this
+    tokenized URL — use panel_base_url() for anything that lands in logs.
+    """
     tok = panel_token()
     p = current_port() or coerce_port(DEFAULT_PORT if port is None else port)
-    return {"url": f"http://{_LOOPBACK}:{p}/?token={tok}", "token": tok, "port": p}
+    return {"url": f"{panel_base_url(p)}?token={tok}", "token": tok, "port": p}
 
 
 def is_running() -> bool:
@@ -577,8 +810,9 @@ def is_running() -> bool:
 _AUTH_HINT = (
     "<!doctype html><meta charset=utf-8><body style='font-family:system-ui;"
     "background:#0d1117;color:#c9d1d9;padding:2rem'>"
-    "<h2>SassyMCP Control Panel</h2><p>Append your panel token: "
-    "<code>?token=...</code></p><p>Find it via <code>sassy_panel status</code> "
+    "<h2>SassyMCP Control Panel</h2><p>Send your panel token in the "
+    "<code>X-Panel-Token</code> header (or append <code>?token=...</code>, "
+    "deprecated). Find it via <code>sassy_panel url</code> "
     "or in <code>~/.sassymcp/control_panel.token</code>.</p></body>"
 )
 
@@ -655,6 +889,7 @@ INDEX_HTML = r"""<!doctype html>
   <button data-pane=screen>Screen</button>
   <button data-pane=settings>Settings</button>
   <button data-pane=rules>Classifiers &amp; rules</button>
+  <button data-pane=profiles>Profiles</button>
 </nav>
 <main class=wide>
   <section class="pane active" id=events>
@@ -686,6 +921,20 @@ INDEX_HTML = r"""<!doctype html>
     <textarea id=newrule placeholder='{"action":"deny","tool":"sassy_shell","command":"rm"}'></textarea>
     <div class=row><button class=act id=addrule>Add rule</button>
       <button class=act id=saverules style="background:#238636;color:#fff">Save all rules</button></div>
+  </section>
+
+  <section class=pane id=profiles>
+    <h3 style="margin:.25rem 0">Tool profile <span class=hint>(session-scoped — resets to Full Access on restart)</span></h3>
+    <p class=hint>A profile gates which tools this session can see
+      (<code>tools/list</code>) and call (<code>tools/call</code>), including
+      fan-out through <code>sassy_batch</code>. Switching is human-only —
+      no MCP tool can change the profile, so a session can never widen its
+      own tool set. Moving to a broader tool set is an explicit,
+      audit-logged escalation.</p>
+    <div id=proflist></div>
+    <div id=profgroups style="margin-top:.5rem"></div>
+    <div class=row><button class=act id=applyprofile>Apply profile</button>
+      <span class=hint id=profactive></span></div>
   </section>
 
   <section class=pane id=server><div class=cards id=cards-server></div></section>
@@ -746,7 +995,9 @@ async function loadSettings(){const s=await api('/settings');
 document.getElementById('setmode').onchange=e=>{document.getElementById('modehint').textContent=MODE_HINTS[e.target.value]||'';};
 document.getElementById('savesettings').onclick=async()=>{
   const roots=document.getElementById('roots').value.split('\n').map(x=>x.trim()).filter(Boolean);
-  await api('/settings','POST',{mode:document.getElementById('setmode').value,sandboxRoots:roots,destructiveAction:document.getElementById('destr').value});
+  // confirm:'YES' is required by the server whenever mode is bypass (trust-tier
+  // parity with the sassy_permission MCP tool); harmless for other settings.
+  await api('/settings','POST',{mode:document.getElementById('setmode').value,sandboxRoots:roots,destructiveAction:document.getElementById('destr').value,confirm:'YES'});
   toast('Settings saved');loadStatus();loadSettings();};
 // rules
 function renderRules(){document.getElementById('rulelist').innerHTML=RULES.map((r,i)=>
@@ -769,6 +1020,47 @@ document.getElementById('addrule').onclick=()=>{try{const r=JSON.parse(document.
   if(!['allow','ask','deny'].includes((r.action||'').toLowerCase())){toast('action must be allow|ask|deny',true);return;}
   RULES.push(r);renderRules();document.getElementById('newrule').value='';}catch(e){toast('rule must be valid JSON',true);}};
 document.getElementById('saverules').onclick=async()=>{await api('/rules','POST',{rules:RULES});toast('Rules saved');};
+// profiles
+let PROF=null,SEL=null,CUSTOM_GROUPS=[];
+async function loadProfiles(){try{PROF=await api('/profile');}catch(e){PROF=null;return;}
+  SEL=PROF.active;CUSTOM_GROUPS=(PROF.custom_groups||[]).slice();renderProfiles();}
+function renderProfiles(){
+  const act=PROF.profiles.find(p=>p.name===PROF.active);
+  document.getElementById('profactive').textContent='Active: '+(act?act.title:PROF.active);
+  document.getElementById('proflist').innerHTML=PROF.profiles.map(p=>
+    '<label style="display:flex;gap:.5rem;align-items:baseline;margin:.45rem 0;cursor:pointer">'+
+    '<input type=radio name=prof value="'+esc(p.name)+'"'+(p.name===SEL?' checked':'')+' style="width:auto;flex:none">'+
+    '<span><b>'+esc(p.title)+'</b>'+(p.name===PROF.active?' <span class="tag allow">active</span>':'')+
+    ' <span class=hint>'+(p.tool_count==null?'':p.tool_count+' tools · ')+esc(p.description)+'</span></span></label>').join('');
+  document.querySelectorAll('input[name=prof]').forEach(r=>r.onchange=()=>{SEL=r.value;renderProfGroups();});
+  renderProfGroups();
+}
+function renderProfGroups(){
+  const p=PROF.profiles.find(x=>x.name===SEL);const host=document.getElementById('profgroups');
+  if(!p){host.innerHTML='';return;}
+  if(p.name==='custom'){
+    host.innerHTML='<p class=hint>Tick the groups this session may use. <b>meta</b> is always on (introspection).</p><div class=row>'+
+      PROF.groups.map(g=>'<label style="display:inline-flex;gap:.35rem;align-items:center;margin:.25rem .6rem .25rem 0;font-size:.82rem;color:var(--fg)">'+
+      '<input type=checkbox data-g="'+esc(g.name)+'" style="width:auto"'+(g.name==='meta'?' checked disabled':(CUSTOM_GROUPS.includes(g.name)?' checked':''))+' title="'+esc(g.description)+'">'+esc(g.name)+'</label>').join('')+'</div>';
+    host.querySelectorAll('input[data-g]').forEach(c=>c.onchange=()=>{
+      CUSTOM_GROUPS=[...host.querySelectorAll('input[data-g]:checked')].map(x=>x.dataset.g);});
+  }else if(p.name==='readonly'){
+    host.innerHTML='<p class=hint>Computed per-tool from the curated MCP annotations — every tool with <code>readOnlyHint=true</code>. No group list applies.</p>';
+  }else{
+    host.innerHTML='<p class=hint>Groups in this profile:</p><div class=row>'+
+      (p.groups||[]).map(g=>'<span class=chip>'+esc(g)+'</span>').join('')+'</div>';
+  }
+}
+document.getElementById('applyprofile').onclick=async()=>{
+  // confirm:'YES' is always sent; the server only *requires* it when the
+  // switch would expose currently-hidden tools (escalation), mirroring
+  // the settings pane's bypass-mode pattern.
+  const body={profile:SEL,confirm:'YES'};
+  if(SEL==='custom')body.groups=CUSTOM_GROUPS.filter(g=>g!=='meta');
+  const r=await api('/profile','POST',body);
+  const act=r.profiles.find(p=>p.name===r.active);
+  toast('Profile: '+r.active+' ('+(act&&act.tool_count!=null?act.tool_count+' tools':'')+')');
+  loadProfiles();};
 // ── cockpit: read-only tool visualizers ──────────────────────────────
 const COCKPIT={
   server:[{k:'health',l:'Health'},{k:'metrics',l:'Live metrics'},
@@ -829,7 +1121,7 @@ function buildPane(pane){
 }
 async function showPane(pane){await ensureCatalog();buildPane(pane);}
 // init
-loadStatus();loadEvents();loadSettings();loadClassifiers();loadRules();
+loadStatus();loadEvents();loadSettings();loadClassifiers();loadRules();loadProfiles();
 </script>
 </body></html>
 """

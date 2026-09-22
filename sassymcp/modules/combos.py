@@ -84,8 +84,8 @@ ranked search with context.
 
 try:
     _register_hooks()
-except Exception:
-    pass
+except Exception as e:
+    logger.warning("combos: hook registration failed: %s", e)
 
 
 def register(server):
@@ -206,9 +206,8 @@ def register(server):
         except ImportError as e:
             return _err(f"phone_screen module unavailable: {e}")
 
-        # phone_screen exposes its tools via @server.tool decorator inside
-        # register(), but the underlying logic lives in module-level helpers
-        # named _phone_state(), _phone_ui(), _phone_glance() — call those
+        # phone_screen exposes its tool logic as module-level helpers
+        # (_phone_state(), _phone_ui(), _phone_glance()) — call those
         # directly to avoid going through the MCP layer.
         async def _safe_call(fn_name: str, **kwargs):
             fn = getattr(_ps, fn_name, None)

@@ -66,9 +66,11 @@ if "%TUNNEL_NAME%"=="" set TUNNEL_NAME=%SASSYMCP_TUNNEL_NAME%
 if "%TUNNEL_NAME%"=="" set TUNNEL_NAME=sassymcp
 
 REM --- Kill any stale bridge on :PORT ---------------------------
+REM Best-effort ownership check: only kill the listener if its image
+REM name looks like a SassyMCP/python process, so we never nuke an
+REM unrelated service that happens to hold the port.
 for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:"LISTENING.*:%PORT% "') do (
-    echo [INFO] Killing stale process on :%PORT% (PID %%P)
-    taskkill /f /pid %%P >nul 2>&1
+    call :KillStale %%P
 )
 
 REM --- Launch HTTP bridge in background --------------------------
@@ -86,7 +88,26 @@ cloudflared tunnel run %TUNNEL_NAME%
 
 echo [INFO] cloudflared exited. Stopping HTTP bridge...
 for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:"LISTENING.*:%PORT% "') do (
-    taskkill /f /pid %%P >nul 2>&1
+    call :KillStale %%P
 )
 
 endlocal
+goto :eof
+
+:KillStale
+REM Best-effort: kill PID %~1 only if its image is a SassyMCP/python process.
+set "STALE_PID=%~1"
+set "OWNER="
+for /f "delims=" %%I in ('tasklist /FI "PID eq %STALE_PID%" /NH /FO CSV 2^>nul ^| findstr /I /V "^INFO:"') do set "OWNER=%%I"
+if not defined OWNER (
+    echo [WARN] Could not identify owner of PID %STALE_PID% on :%PORT% - leaving it alone.
+    goto :eof
+)
+echo "%OWNER%" | findstr /I "sassymcp python" >nul
+if errorlevel 1 (
+    echo [WARN] Port :%PORT% is held by PID %STALE_PID% ^(%OWNER%^) - not a SassyMCP/python process, leaving it alone.
+) else (
+    echo [INFO] Killing stale SassyMCP process on :%PORT% (PID %STALE_PID%)
+    taskkill /f /pid %STALE_PID% >nul 2>&1
+)
+goto :eof

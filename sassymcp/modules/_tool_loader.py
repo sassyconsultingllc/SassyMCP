@@ -205,6 +205,14 @@ TOOL_GROUPS = {
         "max_concurrent": 3,
         "calls_per_minute": 30,
     },
+    "iphone": {
+        "modules": ["iphone"],
+        "description": "Experimental iPhone (iOS) control via libimobiledevice",
+        "always_load": False,
+        "network": "none",
+        "max_concurrent": 3,
+        "calls_per_minute": 30,
+    },
     "system": {
         "modules": ["network_audit", "process_manager",
                      "bluetooth", "eventlog", "clipboard"],

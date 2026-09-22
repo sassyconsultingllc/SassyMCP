@@ -121,7 +121,9 @@ def register(server):
     @server.tool()
     async def sassy_file_permissions(path: str) -> str:
         """Check file/directory permissions. Windows: ACLs (Get-Acl). macOS:
-        POSIX mode + ACLs + flags (ls -led@). Linux: getfacl, or ls -lad."""
+        POSIX mode + ACLs + flags (ls -led@). Linux: getfacl, or ls -lad.
+        Surfaces only metadata/ACLs — never file bytes — so the
+        sensitive-read denylist does not apply here."""
         # argv form means `path` is a single token (no shell), so no escaping
         # is needed on POSIX; the PS branch still escapes for its quoted string.
         safe_path = path.replace("'", "''")

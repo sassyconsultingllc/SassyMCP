@@ -149,6 +149,24 @@ _SSH_EXEC_OPTION_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Command substitution in the -o OPTION-NAME position:
+#   `ssh -o `echo ProxyCommand=id` u@h`
+#   `ssh -o $(echo ProxyCommand=id) u@h`
+# The substitution is executed by the CALLER's shell before ssh ever parses
+# its options, so the guard can never see the option name the attacker
+# produced (e.g. ProxyCommand=...) — refusing the pattern itself is the
+# only static fix. Legitimate -o spellings never need substitution:
+# option names are static words, so this has no effect on real workflows.
+#
+# This is deliberately NARROWER than "any substitution in an ssh command":
+# `ssh user@host "echo $(hostname)"` must keep working, so substitution
+# anywhere except the -o option-name position is untouched. Known residual
+# false-positive shape: `-o` inside the REMOTE command colliding with the
+# pattern, e.g. `ssh u@h 'grep -o "$(cmd)" f'` — refused with a clear
+# diagnostic; erring toward refusal is the right default for a local-RCE
+# shape.
+_SSH_SUBST_OPTION_RE = re.compile(r"-o\s*[\"']?\s*(?:`|\$\()")
+
 # `-F path` / `-Fpath` and `-o Include=path` both pull in a client config
 # that can itself carry ProxyCommand — the same RCE, one hop removed.
 # Refused only when the file is outside the user's own ~/.ssh, so real
@@ -164,8 +182,11 @@ _SSH_INCLUDE_OPT_RE = re.compile(
 )
 
 # A bare `ssh` token, not `sshd` and not a substring of some other word.
+# The boundary class includes the backtick: on POSIX, `` `ssh -o
+# ProxyCommand=... u@h` `` is command substitution, so a backtick-wrapped
+# invocation still runs the payload locally (F1, 2026-09-21).
 _SSH_BINARY_RE = re.compile(
-    r"(?:^|[\s\"'/\\=(;|&])(" + "|".join(sorted(_SSH_BINARIES)) + r")(?:\.exe)?\b",
+    r"(?:^|[\s\"'/\\=(;|&`])(" + "|".join(sorted(_SSH_BINARIES)) + r")(?:\.exe)?\b",
     re.IGNORECASE,
 )
 
@@ -210,6 +231,16 @@ def detect_ssh_exec_option(command: str) -> tuple[bool, str, str]:
         return True, f"ssh-exec-option:{opt}", (
             f"ssh option '{m.group(1)}' runs its value as a local command, "
             "and that value is invisible to the command interceptor"
+        )
+
+    # Option NAME built by command substitution — executes locally before
+    # ssh parses options, so the named-option check above cannot see it.
+    if _SSH_SUBST_OPTION_RE.search(command):
+        return True, "ssh-exec-option:substitution", (
+            "ssh -o option name is built by command substitution (backtick "
+            "or $()), which the local shell executes before ssh parses its "
+            "options — the resulting option (e.g. ProxyCommand) is invisible "
+            "to this guard. Spell option names literally."
         )
 
     for pattern in (_SSH_CONFIG_FLAG_RE, _SSH_INCLUDE_OPT_RE):
@@ -448,6 +479,19 @@ _WRAPPER_CMDS = {
     "bash":          {"-c"},
     "sh":            {"-c"},
     "zsh":           {"-c"},
+    # Other common POSIX shells — same -c "command string" contract.
+    "dash":          {"-c"},
+    "ksh":           {"-c"},
+    "fish":          {"-c"},
+    "ash":           {"-c"},
+    # Invoke-Expression: the first POSITIONAL argument is the nested
+    # command (`iex "Remove-Item /tmp/x"`). Empty flag set — _scan_segment's
+    # "first positional token" path handles the recursion. (On systems
+    # with Elixir installed, `iex` is also the interactive REPL; a bare
+    # `iex` with no args recurses into nothing, so this only fires when
+    # a delete keyword actually appears in its arguments.)
+    "iex":                  set(),
+    "invoke-expression":    set(),
 }
 
 # Flags that carry a base64-encoded PowerShell command payload.
@@ -587,6 +631,19 @@ def _scan_segment(seg_lower: str, seg_orig: str) -> tuple[bool, str]:
 
     Takes BOTH the lowered segment (for keyword/pattern matching) and the
     original-case segment (for base64 payloads that must not be lowercased).
+
+    ACCEPTED RESIDUAL (2026-09-21): environment-variable indirection cannot
+    be detected statically. `X=rm -rf /tmp/x; $X` defeats this scan because
+    the delete keyword only exists inside the variable's VALUE at runtime —
+    the segment `$X` carries no literal keyword, and expanding assignments
+    statically is unreliable (values can be built across segments, quoted,
+    exported, or read from files). Shell wrapper recursion (_WRAPPER_CMDS)
+    covers the cases where the payload is literally visible; indirection
+    where the payload is NOT literally visible is out of scope by design.
+    Mitigation remains defense-in-depth: the catastrophic block list in
+    validate_command_tiered() still sees the literal `rm -rf /tmp/x` in
+    the assignment segment (flagged there), and the audit trail records
+    the executed command.
     """
     stripped_lower = seg_lower.strip()
     stripped_orig = seg_orig.strip()

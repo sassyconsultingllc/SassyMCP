@@ -9,9 +9,12 @@ Used by both github_ops (full) and github_quick (lean) modules.
 Requires GITHUB_TOKEN env var or GITHUB_PERSONAL_ACCESS_TOKEN.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
+import re
 from typing import Any
 
 from sassymcp import __version__
@@ -31,6 +34,36 @@ class GitHubAPIError(Exception):
         self.status = status
         self.url = url
         super().__init__(f"GitHub API {status}: {message} [{url}]")
+
+
+# GitHub owner/repo names: letters, digits, '_', '-', '.'. Validated
+# centrally in request() so all ~86 tools get it without per-call-site
+# edits (audit: "owner/repo unvalidated"). A fabricated 400-style
+# GitHubAPIError is raised so every existing `except GitHubAPIError`
+# handler returns the clean error string.
+_OWNER_REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.\-]+$")
+_REPOS_PATH = re.compile(r"^/?repos/([^/]+)/([^/]+?)(?:/|$)")
+
+
+def _validate_owner_repo(path: str) -> None:
+    """Reject owner/repo segments outside the safe charset.
+
+    Skips full URLs (not our path space) and paths that don't start with
+    repos/{owner}/{repo} (e.g. /user, /search/*, GraphQL).
+    """
+    if path.startswith("http"):
+        return
+    m = _REPOS_PATH.match(path)
+    if not m:
+        return
+    owner, repo = m.group(1), m.group(2)
+    for label, value in (("owner", owner), ("repo", repo)):
+        if not _OWNER_REPO_PATTERN.match(value):
+            raise GitHubAPIError(
+                400,
+                f"invalid {label} {value!r}: only letters, digits, '_', '-', '.' allowed",
+                path,
+            )
 
 
 class GitHubClient:
@@ -71,6 +104,7 @@ class GitHubClient:
         retries: int = 3,
     ) -> httpx.Response:
         """Make an authenticated GitHub API request with retry + rate-limit handling."""
+        _validate_owner_repo(path)
         client = await self._get_client()
         url = f"{self.BASE}/{path.lstrip('/')}" if not path.startswith("http") else path
 

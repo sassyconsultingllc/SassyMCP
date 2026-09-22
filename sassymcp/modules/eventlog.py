@@ -15,8 +15,11 @@ import asyncio
 import re
 
 from sassymcp import _platform
+from sassymcp.modules._security import validate_adb_device, validate_adb_package
 
 _SAFE_NAME = re.compile(r'^[A-Za-z0-9 _\-\.]+$')
+
+_LOGCAT_LEVELS = ("V", "D", "I", "W", "E", "F", "S")
 
 
 def _sanitize(value: str, label: str) -> str:
@@ -141,13 +144,34 @@ def register(server):
     @server.tool()
     async def sassy_android_logcat(tag: str = "", level: str = "", lines: int = 100, device: str = "") -> str:
         """Read Android logcat."""
-        args = ["adb"] + (["-s", device] if device else []) + ["logcat", "-d", "-t", str(lines)]
+        # Same validation as sassy_adb_logcat (audit 2.1/4.5): clamp lines to
+        # 1-10000, validate tag/level charset, validate the device selector.
+        lines = max(1, min(lines, 10000))
+        if device:
+            ok, err = validate_adb_device(device)
+            if not ok:
+                return f"Error: {err}"
+        if tag:
+            ok, err = validate_adb_package(tag)  # same safe charset as logcat filters
+            if not ok:
+                return f"Error: invalid tag: {tag}"
+        if level:
+            if level.upper() not in _LOGCAT_LEVELS:
+                return (f"Error: invalid level {level!r}: "
+                        f"must be one of {', '.join(_LOGCAT_LEVELS)}")
+            level = level.upper()
+        adb = _platform.resolve_adb()  # honors SASSYMCP_ADB, not just PATH
+        args = [adb] + (["-s", device] if device else []) + ["logcat", "-d", "-t", str(lines)]
         if tag and level:
             args.extend([f"{tag}:{level}", "*:S"])
         elif tag:
             args.extend([f"{tag}:V", "*:S"])
-        proc = await asyncio.create_subprocess_exec(
-            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        except FileNotFoundError:
+            return ("Error: adb not found — install Android platform-tools "
+                    "or set SASSYMCP_ADB to your adb binary.")
         try:
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
             return stdout.decode("utf-8", errors="replace").strip()

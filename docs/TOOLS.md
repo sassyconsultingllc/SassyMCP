@@ -1,0 +1,1223 @@
+<!--
+   Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+   Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+   CodeMark: SCLLC1-SassyMCP-RUTQQK5VPCVE
+-->
+# SassyMCP Tool Reference
+
+> **Generated — do not edit by hand.** Produced by
+> `scripts/generate_tools_doc.py` from the registered tool set and the
+> curated descriptions in `sassymcp/tool_descriptions.py`. Re-run the
+> script after any tool or description change.
+
+**278 tools** across **18 tool groups** (v1.16.0).
+Every description below is the curated text clients actually receive
+via `tools/list`.
+
+## Group index
+
+| Group | Tools | What it covers |
+|-------|-------|----------------|
+| `meta` | 12 | Context estimation, tool usage stats, group management, batch fan-out (always loaded) |
+| `core` | 30 | File operations, shell commands, desktop automation, surgical editing, audit logging, persistent terminal sessions |
+| `infrastructure` | 14 | Metrics, health, persistent state, runtime config, offline/local-model fallback (always loaded) |
+| `android` | 24 | ADB device control, screen mirroring |
+| `iphone` | 6 | Experimental iPhone (iOS) control via libimobiledevice |
+| `system` | 22 | System monitoring, networking, clipboard, events |
+| `forensics` | 11 | Security audit, registry inspection — paid forensics add-on |
+| `linux` | 1 | Remote Linux SSH commands via plink (streaming) |
+| `github_quick` | 6 | Daily-driver GitHub tools (6 tools) |
+| `github_full` | 80 | Full GitHub API (80 tools) — heavy context cost |
+| `v020` | 30 | Vision, app launcher, web inspector, crosslink, multi-AI coordination |
+| `persona` | 7 | Expert-mode persona, decision framework, engineering standards |
+| `utility` | 11 | Env vars, toast notifications, zip/tar archives, file diff, HTTP requests |
+| `setup` | 8 | First-run setup wizard, external tool bootstrap, auth token generation |
+| `memory` | 9 | Persistent cross-session memory, task handoffs, milestones, pattern learning |
+| `updater` | 4 | Kali-style version checks and self-update (check, list, changelog, apply) |
+| `combos` | 3 | Multi-step combo tools (pr_review, phone_observe, codebase_grep) — collapse N round-trips into one |
+| `prompts` | 0 | MCP prompts — slash-menu shortcuts (pr-review, phone-status, resume, brain-status, setup-sassy) |
+
+## meta — 12 tools
+
+*Context estimation, tool usage stats, group management, batch fan-out (always loaded)*
+
+### sassy_batch
+
+Read-only or mutating depending on its operations: it is a scheduling primitive, not a policy bypass: every operation goes through the normal tool call path — validation, audit, security/confirmation, and per-group rate limiting. operations is a JSON array of {"tool":..., "args":...} (max 50 operations; sassy_batch cannot be nested). max_concurrent caps simultaneous runs (1-16, default 5). timeout_seconds is a per-operation ceiling (default 60.0). stop_on_error (default false) skips pending operations after the first failure. Failures never raise: results return in request order, each with index, tool, ok, elapsed_ms, result, and error. Use for independent fan-out; prefer stop_on_error for dependent pipelines and sequential calls when steps depend on prior results.
+
+### sassy_context_estimate
+
+Read-only. Estimates how much of the context window is consumed by currently registered MCP tool definitions, reporting total estimated tokens, percentage of a 200K window, the heaviest tools, tool count, and actionable recommendations (e.g. disable unused groups, drop github_full when tool count is high). Takes no parameters. If the tool registry cannot be read, it returns a note pointing to the SASSYMCP_LOAD_ALL / SASSYMCP_GROUPS environment settings instead of numbers. Use this first when context feels low or before enabling heavy groups; follow up with sassy_tool_groups to see what is loaded and sassy_tool_group_toggle to disable what you do not need.
+
+### sassy_hooks_activate
+
+Mutating session state: appends the named hook to the in-memory active hook list (hooks can be stacked). Read the playbook carefully afterward. hook_name is the exact hook ID; if not found, the tool returns an error plus the available hook names and substring-based suggestions. On success it returns the full expert playbook: name, owning module, description, and step-by-step instructions covering which tools to use, in what order, what to look for, and what not to do. Use sassy_hooks_list first to discover valid hook names. Activate a hook when a task matches a known domain and you want structured expert guidance; use sassy_hooks_deactivate to unload it.
+
+### sassy_hooks_deactivate
+
+Mutating: removes hooks from the in-memory active list for this session. hook_name is optional; pass a specific active hook name to deactivate just it, or pass nothing to clear all active hooks at once. Returns {"deactivated": name} on success or {"status": "all hooks deactivated"} when clearing; attempting to deactivate a hook that is not active returns an error. Use it when a playbook no longer applies to the task or you want a clean slate before activating a different one; use sassy_hooks_list to see which hooks are currently active.
+
+### sassy_hooks_list
+
+Read-only. Lists every registered operational hook with metadata only (no full instructions): name, owning module, one-line description, and trigger phrases, plus a count and the names of currently active hooks. Takes no parameters. Use this to discover which playbooks exist before calling sassy_hooks_activate; if you know the user's request but not the right hook, use sassy_hooks_suggest to rank matches against the request text first.
+
+### sassy_hooks_suggest
+
+Read-only. user_text is the user's request in free text (required); the tool scores it against each hook's trigger phrases and returns ranked matching hooks, the top_match name, and a hint naming the hook to consider activating. Returns an empty suggestion list with a note to proceed without a playbook when nothing matches. Use when you are unsure which hook applies or proactively when a request sounds like a known domain; then call sassy_hooks_activate with the top match.
+
+### sassy_minify_test
+
+Read-only diagnostic. sample_json is a JSON string containing a sample GitHub API response; nothing is sent anywhere. The tool parses it, runs it through the same minifier applied to GitHub tool responses, and reports original_chars, minified_chars, savings_percent, original/minified estimated tokens (chars divided by 4), tokens_saved, and the minified_data itself. Invalid JSON returns an error instead of results. Use it to gauge how much the GitHub response shrinker will reduce a heavy github_full response before you commit to a large call; it is a test harness, not a live API caller.
+
+### sassy_self_check
+
+Read-only diagnostic. Reconciles the declared module manifest against the live tool registry and reports verdict "whole" or "DEGRADED", package version, runtime (frozen for packaged builds, source for checkouts), pid, live_tool_count, and a per-module import report. It distinguishes real problems from expected absences: BROKEN modules (expected in the default load but fail to import, logged at ERROR) versus dormant_by_design (on-demand groups not yet toggled on, absent by design) versus pruned_low_usage (dropped by usage scoring) versus unsupported (optional modules failing on this platform, non-fatal). Takes no parameters. Use it to verify server health or to diagnose missing tools without confusing intentional lazy-loading with real failures.
+
+### sassy_tool_catalog
+
+Read-only. Enumerates every currently registered tool derived live from the tool registry (so it never drifts from reality), returning total count, per-group counts, the applied filters, and tools grouped by group as name plus one-line purpose, sorted by group then name. group (default empty = all) filters to one tool group; use sassy_tool_groups to learn valid group names. query (default empty) is a case-insensitive substring match against the tool name or its purpose line. Use this as the client-agnostic capability map to see what the server can actually do; prefer it over sassy_tool_groups when you need tool-level detail rather than group metadata.
+
+### sassy_tool_group_toggle
+
+Mutating: flips a tool group's always_load flag in the running server process, enabling (enable=true, default) or disabling (enable=false) its modules, and attempts a tools/list_changed notification so capable clients (Claude Code, Cursor) refresh automatically. Clients that do not handle it (Claude Desktop today) need a manual server restart. group must be an exact group name (core, infrastructure, android, system, forensics, linux, github_quick, github_full, persona, utility, setup, memory, updater, combos, prompts); an unknown name returns an error listing the valid groups. Returns status, the group's modules, and whether the notification was sent. Use it to trim context by disabling heavy unused groups like github_full, or to load dormant capability on demand; check sassy_tool_groups first for current load status.
+
+### sassy_tool_groups
+
+Read-only. Lists all available tool groups with their load status and metadata: member modules, one-line description, always_load flag, tool counts, network requirements, and per-group rate limits. Takes no parameters. Use this to see which groups are loaded before enabling more or diagnosing missing tools (missing tools are usually in a dormant on-demand group); use sassy_tool_group_toggle to change load state and sassy_tool_catalog to list the tools inside a group.
+
+### sassy_tool_usage
+
+Read-only. Returns tool usage analytics tracked by the server and persisted across sessions in ~/.sassymcp/tool_usage.json (last 90 days, capped at 500 invocations per tool): unique_tools_ever, total_invocations, invocations_today, invocations_this_week, and a top_10 list of tool names with recency-weighted scores (0.0-1.0 via exponential decay, so recent calls count more). Takes no parameters. Use it to see which tools are actually exercised, to inform which groups are safe to disable, or to understand usage patterns; pair with sassy_tool_groups when deciding what to prune for context savings.
+
+## core — 30 tools
+
+*File operations, shell commands, desktop automation, surgical editing, audit logging, persistent terminal sessions*
+
+### sassy_audit_clear
+
+Mutating but non-destructive: rotates the active audit logs rather than deleting anything. Requires confirm='YES'; anything else is refused. Renames $SASSYMCP_HOME/audit.log and audit.jsonl (default ~/.sassymcp) to audit.cleared.<YYYYMMDDTHHMMSS>.log/.jsonl, then logs the rotation itself into the fresh log. Nothing is ever unlinked, so forensic history is preserved in the archives. Use when you want a fresh log tail while keeping history; prefer sassy_audit_log or sassy_audit_search for reading entries.
+
+### sassy_audit_false_positives
+
+Read-only. Surfaces recent shell-interceptor pattern events from the local JSONL audit log (~/.sassymcp/audit.jsonl) as rows of timestamp | event | pattern | command (truncated to 120 chars). count caps rows (default 20), newest last. include_bypasses defaults to True, showing both pattern_block entries (commands refused) and pattern_bypass entries (allowed via sassy_shell's allow_pattern); set it False to see only refused commands. Use it to diagnose why a sassy_shell command was blocked and to pick the exact allow_pattern label for a retry. For general log history use sassy_audit_log.
+
+### sassy_audit_log
+
+Read-only. Returns the tail of the audit log (~/.sassymcp/audit.log), which records every tool call with timestamp, tool name, and sanitized (secret-redacted) arguments, plus policy and interceptor events. count sets how many of the most recent lines are returned (default 50), newest last. Use it to review what tools were called recently and with what arguments. When you need entries matching a term rather than the plain tail, use sassy_audit_search.
+
+### sassy_audit_search
+
+Read-only. Filters the audit log (~/.sassymcp/audit.log) for a case-insensitive keyword match on each line; keyword is required. Returns up to count matching lines (default 50), newest last, or a no-match notice. Use it to trace a specific command, pattern label (e.g. 'pattern_block'), or tool name through the log. For the unfiltered recent tail use sassy_audit_log; for structured interceptor block/bypass rows use sassy_audit_false_positives.
+
+### sassy_click
+
+Mutating: performs a real mouse click on the host desktop. Clicks at absolute screen coordinates (x, y required) with button defaulting to 'left' (also 'middle', 'right') and clicks defaulting to 1 for double-clicks and beyond. Coordinates are absolute across all monitors, so call sassy_screen_info first (or sassy_desktop_state) to find monitor positions and window locations. Works on Windows, macOS, and Linux via pyautogui. Use it for clicking GUI elements; use sassy_hotkey for keyboard shortcuts and sassy_type_text for entering text.
+
+### sassy_copy
+
+Mutating: duplicates a file or an entire directory tree. Files are copied with metadata (shutil.copy2); directories copy recursively. Parent directories of the destination are created as needed. Refuses protected sources or destinations (SassyMCP source tree, ~/.sassymcp) and refuses sources on the sensitive-read denylist (SSH keys, AWS/GPG credentials, /etc/shadow, browser login DBs, SassyMCP tokens) — copying such material is treated as read-equivalent exfiltration and refused like a content read. Also refuses to overwrite an existing destination — run sassy_safe_delete on the destination first if you really need to replace it. Use it to duplicate files or trees; use sassy_move when you want to relocate rather than duplicate.
+
+### sassy_desktop_state
+
+Read-only. Lists visible open windows with title and absolute left/top/width/height coordinates spanning all monitors, returned as lean JSON. include_taskbar defaults to False, filtering out taskbar entries. Windows-only for window enumeration (pywinauto UIA backend); macOS enumerates via System Events and needs Accessibility permission granted to the app running SassyMCP; Linux returns an unsupported error. Requires a GUI session; headless hosts return an error. Use it with sassy_screen_info to locate UI elements before sassy_click, or for a quick sense of what is open on the desktop.
+
+### sassy_edit_block
+
+Mutating: replaces a single exact occurrence of old_text with new_text in an existing file, and the prior contents are snapshotted into the adjacent _DELETE_/ staging folder before anything is written, so the change is recoverable. Refuses protected paths and refuses to run when old_text has multiple exact matches (add more context to make it unique). If there is no exact match, nothing is written: a fuzzy fallback (80% similarity) reports the closest text and a character diff instead. Reading is UTF-8 with error replacement; encoding and line endings are preserved. Returns a preview of the changed region with line numbers. Use it for one surgical edit; prefer sassy_edit_multi for batching several edits in one call.
+
+### sassy_edit_multi
+
+Mutating: applies several surgical edits to one existing file in a single call, with the prior contents snapshotted into the adjacent _DELETE_/ staging folder first. edits is a JSON string array of {"old", "new"} objects, applied in order against the evolving content. Any edit whose old text has zero or more than one match aborts the whole call before anything is written, so nothing is partially applied. The file must exist and protected paths are refused. Returns only a count of applied edits, no preview. Use it to batch multiple unique-match changes in one file; use sassy_edit_block when you want a single edit with a context preview.
+
+### sassy_file_info
+
+Read-only. Returns JSON metadata for a path: resolved absolute path, type (file or directory), size in bytes, and modified/created epoch timestamps. For files it adds a line count (and last line index); Excel files (.xlsx, .xls, .xlsm) also get sheet names with row and column counts via openpyxl. For directories it adds item, file, and directory counts of the immediate children. Use it to inspect a path before reading or editing it; use sassy_list_dir to browse a directory's entries and sassy_read_file for contents.
+
+### sassy_hotkey
+
+Mutating: sends a real keyboard shortcut to the host. keys is a '+'-separated combination, e.g. 'ctrl+c', 'alt+tab', 'ctrl+shift+s', split and passed to pyautogui. Works on Windows, macOS, and Linux. There is no output validation beyond the confirmation echo, so verify the effect with sassy_screenshot if it matters. Use it for shortcuts like save, copy, or window switching; use sassy_type_text to type actual text into a field and sassy_click for mouse actions.
+
+### sassy_list_dir
+
+Read-only. Lists directory entries with [FILE] and [DIR] prefixes, directories sorted before files alphabetically. depth controls recursion (default 2, clamped to 1-10). Below the top level, dotfiles and node_modules/__pycache__/.git are skipped, and per-level caps apply (500 entries at top, 100 deeper, 1000 lines total) with warnings naming how many items were hidden. Use it to explore a directory tree; use sassy_file_info for metadata about one path and sassy_read_file to read a file's contents.
+
+### sassy_mkdir
+
+Mutating: creates a directory, including any missing parents, and succeeds silently if the path already exists. Refuses paths that fail the read-path policy (blocked or protected locations). Returns the resolved path. sassy_write_file already creates missing parent directories, so call this mainly when you need an empty directory or an explicit container for later steps.
+
+### sassy_move
+
+Mutating: moves or renames a file or directory to the destination path. Refuses protected sources and destinations, and refuses sources on the sensitive-read denylist (SSH keys, AWS/GPG credentials, /etc/shadow, browser login DBs, SassyMCP tokens) — moving such material is treated as read-equivalent exfiltration and refused like a content read. Also refuses to overwrite an existing destination — sassy_safe_delete the destination first if you genuinely need to replace it. Use it to relocate or rename; use sassy_copy to duplicate without removing the original, and sassy_safe_delete to remove instead.
+
+### sassy_read_file
+
+Read-only. Reads a text file with line-based pagination and returns numbered lines under a header showing how many lines were selected, the start line, the total line count, and how many remain. offset is 0-based and defaults to 0; a negative offset reads the last N lines (tail mode, where length is ignored); length caps lines returned (default 1000). Directories are refused with a pointer to sassy_list_dir. Use it for large files by paging; prefer sassy_read_multiple when you need several files in one call, and sassy_search_files to find text across a tree.
+
+### sassy_read_multiple
+
+Read-only. Reads several files at once and concatenates them, each under a header like '--- path (N lines) ---'. paths is a JSON array of file paths (falls back to a comma-separated string if it is not valid JSON). A missing or unreadable file produces an inline error for that file without aborting the others. Use it to pull a handful of small files in one call; use sassy_read_file with offset/length for paging through a large file.
+
+### sassy_safe_delete
+
+Mutating but non-destructive: instead of deleting, it moves the file or directory into a _DELETE_/ staging folder in the same parent directory, renaming with _1, _2 suffixes on collisions so nothing is silently lost. It moves the symlink itself, not its target. Refuses protected paths (SassyMCP source tree, ~/.sassymcp, existing _DELETE_ folders) and audits the interception. This is the required replacement for rm/del-style deletion: shell delete keywords are intercepted, and sassy_copy/sassy_move refuse to overwrite an existing destination until it is staged here first. Use it for any removal; review or restore items from the _DELETE_ folder later.
+
+### sassy_screen_info
+
+Read-only, takes no parameters. Returns the display configuration as JSON: every monitor with left/top/right/bottom/width/height, DPI scale_percent, and which is primary, plus a count. Uses native APIs on Windows (DPI-aware) and macOS (AppKit), falling back to a single-monitor pyautogui report elsewhere. Essential setup call for multi-monitor machines: run it before sassy_click or sassy_screenshot to translate absolute coordinates onto the right monitor.
+
+### sassy_screenshot
+
+Read-only with respect to the desktop; writes an image file. Saves a PNG screenshot of the screen and returns its path and pixel dimensions. path defaults to ~/sassymcp_screenshot.png; region is an 'x,y,w,h' string that takes precedence over monitor (a malformed region returns an explicit error instead of falling back to a full screenshot); monitor defaults to -1 (all monitors), 0 for primary, 1+ for others. The save path must pass validation and must not be a protected location. Use it to see the current screen state, especially before or after sassy_click/sassy_type_text; pair with sassy_screen_info for multi-monitor region math. Requires a GUI session; on headless hosts it returns an error.
+
+### sassy_search_files
+
+Read-only. Searches recursively under path. search_type 'files' (default) matches pattern as a regex against filenames via a recursive glob filtered by file_pattern (e.g. '*.py'); 'content' matches pattern as a regex against file contents, skipping files over 5MB and emitting path:line: text (200 chars, optional context_lines of before/after context). ignore_case defaults to True; max_results defaults to 50 and is clamped to 1-500. Use it to locate files by name or find text across a tree; use sassy_read_file to read a specific hit and sassy_list_dir to browse instead.
+
+### sassy_session_list
+
+Read-only. Lists all persistent terminal sessions as JSON: name, shell, pid, alive flag, uptime in seconds, output buffer size, exit code, plus a total count. Dead sessions remain listed until stopped. Use it to see what is running before sassy_session_read, sassy_session_send, or sassy_session_stop; auto-detached sassy_shell calls also appear here.
+
+### sassy_session_read
+
+Read-only. Returns output from a named persistent session that arrived since the last read (the cursor advances, so each call yields only new text), truncated to the last 10000 characters, plus an alive flag and the total buffer size. Fails if the session name does not exist. Use it to poll long-running sessions created by sassy_session_start or auto-detached from sassy_shell (timeout over 120s) without sending input; use sassy_session_send to interact.
+
+### sassy_session_send
+
+Mutating: types into a live persistent session like a terminal, with a newline appended automatically, and returns the last 5000 characters of new output after a brief pause. The input is scanned by the same gates as sassy_shell: blocklist matches and delete keywords (rm, del, Remove-Item) are refused here, because session input cannot be safely staged — use sassy_safe_delete for removals instead. Fails if the session does not exist or has exited. Use it to interact with REPLs, prompts, and dev servers running in a session; use sassy_shell for one-shot commands.
+
+### sassy_session_start
+
+Mutating: spawns a persistent terminal session under a unique name and returns its status, shell, and pid. shell defaults to the host native shell (powershell/cmd/wsl on Windows; bash/zsh/sh on macOS/Linux); command optionally runs immediately after startup. Reuse of a live name and initial commands tripping the delete interceptor are refused. stderr is merged into stdout and the per-session buffer keeps the last 50000 characters (tail). Use it for long-running work like dev servers or builds that you poll with sassy_session_read; use sassy_shell for one-shot commands and stop sessions with sassy_session_stop when done.
+
+### sassy_session_stop
+
+Mutating: terminates a named persistent session's process (graceful terminate, force kill after 5s), removes the session, and returns the name, exit code, and the last 3000 characters of unread output. Fails if the session does not exist. Use it to clean up a session you started; use sassy_session_stop_all to kill everything at once.
+
+### sassy_session_stop_all
+
+Mutating: terminates every active persistent terminal session (each process is terminated and cleaned up) and returns a list of stopped names with exit codes plus a total count. Use it at the end of a task to clean up leftover dev servers, builds, and watchers; use sassy_session_stop when you only want to end one session.
+
+### sassy_shell
+
+Mutating: executes an arbitrary shell command in the host shell — it can do anything the shell can. shell defaults to powershell on Windows or the login shell on macOS/Linux; POSIX shells run the command verbatim while PowerShell syntax is normalized. timeout_seconds defaults to 30 (clamped 1-300); over 120 the call auto-promotes to a background session, returning a JSON handle to poll with sassy_session_read. Safety gates always run: catastrophic blocklist entries hard-block, delete keywords auto-stage targets to _DELETE_/ when identifiable, and other destructive patterns block or return a confirmation_required token (when interceptor.destructiveAction is 'confirm'; redeem via sassy_shell_confirm). allow_pattern bypasses one named pattern only. Output shows [exit: N] plus stdout and stderr. Use for one-shot commands; prefer sassy_session_start for long-running work.
+
+### sassy_shell_confirm
+
+Mutating: executes a sassy_shell command that was returned as confirmation_required instead of hard-blocked, because interceptor.destructiveAction is set to 'confirm'. Tokens are single-use and expire after 60 seconds; each is bound to the exact command, shell, and working directory that produced it, so replay against anything different is rejected. HIGH-tier commands also require confirm_phrase to match the phrase shown in the original confirmation_required response. Execution is audit-logged as pattern_confirm_executed. Use it only as the second step of the confirm flow; it cannot start a command on its own.
+
+### sassy_type_text
+
+Mutating: sends keystrokes to the focused field. It always clears the field first with ctrl-a + backspace, so it never appends — if you need to preserve existing content, this is the wrong tool. If target_x and target_y are both nonzero it clicks there first; text is then typed with interval seconds between keystrokes (default 0.02). Works on Windows, macOS, and Linux via pyautogui. Returns the character count typed. Use it to fill GUI fields; use sassy_hotkey for shortcuts like ctrl+s and sassy_click for mouse actions.
+
+### sassy_write_file
+
+Mutating: creates or overwrites files. mode defaults to 'rewrite' (full replace); on an existing file the prior contents are first snapshotted into the adjacent _DELETE_/ staging folder as stem.overwrite.<timestamp>.ext, so overwrites are recoverable. mode 'append' adds bytes to the end. Missing parent directories are created. encoding defaults to utf-8 (any Python codec name); line_endings defaults to 'preserve' (verbatim), with 'lf' and 'crlf' normalizing all line breaks (crlf is useful for Windows .bat/.ps1 files). It bypasses the shell-keyword interceptor entirely, but protected paths (SassyMCP source tree, ~/.sassymcp, ~/.ssh, ~/.aws, etc.) are refused. Use it to create files or full rewrites; prefer sassy_edit_block or sassy_edit_multi for small changes to existing files.
+
+## infrastructure — 14 tools
+
+*Metrics, health, persistent state, runtime config, offline/local-model fallback (always loaded)*
+
+### sassy_get_config
+
+Read-only. Returns the full SassyMCP configuration plus a live system snapshot: the config dict (default shell, file read/write line limits, allowed directories, blocked commands, interceptor and permission-engine settings, panel port/enabled), OS and Python details, process and system memory, disk usage, PID, uptime seconds, CPU count, loaded tool groups, and tool-usage stats from the audit log. Takes no parameters. Use to inspect current server settings before calling sassy_set_config, or to diagnose performance and environment issues. Prefer over guessing config values.
+
+### sassy_observability_health
+
+Read-only health check for monitoring. Returns a small dict: status (always "healthy" when reachable), uptime_seconds, tool_calls_total, error_count, and whether dev live-reload is enabled. Counters accumulate in memory since server start and reset on restart. Takes no parameters. Use for liveness probes, load balancers, or a quick sanity check that the server is up. For CPU/memory/disk figures use sassy_observability_metrics instead.
+
+### sassy_observability_metrics
+
+Read-only. Returns real-time server metrics: uptime_seconds, tool_calls_total, error_rate (percent, rounded to two decimals), timestamp, version, and live_reload_enabled. Also includes cpu_percent, memory_percent, and disk_percent when psutil is installed (optional dependency). Takes no parameters; counters are in-memory since server start. Use for performance monitoring, capacity questions, and error-rate checks. For a simple up/down probe use sassy_observability_health.
+
+### sassy_observability_tool_stats
+
+Read-only. Returns the in-memory tool usage tracker's stats (per-tool call counts, success/error tallies, recency scores) plus pruning_suggestions: tool names whose usage score falls below a 0.05 threshold, i.e. candidates for disabling to slim the tool surface. Takes no parameters. Use to see which tools are actually used and which can be pruned. Differs from sassy_observability_metrics (aggregate server counters) by reporting per-tool usage. For raw recent call records use sassy_recent_tool_calls.
+
+### sassy_offline_commands
+
+Read-only. Returns the offline-safe command listing built live from the tool registry, grouped by tool group with usage counts. Optional group filters to one group (see sassy_tool_groups for group names). Optional verbose=false returns names only (about a quarter of the tokens); true adds one-line purposes. LAN tools (SSH, wifi, adb wifi) are included since they need a network but not the internet. The response also lists tools unavailable offline and a system_prompt_snippet for pasting into a local model's prompt. Use before sassy_offline_handoff to build the local model's tool menu; never paste the full catalog into a small local model.
+
+### sassy_offline_handoff
+
+Mutating. Writes a structured offline handoff and optionally starts the local Hermes node. Required parameter task describes what was being worked on. Optional channel (default "joint") is the crosslink channel Hermes polls; next_steps is a newline- or semicolon-separated list of ordered steps; start_node=false, when true, launches hermes_node.py in a persistent session. The tool writes key task_offline_<channel>_state to memory, mirrors it to the crosslink channel, and returns the exact env line and launch command plus the node session name. Errors are returned inline if hermes_node.py is missing or no fallback model is ready. Use after sassy_offline_status confirms the link is down, when handing ongoing work to a local model; read Hermes replies with sassy_crosslink_recv.
+
+### sassy_offline_status
+
+Read-only. Runs the real network-state check and reports the full offline picture: link state (online, offline, or DNS-dead), DNS resolving, probe anchors, check age, gate mode and whether it is active, local loopback inference backends with available models and the chosen fallback, the hermes_node.py script path, counts of offline-safe vs LAN vs internet tools, and, when degraded, each unavailable tool with a named substitute. Optional probe=true (default) runs a fresh ~1-2 second probe; false reads the cached verdict instantly. Use as the first step when connectivity is suspect or before any offline workflow.
+
+### sassy_panel
+
+Mutating (start/stop/rotate change state). Controls the Control Panel, the loopback-only web UI for the permission engine, settings, event log, and classifiers. Optional action (default "status"): status returns running state, the startup-enabled flag, and a tokenless URL — the bearer token is never revealed here; start launches the panel and enables auto-start at future startups (flips panel.enabled in config) and returns a tokenless URL plus a hint to call action="url"; stop shuts it down and disables auto-start; url prints the tokenized URL without starting (this is the explicit token-reveal action); rotate regenerates the panel bearer token, persists it to the token file, audit-logs the rotation, and returns the new token (the old token stops working immediately, no restart needed). Binds 127.0.0.1 on the configured port (default 8765, auto-increments if taken). Send the token in the X-Panel-Token header (the ?token= query form is deprecated but still accepted). Use for interactive inspection and tuning of permissions/settings rather than doing it by hand with sassy_set_config.
+
+### sassy_permission
+
+Read-only by default, mutating on change actions. Front door to the four-mode safety system gating shell and file tools. action="status" (default) reports the effective mode, derivation, sandbox roots, and active rules. set_mode sets permission.mode to strict (block destructive patterns), confirm (return a confirm token), sandbox (relaxed inside sandbox roots, anything outside is refused), or bypass (allow all except protected paths); mode="" clears the override so it derives from the legacy interceptor.destructiveAction setting. Switching to bypass requires confirm='YES' (exact, case-sensitive); the privilege mutations add_root (widens the sandbox jail), add_rule, and clear_rules also require confirm='YES', while remove_root (shrinks the jail) needs no confirmation. add_rule appends a JSON rule like {"action":"deny","tool":"sassy_shell","command":"rm"} (first match wins, before the mode default); clear_rules empties the list. Invalid modes and rules are rejected. Use to inspect or change safety gating; pair with sassy_shell_confirm in confirm mode.
+
+### sassy_recent_tool_calls
+
+Read-only. Returns recent tool call records parsed from the structured JSONL audit log (the same store the audit module writes; sassy_audit_log reads the plain-text audit.log variant). Optional max_results=50 (docstring caps at 1-1000; the code takes the newest N entries), tool_name="" filters to one tool name, since_minutes=0 means all time or only calls within the last N minutes. Output includes the call entries newest-last, the returned count, and total_in_log (all lines in the file, including skipped/malformed). Returns an empty list with a note if no audit log exists. Use for session history, debugging what ran, and usage review; for raw log text use sassy_audit_log, for keyword search use sassy_audit_search. Overlap note: sassy_audit_log covers the same recent-call history as plain text — prefer this tool when you want structured, filterable records.
+
+### sassy_set_config
+
+Mutating. Overwrites a server configuration value and persists it to the SassyMCP home directory config.json immediately (the change affects current and future server runs). Required: key must be one of the supported config keys (defaultShell, fileReadLineLimit, fileWriteLineLimit, allowedDirectories, blockedCommands, interceptor.destructiveAction, interceptor.scanStringLiterals, permission.mode, permission.sandboxRoots, permission.rules, panel.enabled, panel.port) — unknown keys are rejected and the valid list is returned. Required: value is a JSON-encoded string that is parsed before storing (so pass '1000' for a number, '["x"]' for a list, '"powershell"' for a string); if parsing fails the raw string is stored. Returns the key with old and new values. Use to tune limits, the default shell, blocked commands, safety modes, or panel settings; inspect current values first with sassy_get_config.
+
+### sassy_state_clear
+
+Destructive and mutating: permanently deletes stored state from the persistent per-tool SQLite state store (tool_state.db in the SassyMCP home directory). Optional tool_name="": when given, deletes every key saved under that tool name; when empty, deletes ALL state for ALL tools across the server with no way to recover. Requires confirm='YES' (exact, case-sensitive) on every call, matching the sassy_permission privilege mutations and sassy_audit_clear. Use to reset a misbehaving tool's remembered state or to wipe the whole state store clean; read first with sassy_state_get and back up values with sassy_state_set if they matter.
+
+### sassy_state_get
+
+Read-only. Retrieves one value from the persistent per-tool SQLite state store (tool_state.db in the SassyMCP home directory), surviving server restarts. Required: tool_name namespaces the key under a tool; required: key is the stored key. Returns the JSON-decoded value (whatever was saved with sassy_state_set) or null if the tool/key was never set. Use to read remembered state such as checkpoints, cursors, or preferences; use sassy_state_clear to delete and sassy_state_set to write. This is separate from the memory system — it is for tool operational state, not semantic memories.
+
+### sassy_state_set
+
+Mutating. Persists a value into the per-tool SQLite state store (tool_state.db in the SassyMCP home directory), surviving server restarts. Required: tool_name namespaces the entry (any tool name can be used); required: key is the storage key; required: value is a string that is stored verbatim (the tool does not JSON-encode it — pass already-encoded JSON if you want structured values). Overwrites any existing value for the same tool/key pair. Returns a confirmation string. Use to checkpoint progress, save cursors, or persist preferences between sessions; read with sassy_state_get and delete with sassy_state_clear. Not a substitute for the memory system, which stores semantic facts.
+
+## android — 24 tools
+
+*ADB device control, screen mirroring*
+
+### sassy_adb_app_info
+
+Read-only. Returns detailed info about one installed app via 'dumpsys package <package>'. package is required and validated as an Android package name. dumpsys output can exceed 100K chars, so results longer than 15000 chars are condensed into JSON with the most useful sections (requested/install/declared permissions, user state, version, header) plus a note to use sassy_adb_shell 'dumpsys package <pkg>' for the full dump; shorter output is returned raw. 'device' selects by serial; empty means the default device. Use to check an app's version, permissions, and install state — e.g. when it crashes or won't launch. Find package names with sassy_adb_packages.
+
+### sassy_adb_devices
+
+Read-only. Lists every Android device visible to ADB by running 'adb devices -l', returning the raw output string with serials, states (device, unauthorized, offline), and model info. Prerequisites: the adb binary must be installed on this host and USB debugging enabled on the phone; an 'unauthorized' state means the on-phone RSA prompt was never accepted. Takes no parameters. Call this first before any other android tool to confirm a device is attached and authorized. The serial shown here is the value to pass as the 'device' parameter on other tools when more than one device is connected.
+
+### sassy_adb_install
+
+Mutating: installs an app. Installs the APK at apk_path (a file on this host, required) onto the device via 'adb install -r', with a 120s timeout. The -r flag reinstalls while preserving the app's existing data; downgrades or signature mismatches still fail. 'device' selects by serial; empty means the default device. Returns adb's output or an error string. Do not install untrusted APKs. To find an app's package name first use sassy_adb_packages; to inspect an installed app's version and permissions use sassy_adb_app_info.
+
+### sassy_adb_logcat
+
+Read-only. Dumps recent Android logs non-blocking via 'logcat -d -t N'. filter_str is an optional app/package substring appended as a logcat filter (must match safe package characters) — this is a one-shot dump, not a live streaming tail. lines defaults to 100 and is clamped to 1-10000, returning the most recent lines with the newest last. 'device' selects by serial; empty means the default device. Use for crash diagnosis: capture before and after reproducing the issue and look for FATAL/ANR lines. For watching screen changes over time, use sassy_phone_watch.
+
+### sassy_adb_packages
+
+Read-only. Returns the installed package list ('package:com.example.app' lines, one per line) via 'pm list packages'. filter_str is an optional case-insensitive substring filter applied with grep; it must match Android package-name characters or the call errors. Note: unlike the other adb tools this one has no device parameter, so it always queries the default device. Use the results to find package names for sassy_phone_open, sassy_adb_app_info, and uninstall-style shell commands.
+
+### sassy_adb_pull
+
+Read-only on the device (writes only to this host). Copies remote_path on the device to local_path on this host via 'adb pull' (30s timeout); both paths are required. 'device' selects by serial; empty means the default device. Returns adb's output or an error string. Use to retrieve logs, databases, photos, or captured screenshots from the device. For moving files onto the device instead, use sassy_adb_push; to copy an APK onto the phone for installation, push it first and then use sassy_adb_install.
+
+### sassy_adb_push
+
+Mutating: writes a file onto the device. Copies local_path on this host to remote_path on the device via 'adb push' (30s timeout); both paths are required, and an existing destination file is overwritten. 'device' selects by serial; empty means the default device. Returns adb's output or an error string. Use to stage files (media, config, test data, APKs) before other operations. To retrieve files from the device, use sassy_adb_pull; to install an app package, use sassy_adb_install.
+
+### sassy_adb_screencap
+
+Read-only on the device itself (writes then deletes a temp PNG on the device). Captures a full-resolution screenshot: screencap to /sdcard/sassymcp_screen.png, pulls it to local_path, then removes the remote file. local_path defaults to ~/android_screen.png. 'device' selects by serial; empty means the default device. Returns the saved path or an error string. Use when you need full-resolution pixels on disk. For a cheap in-context visual check (4-8KB grayscale JPEG returned base64 in the tool result), use sassy_phone_glance; for text and structure, sassy_phone_ui.
+
+### sassy_adb_shell
+
+Can mutate the device. Runs one command string on the device via 'adb shell' (30s timeout), returning trimmed stdout/stderr or an error string. Every command passes a blocked-command check; delete-intent commands (rm, rmdir, pm clear, etc.) are refused unless allow_destructive=True, which defaults to False. 'device' selects a device by serial when several are attached; empty means the default single device. Use for dumpsys, pm/am, df, ping, and diagnostics. Prefer dedicated tools where they exist (install, push/pull, logcat); use this for everything else, and never enable allow_destructive casually.
+
+### sassy_adb_wifi_connect
+
+Mutating host-side connection state. Connects this host's ADB to a device over TCP/IP via 'adb connect ip:port'. ip is required and validated as an IP address; port defaults to 5555 and is clamped to 1-65535. Returns adb's connect output or an error. Prerequisite: the phone must already have wireless debugging enabled (and often paired); this tool does not enable that itself. It has no device parameter — it establishes the connection. After success the device appears in sassy_adb_devices and other tools can target it via their device parameter.
+
+### sassy_phone_glance
+
+Read-only observation. Captures a fast low-res screenshot piped directly from the device (no temp file) and returns a dict with the image as base64 JPEG, 'format' (grayscale_jpeg), original_size, resized size, byte count, and timestamp — typically 4-8KB. max_width defaults to 480 (only downscales if wider); quality defaults to 20. 'device' selects by serial; empty means the default device. Returns an error dict if capture fails. Use for a cheap visual confirmation of what's on screen. Prefer sassy_phone_ui for reading text and getting tap coordinates; use sassy_adb_screencap when you need a full-resolution PNG on disk.
+
+### sassy_phone_key
+
+Mutating: injects a hardware key event via 'adb shell input keyevent'. keycode accepts full names like KEYCODE_HOME or shorthand like 'home' (auto-prefixed to KEYCODE_HOME); common keys are HOME, BACK, ENTER, VOLUME_UP, VOLUME_DOWN, POWER, APP_SWITCH (recent apps), MENU. 'device' selects by serial; empty means the default device. Returns the resolved keycode and result. NOTE: unlike tap/swipe/type, this tool does not check the pause flag or scan for sensitive screens before acting — be careful on auth or payment screens. Use tap/type for on-screen buttons and text fields.
+
+### sassy_phone_open
+
+Mutating: launches an app by package name via the monkey launcher ('monkey -p <package> -c LAUNCHER 1'). package is required — find names with sassy_adb_packages. 'device' selects by serial; empty means the default device. Returns the package and result. NOTE: like sassy_phone_key and unlike tap/swipe/type, this tool does not check the pause flag or scan for sensitive screens. Use when you know the target app and want it in front; to go home or back instead, use sassy_phone_key.
+
+### sassy_phone_pause
+
+Mutating session state (not the phone itself). Sets a flag so sassy_phone_tap, sassy_phone_swipe, and sassy_phone_type refuse to act while observation tools (sassy_phone_ui, sassy_phone_glance, sassy_phone_watch, sassy_phone_state) keep working. reason defaults to 'User requested pause' and is recorded. Call when the user says 'wait', 'hold on', or 'let me', or when a sensitive screen should be handled manually on the device. The user later says 'done', 'continue', or 'resume' — then call sassy_phone_resume. Returns the status and recorded reason.
+
+### sassy_phone_resume
+
+Changes session state back to normal: clears the pause set by sassy_phone_pause so tap/swipe/type work again. Takes no parameters. Call when the user says 'done', 'continue', 'resume', or 'go ahead' after handling something manually on the phone. Returns whether a pause was actually in effect (was_paused) and the previous pause reason; if nothing was paused it still reports cleanly. After resuming, call sassy_phone_ui to re-read the screen before continuing automation.
+
+### sassy_phone_state
+
+Read-only quick status check. Returns a dict with the foreground app (package/activity), screen_on boolean, battery_level percent, battery_status (charging, discharging, not_charging, full), plugged boolean, wifi connected/disconnected, notification_count, and timestamp; some fields may be missing on some devices. 'device' selects by serial; empty means the default device. Use as the first step before any phone interaction (is the screen on, which app is in front?) and between steps to confirm context. For the full element list follow with sassy_phone_ui; for pixels use sassy_phone_glance.
+
+### sassy_phone_swipe
+
+Mutating: injects a gesture. Swipes from (x1, y1) to (x2, y2) over duration_ms (default 300, clamped to 100-5000) via 'adb shell input swipe', returning the endpoints, applied duration, and result. Get coordinates from sassy_phone_ui first. Same safety as tap: blocked while sassy_phone_pause is active, and unless confirmed=True (default False) it scans for login/payment/permission screens and refuses on those. 'device' selects by serial; empty means the default device. Use for scrolling lists, dismissing sheets, or drag gestures — a larger duration_ms makes a slower drag.
+
+### sassy_phone_tap
+
+Mutating: injects a touch. Taps pixel coordinates x and y via 'adb shell input tap' and returns the tapped point plus result. REQUIRED: get coordinates from sassy_phone_ui first — never guess. Safety: blocked while sassy_phone_pause is active, and unless confirmed=True (default False) it scans the screen for login/payment/permission contexts and refuses on those, describing what it sees. Pass confirmed=True only after the user explicitly approves. 'device' selects by serial; empty means the default device. To type into a field, tap it first with this tool, then use sassy_phone_type.
+
+### sassy_phone_type
+
+Mutating: injects keystrokes. Types 'text' into the currently focused text field via 'adb shell input text', escaping special characters and encoding spaces as %s; returns the typed text, char count, and result. The target field must already be focused — tap it first with sassy_phone_tap. Same safety as tap/swipe: blocked while sassy_phone_pause is active, and without confirmed=True (default False) it refuses on login/auth screens. 'device' selects by serial; empty means the default device. For hardware keys like Enter or Back, use sassy_phone_key instead.
+
+### sassy_phone_ui
+
+Read-only observation. Reads the phone's UI accessibility tree via uiautomator and returns a dict with 'elements' (each carrying class, text, content description, resource id, center coordinates in pixels, and clickable/focused/checked/disabled flags), 'count', and 'timestamp'. If the screen contains login, payment, or permission elements, a 'caution' field describes the sensitive context. 'device' selects by serial; empty means the default device. Returns an error dict when the screen is locked or uiautomator fails. This is how you 'see' the phone: always use it to get exact tap coordinates — never guess. Faster and cheaper than screenshots; pair with sassy_phone_state.
+
+### sassy_phone_watch
+
+Read-only monitoring. Polls the UI tree for up to 'seconds' (default 5.0, clamped to 1-30) every 'interval' seconds (default 1.0, clamped to 0.5-5.0) and returns a snapshot whenever the element set changes by at least 'change_threshold' percent (default 3.0), capped at max_frames snapshots (default 8, clamped to 1-15). The first snapshot is always included. Returns snapshot_count, duration_s, and per-snapshot frame number, elapsed time, elements, and change_pct. Use after tap/type to verify the screen actually changed, or to wait out a loading transition. For video capture use sassy_scrcpy_record; for log-side observation use sassy_adb_logcat.
+
+### sassy_scrcpy_record
+
+Mutating host-side: records the phone screen to a video file using scrcpy in headless mode (--no-display --record). output_path is required (e.g. /path/to/demo.mp4); time_limit defaults to 30 seconds and the call blocks until the recording finishes (with a time_limit+10s timeout). Requires the scrcpy binary installed. 'device' selects by serial; empty means the default device. Returns the saved path. Use to capture a bug repro or demo as video. For a single still image use sassy_adb_screencap or sassy_phone_glance.
+
+### sassy_scrcpy_start
+
+Mutating host-side: launches a scrcpy window mirroring the phone screen live. Requires the scrcpy binary (auto-detected in PATH and common install locations); otherwise returns an install error. 'device' selects by serial; empty means the default device. max_size defaults to 1024 (caps the video resolution); no_audio defaults to True. Refuses to start a second copy if one is already running and reports its PID. This is a live window for the user to watch — not AI vision; for that use sassy_phone_glance. Stop it with sassy_scrcpy_stop; to record video instead of mirroring, use sassy_scrcpy_record.
+
+### sassy_scrcpy_stop
+
+Mutating host-side: terminates the scrcpy mirroring session started by sassy_scrcpy_start. Takes no parameters. Returns 'scrcpy stopped' on success or 'scrcpy not running' if there is nothing to stop. A shutdown hook also reaps the process when the server exits, so a forgotten session does not leak. This has no effect on the phone itself.
+
+## iphone — 6 tools
+
+*Experimental iPhone (iOS) control via libimobiledevice*
+
+### sassy_iphone_apps
+
+Read-only. Lists installed apps (bundle IDs, names, versions) via 'ideviceinstaller -l'. Prerequisites: libimobiledevice on this host (macOS: brew install libimobiledevice; Linux: sudo apt install libimobiledevice-utils). udid (default empty) selects the device; omit it when exactly one iPhone is connected (with several connected and no udid, the call errors and lists the UDIDs so you can pick one). iOS 17+: the phone must be paired ('idevicepair pair', tap Trust).
+
+### sassy_iphone_info
+
+Read-only. Returns device info (name, model, iOS version, serial, etc.) via 'ideviceinfo'. Prerequisites: libimobiledevice on this host (macOS: brew install libimobiledevice; Linux: sudo apt install libimobiledevice-utils). udid (default empty) selects the device: omit it when exactly one iPhone is connected; with several connected and no udid the call errors and lists the UDIDs so you can pick one. iOS 17+: the phone must be paired ('idevicepair pair', tap Trust on the device) or it reports no device found. Use sassy_iphone_list to discover UDIDs.
+
+### sassy_iphone_install
+
+Mutating and destructive: installs an app onto the iPhone. Requires confirm='YES' (exact match); anything else is refused. Installs the .ipa at ipa_path (a file on this host, required, must end in .ipa) via 'ideviceinstaller -i' with a 120s timeout -- this mutates device state. Prerequisites: libimobiledevice on this host (macOS: brew install libimobiledevice; Linux: sudo apt install libimobiledevice-utils). udid (default empty) selects the device when several are connected; omit with exactly one. iOS 17+: the phone must be paired ('idevicepair pair', tap Trust). Do not install untrusted IPAs.
+
+### sassy_iphone_list
+
+Read-only. Lists every connected iPhone's UDID via 'idevice_id -l', one per line. Prerequisites: the libimobiledevice suite on this host (macOS: brew install libimobiledevice; Linux: sudo apt install libimobiledevice-utils; Windows: limited support, use WSL2 or a macOS/Linux host). Takes no parameters. When no device appears, the error explains the iOS 17+ pairing requirement (run 'idevicepair pair' on this host, unlock the phone, tap Trust). Call this first before other iphone tools to find the udid parameter value.
+
+### sassy_iphone_screenshot
+
+Read-only on the device (writes only the caller-chosen local file). Captures the iPhone screen to local_path on this host via 'idevicescreenshot' (default ~/iphone_screen.png). Prerequisites: libimobiledevice on this host (macOS: brew install libimobiledevice; Linux: sudo apt install libimobiledevice-utils). udid (default empty) selects the device when several are connected; omit with exactly one (sassy_iphone_list shows them). iOS 17+: the phone must be paired ('idevicepair pair', tap Trust). Returns the saved path or an error string.
+
+### sassy_iphone_syslog
+
+Read-only. Returns recent iOS system log lines via 'idevicesyslog' with a bounded capture: idevicesyslog is a live stream, so the tool captures for timeout seconds only (1-60, default 10) and then stops -- it can never run unbounded. lines (1-5000, default 100) caps how many of the captured tail lines are returned, newest last. Prerequisites: libimobiledevice on this host (macOS: brew install libimobiledevice; Linux: sudo apt install libimobiledevice-utils). udid (default empty) selects the device when several are connected; omit with exactly one. iOS 17+: the phone must be paired ('idevicepair pair', tap Trust). Use for crash diagnosis on the device.
+
+## system — 22 tools
+
+*System monitoring, networking, clipboard, events*
+
+### sassy_android_logcat
+
+Read-only. Dumps the connected Android device's system log via adb logcat -d -t N (a one-shot dump, not a live stream), so it returns only lines already in the buffer. Requires adb and a reachable device; device (default empty) selects which device when several are attached, otherwise adb's default is used. lines (default 100) sets how many recent lines to return. tag (default empty) filters to a log tag; level (default empty) is only honored together with tag (for example tag:level plus *:S silencing everything else) and is ignored without a tag. 15-second timeout. Use it to inspect app or system errors on the device; pair with sassy_android_processes to find the PID first.
+
+### sassy_android_processes
+
+Read-only. Lists running processes on the connected Android device via adb shell ps -A -o PID,NAME,%CPU,RSS; requires adb and a reachable device. device (default empty) picks one device when several are attached. Output is the raw ps text (not structured like sassy_processes), unsorted and uncapped beyond what the device emits. 15-second timeout. Use it to see what is running on the phone or to grab a PID; use sassy_processes for the host machine's own processes.
+
+### sassy_arp_table
+
+Read-only. Runs arp -a on the host, showing the current IP-to-MAC address mapping table -- the LAN neighbors the host has recently communicated with. No parameters. Cross-platform. Use it for a quick view of who is on the local segment; pair with sassy_netstat to see what the host is talking to and sassy_port_scan to probe a specific neighbor.
+
+### sassy_bt_android
+
+Read-only. Reports the connected Android device's Bluetooth state via adb shell dumpsys bluetooth_manager, so it needs adb and a reachable device. device (default empty) selects among attached devices. Output keeps only the Bonded devices and Connected devices sections, capped at 50 lines, and returns No Bluetooth info found when the dump lacks them. 15-second timeout. Use it to check the phone's paired or connected devices; use sassy_bt_devices or sassy_bt_scan for the host machine's own Bluetooth.
+
+### sassy_bt_devices
+
+Read-only. Lists Bluetooth devices already paired (bonded) with the host machine. Windows: Get-PnpDevice filtered to working Bluetooth devices; macOS: blueutil --paired if installed, otherwise system_profiler; Linux: bluetoothctl paired-devices. No parameters, 15-second timeout. Output is raw command text showing names and device IDs. Use it when checking known pairings; prefer sassy_bt_scan to see unpaired or nearby devices, and sassy_bt_android for the Android phone's Bluetooth.
+
+### sassy_bt_scan
+
+Read-only. Lists all Bluetooth devices visible to the host, including ones not paired. Windows: all PnP Bluetooth devices with name, ID, status and instance ID; macOS: blueutil --inquiry (an active inquiry scan that takes longer) or system_profiler; Linux: bluetoothctl devices (known devices, not a fresh inquiry). No parameters, 20-second timeout. Output is raw command text. Use it for discovering nearby or unpaired hardware; use sassy_bt_devices when you only care about already-bonded devices.
+
+### sassy_clipboard_from_android
+
+Read-only on the host. Fetches the connected Android device's clipboard via adb shell am broadcast -a clipper.get, so it requires adb, a reachable device, and a Clipper-style clipboard helper installed on the device. device (default empty) selects among attached devices. Returns only the first 200 characters, so it is a preview, not a full copy. 10-second timeout. Use it to peek at what is on the phone's clipboard; use sassy_clipboard_to_android to push the host clipboard the other way.
+
+### sassy_clipboard_get
+
+Read-only. Returns the host machine's current clipboard text using the OS-native command (Get-Clipboard on Windows, pbpaste on macOS, xclip or xsel on Linux). No parameters; output is stripped text, and a run longer than 10 seconds reports a timeout. Use it to inspect what is on the clipboard before pasting elsewhere; use sassy_clipboard_set to write new content and sassy_clipboard_to_android to forward the clipboard to the phone.
+
+### sassy_clipboard_set
+
+Mutating: overwrites the host machine's clipboard with the supplied text via the OS-native setter (Set-Clipboard on Windows, pbcopy on macOS, xclip or xsel on Linux), piped over stdin so the content is never shell-interpolated. text (required) is the full content to place on the clipboard; returns a confirmation with the character count. Runs up to 10 seconds. Use it to stage text for the user to paste; pair with sassy_clipboard_get to verify the write.
+
+### sassy_clipboard_to_android
+
+Mutating on the device: pushes the host machine's current clipboard text to the connected Android device's clipboard. It reads the host clipboard, base64-encodes it, and sends it over adb with an am broadcast -a clipper.set intent, so it requires adb, a reachable device, and a Clipper-style helper app installed on the device. device (default empty) selects among attached devices. Returns an error when the host clipboard is empty, and otherwise confirms with the first 50 characters sent. 10-second timeout. Use it to move copied text from the desktop to the phone.
+
+### sassy_dns_lookup
+
+Read-only. Runs nslookup for the given hostname on the host and returns the resolver's answer (addresses and the name server that answered). hostname (required) accepts domain names and IP literals, restricted to letters, digits, dots, hyphens and colons. 30-second timeout. Cross-platform. Use it to verify how a name resolves before connecting; pair with sassy_traceroute to trace the path to the resolved address and sassy_port_scan to probe the target.
+
+### sassy_eventlog
+
+Read-only. Reads the host's system log: Windows uses Get-WinEvent with log_name (default System; Application and Security are the common alternatives, log_name is Windows-only and ignored on macOS and Linux), macOS reads the unified log with log show over the last 6 hours, and Linux reads journalctl. count (default 20, clamped to 1-1000) sets the number of events; level (error, warning or information; default empty for all) filters severity; source (default empty) filters by provider or process name, sanitized to safe characters. Output shows the newest entries, truncated to 5000 characters. Use it to browse recent system events; prefer sassy_eventlog_search when hunting for a keyword.
+
+### sassy_eventlog_search
+
+Read-only. Searches the host's system log for a keyword instead of browsing recent entries. keyword (required, sanitized to safe characters) is matched case-insensitively: Windows pulls the newest 500 events and filters the message field, macOS uses a log show predicate (eventMessage CONTAINS) over the last 6 hours, and Linux uses journalctl -g. log_name (default System; Windows-only) picks the log on Windows; count (default 20, max 500) caps the matches. Output truncated to 5000 characters. Prefer sassy_eventlog when filtering by level or source without a keyword.
+
+### sassy_kill_all_sassymcp
+
+Destructive and mutating: kills every running SassyMCP-related process to clear the 'another program is currently using this process' lock left by MCP clients after an unclean shutdown. It matches process names and command lines against SassyMCP patterns (sassymcp, uv run sassymcp, -m sassymcp, sassymcp.exe) and terminates them, but never kills its own process. force (default False) sends a graceful terminate; force=True sends a hard kill and also matches uv.exe while still requiring sassymcp or mcp in the command line, so arbitrary python.exe processes are never killed. Returns a dict with status, kill count and the list of killed processes. Use it only when SassyMCP sessions are stuck or locked; it can take down other live SassyMCP sessions.
+
+### sassy_kill_process
+
+Destructive and mutating: kills a running host process by PID using psutil, cross-platform. pid (required) is the target process ID; force (default False) sends a graceful terminate(), while force=True sends an immediate kill(). Returns a confirmation naming the process, or an error if the PID does not exist or access is denied. Use it to stop a hung or runaway process identified by sassy_processes or sassy_system_info; use sassy_kill_all_sassymcp instead when the target is a stuck SassyMCP or MCP-client session.
+
+### sassy_netstat
+
+Read-only. Shows the host's active network connections and listening sockets: Windows runs netstat -ano (includes PIDs), macOS runs netstat -an, and Linux prefers ss -tunap with netstat -an as fallback. filter_str (default empty) keeps only lines containing the given substring, case-insensitively (for example a port number or address). Output is capped at 100 lines, so use the filter on busy hosts. 30-second timeout. Use it to see what is listening or connected locally; prefer sassy_port_scan when probing a specific host or port range.
+
+### sassy_port_scan
+
+Active scanner (it opens TCP connections to the target, which can trip intrusion detection -- only scan hosts you own or have permission to scan; scanning 127.0.0.1 is safe). target (default 127.0.0.1) is the host or IP, restricted to safe characters; ports (default 1-1024) accepts ranges like 1-1024, lists like 22,80,443, or a mix, digits, commas and hyphens only, capped at ports 1-65535. When nmap is installed it runs nmap -p ports target (60s timeout); otherwise it falls back to a portable async TCP connect scan (200 parallel probes, 0.4s per port). Output lists only the open ports found. Use sassy_netstat for the local machine's listening sockets instead, and see sassy_open_ports in the forensics group for related checks.
+
+### sassy_processes
+
+Read-only. Lists the host's running processes via psutil, returning a structured list (dict) of up to 50 entries with pid, name, cpu percent and memory in MB. filter_str (default empty) keeps only processes whose name contains the substring, case-insensitively. sort_by (default cpu; also memory or name; unknown values fall back to cpu) orders the list; cpu and memory sort descending, name ascending. Note the first CPU reading can report zero because psutil needs two samples. Use it to spot resource hogs; use sassy_android_processes for the phone, and sassy_kill_process to stop a process.
+
+### sassy_system_info
+
+Read-only. Returns a one-shot resource summary of the host as a dict: hostname, operating system and release, CPU percent (measured over a 1-second sample), CPU core count, total and used RAM in GB with the usage percent, total disk in GB with the usage percent (C: drive on Windows, root filesystem elsewhere), and uptime as Xh Ym. No parameters. Use it as a quick health check before deeper digging; follow up with sassy_processes to find which processes are behind high CPU or memory.
+
+### sassy_traceroute
+
+Read-only. Traces the network path to a host, hop by hop: Windows runs tracert -d and POSIX hosts run traceroute -n (both skip reverse DNS lookups). target (required) is the hostname or IP, restricted to letters, digits, dots, hyphens and colons. 60-second timeout. Use it to see the route packets take and locate where connectivity breaks; pair with sassy_dns_lookup to resolve the target first and sassy_port_scan to probe a specific port along the way.
+
+### sassy_wifi_networks
+
+Read-only. Scans for visible Wi-Fi networks around the host: Windows uses netsh wlan show networks mode=bssid (SSID, signal strength and BSSID), macOS uses the airport tool with a system_profiler fallback, and Linux uses nmcli, falling back to iwlist or iw. No parameters; the scan runs up to 45 seconds. Output is raw command text, not a structured list. Use it for a site survey of nearby networks; use sassy_wifi_profile to inspect saved network details and sassy_arp_table to see which neighbors the host actually talks to.
+
+### sassy_wifi_profile
+
+Read-only but credential-sensitive: with profile (default empty) unset it lists the host's saved Wi-Fi networks (Windows: netsh wlan show profiles; macOS: system_profiler; Linux: nmcli connection show or the NetworkManager connections directory). When profile names a saved network it shows that profile's details, and on Windows the key=clear option (likewise macOS Keychain and Linux nmcli -s output) prints the saved password in cleartext -- run this only when the user explicitly needs their own credential. profile is restricted to safe characters. Nothing is changed by this tool. Use sassy_wifi_networks instead for scanning currently visible networks.
+
+## forensics — 11 tools
+
+*Security audit, registry inspection — paid forensics add-on*
+
+### sassy_apk_info
+
+Read-only. Inspects an Android APK for forensic triage; works on any OS. Takes apk_path, which must end in .apk and must not be a sensitive-read path (SSH keys, credential stores, browser login DBs, Windows SAM/SECURITY hives, /etc/shadow, SassyMCP tokens) — other extensions are refused, so it cannot be used as a generic zip-dump primitive. If aapt or aapt2 is installed it returns 'aapt dump badging' output capped at 5000 characters; otherwise it returns JSON with total file count and booleans for has_dex, has_native_libs, manifest present, and signed (META-INF .RSA/.DSA entries). Use to assess package contents, requested permissions, and signing status of a suspicious APK; hash it with sassy_hash_file first for malware-hash comparison.
+
+### sassy_autorun_entries
+
+Read-only boot/login persistence inventory; cross-platform, no parameters. On Windows it queries reg.exe for the Run and RunOnce keys under HKLM and HKCU, skipping missing keys. On macOS it lists ~/Library/LaunchAgents, /Library/LaunchAgents, /Library/LaunchDaemons, the first 60 launchctl entries, and login items via osascript. On Linux it lists enabled systemd units (first 60 system, 40 user), crontab, and XDG autostart directories. Output is raw shell text with no sorting. Use as the first persistence triage step: look for unsigned binaries, paths under TEMP or APPDATA, and names mimicking system processes. It does not cover Windows Services, Scheduled Tasks, or Image File Execution Options hijacks; use sassy_reg_read on those keys.
+
+### sassy_cert_check
+
+Read-only network inspection of a TLS certificate; cross-platform (pure Python, no OS tools). Takes target (required hostname or IP; rejected unless it matches letters, digits, dots, dashes, colons) and port (default 443). Opens a TCP connection with a 10-second timeout and reads the peer certificate. Returns JSON with subject and issuer as flat attribute dicts, notBefore, notAfter, and SAN (subjectAltName entries). Connection, TLS, or parse failures are returned as a JSON error object, not raised. Use to check expiry, issuer, and SANs of a suspicious TLS endpoint found via netstat, or to verify a host before trusting its service.
+
+### sassy_defender_status
+
+Read-only endpoint-protection posture check; cross-platform, no parameters. On Windows it is ATD-safe: it reads the last 5 events from the Microsoft-Windows-Windows Defender/Operational event log (time, id, message) and falls back to Get-MpComputerStatus (AntivirusEnabled, RealTimeProtectionEnabled, AntivirusSignatureLastUpdated) if the log is unreadable. On macOS it reports the equivalent posture: Gatekeeper (spctl --status), System Integrity Protection (csrutil status), and XProtect/MRT entries from install history. On Linux it reports the ClamAV version and clamav-daemon state, or states that no on-access AV was detected. Command timeout is 20 seconds. Use for triage of defenses and recent detections before deeper forensic work.
+
+### sassy_file_permissions
+
+Read-only permission audit of one path; cross-platform. Takes path (required). On Windows it runs Get-Acl with Format-List; on macOS 'ls -led@' showing POSIX mode, ACLs, flags, and extended attributes; on Linux getfacl if installed, otherwise 'ls -lad'. The path is passed as a single process argument with no shell interpolation, and the PowerShell branch quotes single quotes. Returns the raw command output with a 15-second timeout; if stdout is empty it returns stderr. Use to determine who can read, write, or execute a file or directory during tampering investigations; pair with sassy_hash_file to confirm whether contents were altered.
+
+### sassy_firewall_status
+
+Read-only host firewall status; cross-platform, no parameters. On Windows it runs 'netsh advfirewall show allprofiles'; on macOS it queries socketfilterfw for global state, stealth mode, block-all, and logging mode; on Linux it uses 'ufw status verbose' when ufw exists, otherwise 'iptables -L -n'. Returns the raw command output with a 15-second timeout, falling back to stderr text if stdout is empty. Use to confirm whether the host firewall is enabled and which profiles or rules are active during incident triage; it reports status only and never changes rules.
+
+### sassy_hash_file
+
+Read-only file hashing; cross-platform. Takes path (required) and algorithm (default sha256; valid values md5, sha1, sha256, sha512 — anything else returns an error). Streams the file in 8KB chunks and returns 'algorithm: hexdigest'. It refuses paths on the sensitive-read denylist (SSH keys, credential stores, browser login DBs, Windows SAM/SECURITY hives, /etc/shadow, SassyMCP tokens.json), returning a JSON error so the tool cannot be used for confirmation-of-existence or partial-content exfiltration against credential files. Use before touching any suspicious file in an investigation; default to sha256 for malware-hash lookups and use md5 or sha1 only when a legacy hash database requires it.
+
+### sassy_open_ports
+
+Read-only snapshot of locally listening ports; works on every OS, no parameters. Runs 'netstat -an' and keeps only lines containing LISTEN (Windows prints LISTENING, macOS/Linux print LISTEN), returning those raw lines in netstat's own order with a 15-second timeout. Use to spot unexpected listeners during triage. Prefer the sibling sassy_port_scan (system group) when you need to actively probe a target host's ports: it scans a target host and port range (nmap if available, otherwise a portable async TCP scan). Use sassy_open_ports for the local listening surface and sassy_port_scan to interrogate a remote host.
+
+### sassy_reg_export
+
+Windows only; read-only against the registry itself but writes an output file to disk. Takes key_path (required registry key) and output_file (required path for the .reg export). Runs reg.exe export with /y, silently overwriting an existing output file. output_file is validated and refused when it matches a protected path; a missing or access-restricted key returns an error. Timeout is 30 seconds. Use to preserve a key for offline analysis (grep, diff, or share the .reg file) before any remediation, or to back up a key before writing with sassy_reg_write. Prefer over sassy_reg_read when you need the whole subtree in portable form; use sassy_reg_read for quick ad-hoc reads instead.
+
+### sassy_reg_read
+
+Read-only Windows Registry inspection; Windows only. Takes key_path (required) and value_name (optional, default empty). With value_name it runs 'reg query key_path /v value_name' for a single value; with the default empty value_name it runs 'reg query key_path' to list all values under the key. On non-Windows hosts it returns an unsupported-OS message pointing at the native equivalent (defaults read, config files). Returns raw reg.exe output with a 15-second timeout. Use for ad-hoc reads of specific keys; for boot persistence triage use sassy_autorun_entries, and for preserving a whole subtree as a shareable file use sassy_reg_export.
+
+### sassy_reg_write
+
+MUTATING and destructive; Windows only. Writes one registry value via reg.exe add with /f, which silently overwrites any existing value with no confirmation prompt. Takes key_path, value_name, and value_data (all required) plus value_type (default REG_SZ; valid REG_SZ, REG_DWORD, REG_QWORD, REG_EXPAND_SZ, REG_MULTI_SZ, REG_BINARY — any other type is rejected with an error). All inputs are plain strings, so numeric and binary types accept their string representation. On non-Windows hosts it returns an unsupported-OS message. Registry corruption is much harder to recover from than a deleted file, so only call this with explicit user confirmation, verify the key and type first with sassy_reg_read, and back up the key with sassy_reg_export before writing.
+
+## linux — 1 tools
+
+*Remote Linux SSH commands via plink (streaming)*
+
+### sassy_linux_exec
+
+Mutating: executes an arbitrary shell command on a REMOTE Linux host over SSH. Required: command (one shell string; chain steps with &&). Optional timeout_seconds, clamped to 1-300, default 60; killed on timeout. Safety: delete-intent commands (rm and friends) are blocked with an error and never run, so this tool cannot destroy files remotely. Output is combined streamed stdout and stderr in one string, with stderr lines prefixed STDERR:. Prerequisites: SSH_HOST and SSH_USER plus one auth source: SSH_KEY (recommended), SSH_SESSION (saved PuTTY session on Windows or ~/.ssh/config Host alias on POSIX), a running ssh-agent/Pageant, or SSH_PASS (fed via stdin, never argv; on POSIX requires the sshpass helper). Uses plink on Windows, native ssh on macOS/Linux.
+
+## github_quick — 6 tools
+
+*Daily-driver GitHub tools (6 tools)*
+
+### sassy_ghq_get
+
+Read-only. Fetches one file from a repo and returns its contents plus SHA. Required: owner, repo, path (repo-relative file path). Optional ref (branch, tag, or commit SHA; default empty means the repo default branch). The API returns base64 content, but this tool decodes it for you and replaces the content field with decoded_content (UTF-8, errors replaced). Requires a GitHub token (GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN). Use to read a file before pushing an updated copy with sassy_ghq_push; use sassy_ghq_get for directory paths only if you want the raw directory listing object. For the fuller variant (explicit tree traversal options) use the github_full tool sassy_gh_get_file_contents.
+
+### sassy_ghq_issue
+
+Mutating: creates a GitHub issue in the given repo. Required: owner, repo, title. Optional body (default empty string) and labels as a comma-separated string, e.g. labels bug,docs becomes a label array. Returns the created issue as JSON. Requires a GitHub token (GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN). This is the lean daily-driver create path; for assignees, milestones, or other fields use the github_full tool sassy_gh_create_issue. To find existing issues first, call sassy_ghq_issues; to add a comment to an existing issue, use the github_full tool sassy_gh_add_issue_comment.
+
+### sassy_ghq_issues
+
+Read-only. Lists issues in a repo, 30 per page. Required: owner, repo. Optional state (open is default; closed or all are valid) and page (default 1; GitHub pages are 1-indexed). Returns the issue list as JSON. Note the GitHub issues endpoint includes pull requests in its results, so some entries may be PRs. Requires a GitHub token (GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN). Use for a quick daily-driver listing; for label filters, sorting, direction, or custom page sizes use the github_full tool sassy_gh_list_issues. To create an issue use sassy_ghq_issue.
+
+### sassy_ghq_pr
+
+Mutating: creates a pull request. Required: owner, repo, title, head (source branch containing your commits), base (target branch the PR merges into, e.g. main). Optional body (default empty string). Returns the created PR as JSON. Requires a GitHub token (GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN). The tool itself creates immediately with no draft mode; for draft PRs or more control use the github_full tool sassy_gh_create_pr. To review an existing PR end-to-end (metadata, diff, comments, CI status) in one call, use sassy_combo_pr_review instead of fetching pieces manually.
+
+### sassy_ghq_protect
+
+Mutating: applies a fixed branch-protection preset to branch (default main) in owner/repo. The preset blocks force pushes and deletions and enforces the rules on admins, but sets no required status checks and no required PR reviews. Returns the protection result as JSON. Requires a GitHub token (GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN). Use for the quick standard lock-down of main; for custom rules (required reviews, approval counts, status checks, allowing force pushes) use the github_full tool sassy_gh_protect_branch instead, and to inspect or remove protection use sassy_gh_get_branch_protection or sassy_gh_remove_branch_protection.
+
+### sassy_ghq_push
+
+Mutating: creates or updates multiple files in one atomic commit via the Git Data API, avoiding the SHA/ETag problems of single-file writes. Required: owner, repo, branch (must be the target branch name, e.g. main or a feature branch), message (commit message), files as a JSON string: an array of {path, content} objects. Malformed files JSON returns an error instead of pushing. Each file write overwrites the existing content at that path, so get the current content with sassy_ghq_get first when editing existing files. Requires a GitHub token (GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN). For single-file operations, branches, or repos the github_full tool sassy_gh_push_files is the fuller equivalent.
+
+## github_full — 80 tools
+
+*Full GitHub API (80 tools) — heavy context cost*
+
+### sassy_gh_add_issue_comment
+
+Mutating but non-destructive: posts a new comment to an issue in owner/repo, identified by issue_number (int). body (required) is the comment text. Returns the created comment as JSON. API failures return a JSON error string, not an exception. Use it to ask questions, add context, or reply on an issue thread; first check sassy_gh_get_issue to confirm the issue number. Prefer sassy_gh_create_pr_review when the comment is line-level feedback on a pull request's code. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN env var; API calls retry up to 3 times with backoff, and a 403 rate-limit response makes the client wait out the reset (up to 60s) before retrying.
+
+### sassy_gh_create_branch
+
+Mutating: creates a new branch ref in owner/repo via the Git Data API. branch (required) is the new branch name. from_branch defaults to empty, in which case the tool fetches the repo's default branch and forks from it; pass any existing branch name to fork from a different one. Returns the created ref object as JSON. Use before opening PRs against repos where you cannot commit to main directly; use sassy_gh_list_branches to confirm the name is free. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN env var; API calls retry up to 3 times with backoff, and a 403 rate-limit response makes the client wait out the reset (up to 60s) before retrying.
+
+### sassy_gh_create_file
+
+Mutating: creates a NEW file at path in owner/repo with a single commit; content is raw text that the tool base64-encodes. message (commit message) and branch (target branch name) are required with no defaults, so you must name the branch explicitly. This endpoint only creates new files; it fails on existing paths, so for files that already exist use sassy_gh_update_file, and for multi-file changes use sassy_gh_push_files. Returns the commit result as JSON. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN env var; API calls retry up to 3 times with backoff, and a 403 rate-limit response makes the client wait out the reset (up to 60s) before retrying.
+
+### sassy_gh_create_gist
+
+Mutating: creates a GitHub gist. files (required) is a JSON string of the form {"filename": {"content": "..."}}; malformed JSON returns an error. description is optional; public defaults to false, creating a secret (unlisted) gist, so pass public=true only for deliberately public snippets. Returns the created gist JSON including its id. Use for sharing short standalone code or notes outside any repo; use sassy_gh_update_gist to edit a gist later, or sassy_gh_create_repo when the content belongs in a real repository. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN env var; API calls retry up to 3 times with backoff, and a 403 rate-limit response makes the client wait out the reset (up to 60s) before retrying.
+
+### sassy_gh_create_issue
+
+Mutating: opens a new issue in owner/repo. title (required) plus optional body. labels and assignees are comma-separated strings (e.g. "bug,help wanted") that the tool splits into arrays. Returns the created issue as JSON. Use it to file bugs, feature requests, or task trackers; use sassy_gh_update_issue to edit or close an issue later, and sassy_gh_list_issues first to check whether the same issue already exists. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN env var; API calls retry up to 3 times with backoff, and a 403 rate-limit response makes the client wait out the reset (up to 60s) before retrying.
+
+### sassy_gh_create_label
+
+Mutating: creates a label on owner/repo. name is required; color is a hex code without "#" (the tool also strips a leading "#" if given), and description is optional. Returns the created label JSON. Use it to build a triage/taxonomy system before filing many issues; check sassy_gh_list_labels first to avoid duplicates, and prefer sassy_gh_update_label when the label already exists. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN env var; API calls retry up to 3 times with backoff, and a 403 rate-limit response makes the client wait out the reset (up to 60s) before retrying.
+
+### sassy_gh_create_pr
+
+Mutating: opens a pull request in owner/repo. Required: title, head (source branch containing your changes), base (destination branch, e.g. main). body is optional PR description; draft defaults to false, pass draft=true for a not-yet-ready PR. Returns the created PR as JSON. Use after pushing commits to a branch (sassy_gh_create_branch plus file writes); use sassy_gh_update_pr to edit title/body/base afterward, and sassy_gh_merge_pr to merge. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN env var; API calls retry up to 3 times with backoff, and a 403 rate-limit response makes the client wait out the reset (up to 60s) before retrying.
+
+### sassy_gh_create_pr_review
+
+Mutating: submits a review on a pull request in owner/repo identified by pull_number. event (required) must be APPROVE, REQUEST_CHANGES, or COMMENT. body is the optional review summary; comments is an optional JSON string of inline review-comment objects (parsed with json.loads, so it must be valid JSON). Returns the created review as JSON. Use it to formally approve or request changes on a PR; prefer sassy_gh_add_issue_comment for plain conversational replies that are not a review verdict. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN env var; API calls retry up to 3 times with backoff, and a 403 rate-limit response makes the client wait out the reset (up to 60s) before retrying.
+
+### sassy_gh_create_repo
+
+Mutating: creates a new GitHub repository. name is required. private defaults to true (repo starts private); description and auto_init default to empty/false, so the repo is empty unless auto_init=true adds a README. org defaults to empty, creating the repo under the authenticated user; pass an org name to create it in that organization instead. Returns the created repo JSON. Use it to start a brand-new project; use sassy_gh_fork_repo when you want a copy of an existing repo. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN env var; API calls retry up to 3 times with backoff, and a 403 rate-limit response makes the client wait out the reset (up to 60s) before retrying.
+
+### sassy_gh_delete_file
+
+Mutating and destructive: deletes the file at path from branch in owner/repo with a single commit. message (commit message), path, and branch are required; sha defaults to empty and the tool auto-fetches the file's current blob SHA, only failing if the file does not exist on that branch. The deletion is immediate and permanent in that commit, so verify with sassy_gh_get_file_contents first and pass message describing why. Prefer sassy_gh_push_files if deleting one file among many other changes in the same commit. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN env var; API calls retry up to 3 times with backoff, and a 403 rate-limit response makes the client wait out the reset (up to 60s) before retrying.
+
+### sassy_gh_fork_repo
+
+Mutating: forks owner/repo into your account. org defaults to empty, forking to the authenticated user; pass an org name to fork into that organization. Returns the new fork's repo JSON (note GitHub creates forks asynchronously, so it may not be immediately usable). Use it to get your own copy of someone else's repo for contribution workflows; use sassy_gh_create_repo when starting a repo from scratch rather than copying one. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN env var; API calls retry up to 3 times with backoff, and a 403 rate-limit response makes the client wait out the reset (up to 60s) before retrying.
+
+### sassy_gh_get_advisory
+
+Read-only: fetches one GLOBAL security advisory by its GHSA ID (ghsa_id, e.g. GHSA-xxxx-xxxx-xxxx), independent of any repo. Returns the full advisory record as JSON (severity, CVE, affected packages/versions, references). Use it when you already know the GHSA ID, e.g. from a Dependabot alert; otherwise list first with sassy_gh_list_global_advisories (filterable by ecosystem/severity) or sassy_gh_list_repo_advisories for a specific repo. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN env var; API calls retry up to 3 times with backoff, and a 403 rate-limit response makes the client wait out the reset (up to 60s) before retrying.
+
+### sassy_gh_get_branch_protection
+
+Read-only: returns the branch protection rules for branch in owner/repo (branch defaults to "main") as JSON: required reviews, status checks, admin enforcement, force-push/deletion allowances. Returns an error if the branch has no protection configured. Use it to audit whether a branch is protected before pushing or during repo security reviews; use sassy_gh_protect_branch to set rules and sassy_gh_remove_branch_protection to clear them. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN env var; API calls retry up to 3 times with backoff, and a 403 rate-limit response makes the client wait out the reset (up to 60s) before retrying.
+
+### sassy_gh_get_code_scanning
+
+Read-only: fetches one CodeQL/code-scanning alert from owner/repo by its alert_number (int). Returns the full alert JSON (rule, severity, location, state). Use it to inspect a specific finding in detail; use sassy_gh_list_code_scanning first to discover alert numbers (it defaults to state=open). Sibling tools cover adjacent scanners: sassy_gh_get_secret_scanning and sassy_gh_get_dependabot. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN env var; API calls retry up to 3 times with backoff, and a 403 rate-limit response makes the client wait out the reset (up to 60s) before retrying.
+
+### sassy_gh_get_commit
+
+Read-only: fetches the full record for one commit in owner/repo, identified by sha (full SHA, short SHA, or branch name resolve server-side). Returns commit metadata plus stats and the list of changed files with patches. Use it to review what a single commit changed, e.g. after pushing; use sassy_gh_list_commits to browse history and find SHAs, and sassy_gh_get_file_contents to read the current file state rather than the at-commit snapshot. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN env var; API calls retry up to 3 times with backoff, and a 403 rate-limit response makes the client wait out the reset (up to 60s) before retrying.
+
+### sassy_gh_get_dependabot
+
+Read-only: fetches one Dependabot alert from owner/repo by its alert_number (int). Returns the full alert JSON (package, vulnerable/safe version ranges, severity, related advisory). Use it to assess a specific dependency vulnerability; use sassy_gh_list_dependabot first to discover alert numbers (defaults to state=open), and sassy_gh_get_advisory when you want the underlying GHSA record. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN env var; API calls retry up to 3 times with backoff, and a 403 rate-limit response makes the client wait out the reset (up to 60s) before retrying.
+
+### sassy_gh_get_discussion
+
+Read-only: fetches one GitHub Discussion in owner/repo by its number via GraphQL. Returns title, body, author, category, and the first 20 comments with authors and timestamps as JSON. Use it to read a proposal, RFC, or Q&A thread in depth; use sassy_gh_list_discussions to find discussion numbers (newest first). Only works on repos with Discussions enabled. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN env var; API calls retry up to 3 times with backoff, and a 403 rate-limit response makes the client wait out the reset (up to 60s) before retrying.
+
+### sassy_gh_get_file_contents
+
+Read-only: reads a file or directory from owner/repo. path defaults to empty (repo root listing); ref is optional and pins a branch, tag, or commit SHA, defaulting to the default branch when omitted. File content arrives base64-decoded into a decoded_content field (raw base64 removed); directories return a listing. Every response includes the blob SHA. Use it for reading code or grabbing the SHA before edits; prefer sassy_gh_get_tree for recursive listings, and sassy_gh_create_file/sassy_gh_update_file/sassy_gh_delete_file for writes. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN env var; API calls retry up to 3 times with backoff, and a 403 rate-limit response makes the client wait out the reset (up to 60s) before retrying.
+
+### sassy_gh_get_gist
+
+Read-only: fetches one gist by gist_id, returning the gist JSON with all file contents (not truncated previews). Use it to read the full content of a shared snippet; use sassy_gh_list_gists to browse a user's gists first, and sassy_gh_create_gist or sassy_gh_update_gist to create or edit. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN env var; API calls retry up to 3 times with backoff, and a 403 rate-limit response makes the client wait out the reset (up to 60s) before retrying.
+
+### sassy_gh_get_issue
+
+Read-only: fetches the full record for one issue in owner/repo, identified by issue_number (int). Returns title, body, state, labels, assignees, milestones, and timestamps as JSON. Use it to inspect an issue before commenting or closing it; use sassy_gh_list_issues or sassy_gh_search_issues to find issue numbers, sassy_gh_add_issue_comment to reply, and sassy_gh_update_issue to change state or labels. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN env var; API calls retry up to 3 times with backoff, and a 403 rate-limit response makes the client wait out the reset (up to 60s) before retrying.
+
+### sassy_gh_get_job_logs
+
+Read-only: downloads the logs for one GitHub Actions job in owner/repo, identified by job_id (int). Returns the log as raw PLAIN TEXT (not JSON), truncated at 50,000 characters, so long logs cut off at the end. Find the job ID from the run's details via sassy_gh_get_run; use sassy_gh_list_runs to find failed runs first. Best for diagnosing CI failures from the tail of a failing step's output. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN env var; API calls retry up to 3 times with backoff, and a 403 rate-limit response makes the client wait out the reset (up to 60s) before retrying.
+
+### sassy_gh_get_label
+
+Read-only: fetches one label from owner/repo by its exact name, returning the label JSON (name, color, description). Use it to confirm a label exists before attaching it to issues via sassy_gh_create_issue or sassy_gh_update_issue; use sassy_gh_list_labels to browse all labels and sassy_gh_create_label/sassy_gh_update_label to manage them. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN env var; API calls retry up to 3 times with backoff, and a 403 rate-limit response makes the client wait out the reset (up to 60s) before retrying.
+
+### sassy_gh_get_latest_release
+
+Read-only: returns the latest published release of owner/repo as JSON (tag, name, notes, assets, timestamps). Errors when the repo has no releases, in which case use sassy_gh_list_releases to check. Use it to find the current version or download published assets; use sassy_gh_get_release_by_tag when you know the tag, and sassy_gh_list_tags for tags that have no release attached. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN env var; API calls retry up to 3 times with backoff, and a 403 rate-limit response makes the client wait out the reset (up to 60s) before retrying.
+
+### sassy_gh_get_me
+
+Read-only: returns the authenticated GitHub user's profile as JSON (login, id, name, email, permissions-relevant fields). Takes no parameters. Use it first in any session to confirm which account and token identity all subsequent calls run as, e.g. to know where sassy_gh_fork_repo or sassy_gh_create_repo will land. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN env var; API calls retry up to 3 times with backoff, and a 403 rate-limit response makes the client wait out the reset (up to 60s) before retrying.
+
+### sassy_gh_get_notification
+
+Read-only: fetches one notification thread by thread_id (string), returning the thread JSON (subject, repo, reason, unread state, updated timestamps). Use it to inspect a single notification in detail; use sassy_gh_list_notifications to get thread IDs, sassy_gh_mark_notification_read to clear one, and sassy_gh_mark_all_read to clear everything. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN env var; API calls retry up to 3 times with backoff, and a 403 rate-limit response makes the client wait out the reset (up to 60s) before retrying.
+
+### sassy_gh_get_pr
+
+Read-only: fetches the full record for one pull request in owner/repo, identified by pull_number (int). Returns title, body, state, head/base refs, merge status, and timestamps as JSON. Use it to understand a PR's scope and status; use sassy_gh_list_prs or sassy_gh_search_issues to find PR numbers, then sassy_gh_pr_files for the diff, sassy_gh_pr_status for CI results, and sassy_gh_pr_reviews for existing reviews. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN env var; API calls retry up to 3 times with backoff, and a 403 rate-limit response makes the client wait out the reset (up to 60s) before retrying.
+
+### sassy_gh_get_project
+
+Read-only: fetches one GitHub Projects v2 board via GraphQL, identified by project_number (int) plus owner; is_org defaults to false, set it true for organization projects. Returns id, title, URL, closed state, description, and the first 50 items (issues, PRs, and draft issues with titles and numbers). Use it to see what is tracked on a board; use sassy_gh_list_projects first to discover project numbers under a user or org. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN env var; API calls retry up to 3 times with backoff, and a 403 rate-limit response makes the client wait out the reset (up to 60s) before retrying.
+
+### sassy_gh_get_release_by_tag
+
+Read-only. Fetches one GitHub release by its tag name via GET repos/{owner}/{repo}/releases/tags/{tag}. Returns the full release JSON: name, body notes, tag_name, draft and prerelease flags, published_at, and download assets. Returns an error if no release exists for that tag, so pass the exact tag string including any leading v. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Use when you already know the tag; use sassy_gh_get_latest_release for the newest release or sassy_gh_list_releases to browse all releases first.
+
+### sassy_gh_get_run
+
+Read-only. Returns full details for a single GitHub Actions workflow run by its numeric run_id via GET repos/{owner}/{repo}/actions/runs/{run_id}. run_id is the integer ID shown in sassy_gh_list_runs output, not the workflow file name or job ID. Returns run status and conclusion, head branch and SHA, workflow name, event, timing, and artifact/log URLs. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Use to inspect one run after listing; use sassy_gh_get_job_logs when you need the actual log text of a job within the run.
+
+### sassy_gh_get_secret_scanning
+
+Read-only. Returns one secret-scanning alert by its alert_number via GET repos/{owner}/{repo}/secret-scanning/alerts/{alert_number}. Returns the alert JSON: secret type and validity, state, locations (path, line), and timestamps. alert_number is the integer from sassy_gh_list_secret_scanning. The token needs the security-events scope, and private repos require appropriate repo access or the call fails. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Use after listing alerts to inspect a specific leaked secret; use sassy_gh_get_code_scanning or sassy_gh_get_dependabot for the other alert types.
+
+### sassy_gh_get_tag
+
+Read-only. Resolves a tag in two steps: GET git/refs/tags/{tag} to get the ref, then GET git/tags/{sha} for the tag object, returning message, tagger, and pointed-at object. Works fully for annotated tags. For lightweight tags the ref points directly at a commit, so the second fetch may fail and the useful data is the commit SHA from the ref. Pass the exact tag name. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Use when you need a tag's metadata; use sassy_gh_list_tags to discover tag names or sassy_gh_get_release_by_tag for the release attached to a tag.
+
+### sassy_gh_get_team_members
+
+Read-only. Lists members of one organization team via GET orgs/{org}/teams/{team_slug}/members. team_slug is the URL-friendly slug (lowercase, dashes), not the display name; get it from sassy_gh_get_teams output. Returns member logins with roles. Requires org membership or sufficient token scopes for private orgs, plus GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Use to see who is on a team before assigning reviewers or auditing access; use sassy_gh_get_teams first to discover the team's slug.
+
+### sassy_gh_get_teams
+
+Read-only. Lists all teams in an organization via GET orgs/{org}/teams. Returns each team's id, name, slug, description, and privacy setting. org is the organization login. For private organizations the authenticated token must be an org member or the call fails. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Use to discover team slugs for sassy_gh_get_team_members or to audit org structure. Does not list members; pair with sassy_gh_get_team_members for that.
+
+### sassy_gh_get_tree
+
+Read-only. Returns the Git tree for a SHA via GET repos/{owner}/{repo}/git/trees/{sha}. sha accepts a branch name, commit SHA, or tag, so you can inspect a branch tip without knowing its commit. With recursive=false (default) only top-level entries are returned; set recursive=true to get the full nested listing with every path, mode, type, and blob SHA. Recursive output on large repos can be very large. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Use to map repo structure without cloning; use sassy_gh_get_file_contents when you need actual file contents.
+
+### sassy_gh_list_branches
+
+Read-only. Lists repository branches via GET repos/{owner}/{repo}/branches, paginated with page (default 1) and per_page (default 30, max 100). Returns each branch's name, head commit SHA, and protected flag. Results are not sorted by activity; they follow GitHub's default branch ordering. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Use to discover branch names before passing one to tools that take a branch, ref, or head parameter. For commit history on a branch use sassy_gh_list_commits with sha set to the branch name.
+
+### sassy_gh_list_code_scanning
+
+Read-only. Lists code-scanning alerts (e.g. CodeQL findings) via GET repos/{owner}/{repo}/code-scanning/alerts. state defaults to open; also accepts fixed and dismissed. Paginates with page only (default 1); there is no per_page parameter, so GitHub's default page size of 30 applies. Returns each alert's rule, severity, location, and state. Private repos need a token with the security-events scope. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Use for a security overview; use sassy_gh_get_code_scanning with an alert number for full details on one finding.
+
+### sassy_gh_list_commits
+
+Read-only. Lists commits via GET repos/{owner}/{repo}/commits, newest first. sha filters to a branch, tag, or commit to start from and defaults to empty, which means the default branch; author filters by username or email. Paginates with page (default 1) and per_page (default 30, max 100). Returns each commit's SHA, message, author, and timestamp. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Use for recent history or to find a commit SHA; use sassy_gh_get_commit when you need the full diff and file list of one commit.
+
+### sassy_gh_list_dependabot
+
+Read-only. Lists Dependabot vulnerability alerts via GET repos/{owner}/{repo}/dependabot/alerts. state defaults to open; also accepts fixed, dismissed, and auto_dismissed. Paginates with page only (default 1); no per_page parameter, so GitHub's default page size applies. Returns the vulnerable package, severity, CVE/GHSA identifiers, and affected version ranges. Requires a token with the security-events scope and GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Use to audit dependency vulnerabilities; use sassy_gh_get_dependabot with an alert number for full details on one alert.
+
+### sassy_gh_list_discussion_categories
+
+Read-only. Lists the discussion categories configured for a repo via the GraphQL API, returning up to 25 categories with id, name, description, and emoji. Discussions must be enabled on the repo or the result is empty. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Use to see available categories (Q&A, Announcements, Ideas, etc.) before referencing a category elsewhere, and pair with sassy_gh_list_discussions to browse existing discussions in those categories.
+
+### sassy_gh_list_discussions
+
+Read-only. Lists repo discussions via the GraphQL API, returning the first per_page discussions (default 10) ordered by most recently updated first. Each entry has number, title, url, author login, createdAt, category name, and answeredAt (null when unanswered). There is no page parameter, so only the first page is reachable. Discussions must be enabled on the repo. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Use for a quick scan of recent discussions; use sassy_gh_get_discussion with a discussion number for the full body and comments.
+
+### sassy_gh_list_gists
+
+Read-only. Lists gists via GET. Leave username empty (default) to list the authenticated user's own gists, including secret ones; pass a username to list that user's public gists only. Paginates with page (default 1) and per_page (default 30). Returns gist metadata: id, description, file names, public flag, and timestamps, but not file contents. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Use to find a gist ID; use sassy_gh_get_gist with the ID to read its full contents.
+
+### sassy_gh_list_global_advisories
+
+Read-only. Lists GitHub's global security advisories via GET /advisories, which is the cross-ecosystem CVE/GHSA database, not repo-specific findings. Filter with ecosystem (e.g. npm, pip, maven, go, rubygems, actions) and severity (low, moderate, high, critical); leave both empty to list everything. Paginates with page (default 1) and per_page (default 20). Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Use to research a vulnerability by ecosystem; use sassy_gh_list_repo_advisories for advisories tied to a specific repo, or sassy_gh_get_advisory with a GHSA ID for one advisory.
+
+### sassy_gh_list_issues
+
+Read-only. Lists issues via GET repos/{owner}/{repo}/issues. state defaults to open; use closed or all for other states. labels takes a comma-separated string of label names to filter by. sort defaults to created and accepts updated and comments; direction defaults to desc. Paginates with page (default 1) and per_page (default 30). Note GitHub's issues endpoint also returns pull requests, identifiable by a pull_request key in each item. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Use sassy_gh_list_prs instead when you want PRs only, or sassy_gh_search_issues for full-text search across repos.
+
+### sassy_gh_list_labels
+
+Read-only. Lists all labels on a repository via GET repos/{owner}/{repo}/labels. Paginates with page (default 1) and per_page (default 100, enough for most repos in one call). Returns each label's name, color (hex without #), and description. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Use to discover exact label names before passing them to sassy_gh_list_issues, sassy_gh_create_issue, or sassy_gh_update_issue, since label filters must match names exactly.
+
+### sassy_gh_list_notifications
+
+Read-only. Lists the authenticated user's notifications via GET /notifications. By default (all_notifs=false) only unread notifications are returned; set all_notifs=true to include already-read ones. Paginates with page only (default 1); there is no per_page parameter. Returns thread id, subject title and type, repository, reason, and updated_at. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Use to triage inbox; use sassy_gh_mark_notification_read for one thread or sassy_gh_mark_all_read to clear everything.
+
+### sassy_gh_list_projects
+
+Read-only. Lists GitHub Projects v2 for a user or organization via the GraphQL API. owner is the login; set is_org=true for an organization, false (default) for a user account. per_page defaults to 20 and caps the number returned. Returns each project's id, number, title, url, and closed flag. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Use to discover project numbers; use sassy_gh_get_project with a project number to see its items (issues, PRs, draft issues).
+
+### sassy_gh_list_prs
+
+Read-only. Lists pull requests via GET repos/{owner}/{repo}/pulls. state defaults to open; use closed or all for others. sort defaults to created, direction defaults to desc. base filters by target branch (e.g. main); head filters by source branch, using the user:branch format for fork branches. Paginates with page (default 1) and per_page (default 30). Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Use to find a PR number before calling sassy_gh_get_pr, sassy_gh_merge_pr, or review tools; use sassy_gh_list_issues only when you need issues rather than PRs.
+
+### sassy_gh_list_releases
+
+Read-only. Lists repository releases via GET repos/{owner}/{repo}/releases, newest first. Paginates with page (default 1) and per_page (default 30). Returns each release's tag_name, name, body, draft and prerelease flags, published_at, and assets. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Use to browse releases or find a tag to pass to sassy_gh_get_release_by_tag; use sassy_gh_get_latest_release when you only need the newest non-draft, non-prerelease release.
+
+### sassy_gh_list_repo_advisories
+
+Read-only. Lists security advisories published for a specific repository via GET repos/{owner}/{repo}/security-advisories. state is empty by default, which returns all states; it can filter to published, closed, etc. Paginates with page only (default 1); no per_page parameter. These are repo-maintainer advisories, distinct from Dependabot alerts and the global advisory database. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Use sassy_gh_list_global_advisories for the global GHSA database or sassy_gh_list_dependabot for automated dependency alerts on the repo.
+
+### sassy_gh_list_runs
+
+Read-only. Lists GitHub Actions workflow runs. Leave workflow_id empty (default) to list runs across all workflows via actions/runs; pass a workflow ID or workflow file name (e.g. ci.yml) to list runs for just that workflow. status filters by run status such as queued, in_progress, or completed; leave empty for all. Paginates with page (default 1) and per_page (default 20). Returns each run's id, status, conclusion, head branch and SHA, and timestamps. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Use to find a run_id for sassy_gh_get_run; use sassy_gh_trigger_workflow to start a new run.
+
+### sassy_gh_list_secret_scanning
+
+Read-only. Lists secret-scanning alerts (detected leaked credentials/tokens) via GET repos/{owner}/{repo}/secret-scanning/alerts. state defaults to open; also accepts resolved. Paginates with page only (default 1); no per_page parameter. Returns each alert's number, secret type, state, and location. Private repos need a token with the security-events scope. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Use to find an alert number, then call sassy_gh_get_secret_scanning for full details on one alert.
+
+### sassy_gh_list_starred
+
+Read-only. Lists starred repositories. Leave username empty (default) to list the authenticated user's starred repos; pass a username to list that user's public starred repos. Paginates with page (default 1) and per_page (default 30). Returns full repo objects for each star. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Use to review saved repos; use sassy_gh_star_repo or sassy_gh_unstar_repo to change star state.
+
+### sassy_gh_list_tags
+
+Read-only. Lists repository tags via GET repos/{owner}/{repo}/tags. Paginates with page (default 1) and per_page (default 30). Returns each tag's name and the commit SHA it points to. Tags are returned in GitHub's default order, roughly reverse chronological by commit. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Use to discover tag names; use sassy_gh_get_tag for a tag's full annotated object or sassy_gh_get_release_by_tag for the release attached to a tag.
+
+### sassy_gh_mark_all_read
+
+Mutating and irreversible. Marks every notification of the authenticated user as read via PUT /notifications with {read: true}. There are no parameters and no filtering: it clears the entire notification inbox at once, not just one repo or thread. Returns a status confirmation. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Use only when the user explicitly wants to clear all notifications; use sassy_gh_mark_notification_read with a thread ID to mark a single notification thread as read instead.
+
+### sassy_gh_mark_notification_read
+
+Mutating but low-risk: marks a single GitHub notification thread as read (PATCH notifications/threads/{id}); nothing else changes. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN env var. thread_id (required string) is the notification thread id from sassy_gh_list_notifications, not an issue or PR number. Returns a small status JSON confirming the thread is read. Read-only check first with sassy_gh_get_notification if you need the thread's subject or repo. Use this to triage individual notifications; to clear everything at once use sassy_gh_mark_all_read instead.
+
+### sassy_gh_merge_pr
+
+Mutating and irreversible: merges pull_number of owner/repo via the GitHub merge endpoint. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. merge_method defaults to squash; valid values are merge, squash, rebase. commit_title and commit_message default to empty strings (GitHub generates defaults when omitted); commit_title only applies to squash merges per GitHub semantics. Returns the merge result JSON with the merged commit sha. Check mergeability first with sassy_gh_pr_status and sassy_gh_get_pr (mergeable, draft status) rather than calling blindly. For a PR that is behind its base, call sassy_gh_update_pr_branch first.
+
+### sassy_gh_notification_sub
+
+Mutating: sets your subscription state on a single notification thread (PUT .../subscription). Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. thread_id (required string) comes from sassy_gh_list_notifications. ignored defaults to false, meaning you stay subscribed to the thread; pass ignored=true to mute it and stop receiving notifications about it. Returns the resulting subscription JSON. Use for per-thread triage (e.g. muting a noisy issue). To change notifications for a whole repository instead, use sassy_gh_repo_notification_sub.
+
+### sassy_gh_pr_files
+
+Read-only: lists every file changed in pull_number of owner/repo (GET pulls/{number}/files), returned as a JSON array of file objects with filename, status (added, modified, removed, renamed), additions, deletions, changes, blob urls, and the unified diff in the patch field. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. No pagination parameters; large PRs return all files in one response, so the output can be long. This is the core code-review input: use it to see the diff without fetching full files. For full file content use sassy_gh_get_file_contents; for inline reviewer feedback use sassy_gh_pr_review_comments.
+
+### sassy_gh_pr_review_comments
+
+Read-only: returns inline review comments on pull_number of owner/repo (GET pulls/{number}/comments), i.e. comments anchored to specific lines of the diff, each with path, line, diff_hunk, author, and body. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. No pagination parameters. Do not confuse with sassy_gh_pr_reviews, which returns whole-PR review verdicts (approve/request changes), not line-level comments. Use this during a code review to see what feedback already exists so you do not duplicate it; pair with sassy_gh_pr_files for the diff itself.
+
+### sassy_gh_pr_reviews
+
+Read-only: returns the review verdicts on pull_number of owner/repo (GET pulls/{number}/reviews) as a JSON array, each with reviewer login, state (APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED), body, and submitted_at. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. No pagination parameters. This shows the decision history, not the line-level remarks; for inline code comments use sassy_gh_pr_review_comments instead. Use it to check whether required approvals are in place before calling sassy_gh_merge_pr.
+
+### sassy_gh_pr_status
+
+Read-only: returns the combined commit status for pull_number of owner/repo. It makes two API calls internally: first fetches the PR, then fetches the combined status of its head sha (GET commits/{sha}/status). Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. The response includes the overall state (success, pending, failure, error) and the individual status/check contexts. Use this as the pre-merge CI gate before sassy_gh_merge_pr; for PR metadata like mergeability and draft state use sassy_gh_get_pr instead.
+
+### sassy_gh_protect_branch
+
+Mutating and destructive in one respect: replaces the branch protection rules for branch (default main) via PUT, overwriting whatever was configured. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Parameters: require_pr (default false) and required_approvals (default 0); if either is set, pull-request reviews become required with required_approving_review_count set to max(required_approvals, 1) and dismiss_stale_reviews enabled. enforce_admins defaults to true, allow_force_push defaults to false, allow_deletions defaults to false. Important: the request always sends required_status_checks and restrictions as null, so any existing required-status-check rules are cleared. To remove protection entirely use sassy_gh_remove_branch_protection; to inspect current rules use sassy_gh_get_branch_protection.
+
+### sassy_gh_push_files
+
+Mutating: creates or updates multiple files in owner/repo in a single atomic commit on branch, using the Git Data API (builds tree, commit, updates ref). Preferred over sassy_gh_create_file/sassy_gh_update_file for any multi-file change. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. message is the commit message; branch must already exist. files is a JSON string array of {path, content} objects where content is raw text (the tool handles encoding). Invalid JSON returns an error instead of pushing. The branch is force-moved to the new commit, so make sure the branch tip is current. Returns the updated ref object. For one file at a time use sassy_gh_create_file or sassy_gh_update_file.
+
+### sassy_gh_remove_branch_protection
+
+Mutating and security-sensitive: deletes all branch protection rules for branch (default main) of owner/repo via DELETE, leaving the branch unprotected so anyone with push access can push directly. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Returns a small JSON confirming removal. There is no undo; re-applying rules requires sassy_gh_protect_branch. Use only when deliberately opening a branch, e.g. an automation branch or a retired repo; check current rules first with sassy_gh_get_branch_protection. Never use this as a shortcut around a failing required check.
+
+### sassy_gh_repo_notification_sub
+
+Mutating: sets your notification subscription for the entire owner/repo (PUT repos/{owner}/{repo}/subscription). Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. ignored defaults to false, which subscribes you (watch) to the repo; ignored=true mutes the repo entirely. The tool sends subscribed as not ignored, so you cannot set a middle-ground participation level through this tool. Returns the subscription JSON. Use this for repo-wide watch/mute; to mute a single noisy thread instead use sassy_gh_notification_sub with the thread id from sassy_gh_list_notifications.
+
+### sassy_gh_search_code
+
+Read-only: searches code across GitHub via GET search/code. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. query supports GitHub code search qualifiers such as repo:owner/name, path:, extension:, and language:; note GitHub code search only indexes the default branch and public repos (plus private repos the token can access). page defaults to 1, per_page defaults to 30 (max 100). Returns the standard search envelope with total_count and items containing the repository, file path, and matched snippets. For finding repos rather than code use sassy_gh_search_repos; for issues and PRs use sassy_gh_search_issues.
+
+### sassy_gh_search_issues
+
+Read-only: searches issues AND pull requests across GitHub via GET search/issues; PRs appear as results carrying a pull_request field. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. query supports qualifiers like repo:, state:, label:, author:, and is:pr. sort defaults to empty (results ordered by best match); set it to comments, created, or updated to change ordering. order defaults to desc; page defaults to 1, per_page defaults to 30 (max 100). Returns the search envelope with total_count and full issue/PR objects. For code use sassy_gh_search_code; for repo-scoped listing use sassy_gh_list_issues.
+
+### sassy_gh_search_orgs
+
+Read-only: searches GitHub organizations. It calls the user search endpoint with type:org appended to your query, so results are returned in the user-search item shape. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. query is a free-text or qualifier search (e.g. a name fragment); page defaults to 1, per_page defaults to 30 (max 100). Returns the search envelope with total_count and matching org objects (login, description, type). To find individual user accounts use sassy_gh_search_users instead; to list an org's teams use sassy_gh_get_teams.
+
+### sassy_gh_search_repos
+
+Read-only: searches GitHub repositories via GET search/repositories. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. query supports qualifiers like language:, stars:>100, topic:, user:, and org:; page defaults to 1, per_page defaults to 30 (max 100). Returns the search envelope with total_count and full repository objects including owner, description, stars, default_branch, and visibility. This is the starting point when you need an owner/repo pair for any other repo-scoped tool. For code inside repos use sassy_gh_search_code; for issues and PRs use sassy_gh_search_issues.
+
+### sassy_gh_search_users
+
+Read-only: searches GitHub user accounts via GET search/users. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. query accepts free text and qualifiers like type:user, followers:>100, or location:. sort defaults to empty (best match); set to followers, repositories, or joined to reorder. order defaults to desc; page defaults to 1, per_page defaults to 30 (max 100). Returns the search envelope with total_count and user objects (login, id, avatar_url). To find organizations instead use sassy_gh_search_orgs; to find repositories use sassy_gh_search_repos.
+
+### sassy_gh_star_repo
+
+Mutating (idempotent): stars owner/repo for the authenticated user (PUT user/starred/{owner}/{repo}). Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Starring an already-starred repo succeeds harmlessly. Returns a small JSON confirming the starred status and repo name. Use to bookmark repos worth revisiting; to see what is starred use sassy_gh_list_starred, and to remove a star use sassy_gh_unstar_repo. Has no effect on the repo itself or anyone else's view.
+
+### sassy_gh_trigger_workflow
+
+Mutating: starts a GitHub Actions workflow run via the workflow_dispatch endpoint (POST actions/workflows/{id}/dispatches). Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. workflow_id accepts the workflow file name (e.g. ci.yml) or numeric id. ref defaults to main and selects the branch, tag, or commit the workflow runs from; the workflow must have a workflow_dispatch trigger on that ref or the call fails. inputs is an optional JSON string of key/value pairs matching the workflow's declared inputs; invalid JSON errors out. A 204 response returns a triggered confirmation. Use sassy_gh_list_runs afterwards to watch the run; to inspect failures use sassy_gh_get_job_logs.
+
+### sassy_gh_unstar_repo
+
+Mutating (idempotent): removes the authenticated user's star from owner/repo (DELETE user/starred/{owner}/{repo}). Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Unstarring a repo you never starred succeeds harmlessly. Returns a small JSON confirming the unstarred status. Use to clean up bookmarks; to add a star use sassy_gh_star_repo, and to see current stars use sassy_gh_list_starred. Does not affect the repo or other users.
+
+### sassy_gh_update_file
+
+Mutating: overwrites an EXISTING file at path in owner/repo on branch with new raw-text content (the tool base64-encodes it internally) and commit message. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. branch is required. sha is optional: leave it empty and the tool auto-fetches the current blob SHA from branch with an extra API call; supply it from sassy_gh_get_file_contents to skip that call. Fails with a pointer to sassy_gh_create_file if the file does not exist. Returns the content/commit result JSON. For multiple files in one commit use sassy_gh_push_files instead.
+
+### sassy_gh_update_gist
+
+Mutating: updates gist gist_id via PATCH. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. files is required and must be a JSON string (or object) mapping filename to {content: ...}, where content is raw text; this is the same shape as the GitHub gist API and can add, rename, or overwrite files in the gist. description is optional and updates the gist description when non-empty. Returns the updated gist JSON. Invalid JSON in files returns an error. Use sassy_gh_get_gist first to confirm the gist id and current filenames; to create a new gist use sassy_gh_create_gist.
+
+### sassy_gh_update_issue
+
+Mutating: patches issue_number in owner/repo. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Only non-empty parameters are sent, so leave a field as the default empty string to leave it unchanged; note this also means you cannot clear a field to empty with this tool. title, body, and state (open or closed) are straightforward. labels and assignees are comma-separated strings that REPLACE the existing sets when provided, e.g. labels=bug,urgent overwrites all current labels. Returns the updated issue JSON. To add a comment without editing the issue use sassy_gh_add_issue_comment; to create one use sassy_gh_create_issue.
+
+### sassy_gh_update_label
+
+Mutating: updates a label in owner/repo identified by name via PATCH. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. new_name renames the label when non-empty (empty leaves the name unchanged). color is a hex color without the #; the tool strips a leading # if you include one, and empty leaves the color unchanged. description updates the label description when non-empty. Returns the updated label JSON. To create a label use sassy_gh_create_label; to inspect one first use sassy_gh_get_label or sassy_gh_list_labels.
+
+### sassy_gh_update_pr
+
+Mutating: patches pull_number in owner/repo. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Only non-empty parameters are sent, so empty strings leave fields unchanged. title and body edit the PR metadata; state accepts open or closed (closing a PR this way does not merge it). base retargets the PR onto a different target branch. Returns the updated PR JSON. This does not merge anything; use sassy_gh_merge_pr to merge and sassy_gh_update_pr_branch to bring the PR's branch up to date with base.
+
+### sassy_gh_update_pr_branch
+
+Mutating: updates the head branch of pull_number in owner/repo with the latest changes from its base branch (PUT pulls/{number}/update-branch), equivalent to the Update branch button on GitHub. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. Takes no options beyond owner, repo, and pull_number; the merge strategy follows the repository's settings. Returns the API result JSON. Use this to unstick a PR that is behind its base before merging with sassy_gh_merge_pr, or after sassy_gh_update_pr retargets the base branch. Fails if the branch is already up to date or has conflicts requiring manual resolution.
+
+### sassy_gh_update_repo
+
+Mutating: patches settings on owner/repo via the GitHub update-repository endpoint. Requires GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN. settings is a JSON string (or object) passed through directly as the request body, so any valid repository PATCH field works, e.g. {visibility:public}, {description:...}, {homepage:...}, {has_issues:false}, or {default_branch:...}. Changing visibility is destructive in effect (private to public exposes code), and GitHub may reject some changes based on token permissions or org policy. Invalid JSON returns an error. Returns the updated repository JSON. To create a repo use sassy_gh_create_repo.
+
+## v020 — 30 tools
+
+*Vision, app launcher, web inspector, crosslink, multi-AI coordination*
+
+### sassy_close_window
+
+Mutating: closes a window found by case-insensitive title substring (first match). force=False (default) sends a graceful close so the app may prompt to save; force=True kills the owning process immediately, discarding unsaved work. Windows uses pywinauto (WM_CLOSE or psutil kill), macOS its native helper, Linux wmctrl -c and errors if wmctrl is missing. Returns the matched window title and pid. Use when a specific window must go away; use sassy_list_windows first to confirm the exact title when several windows could match.
+
+### sassy_coordination_board
+
+Read-only one-call coordination snapshot for multi-session awareness. Returns live peers with capabilities and last-seen ages, message counts per channel, the recent handoff timeline from the device-handoff and task-handoff channels, and registered sessions — plus memory, recent-tool-call, and hook summaries, each degrading to an error marker instead of failing. Never marks messages read, so polling it is safe. stale_seconds (default 300) sets the alive window; handoff_limit (default 20) caps handoff rows. Use for a full cockpit view; use sassy_peer_list or sassy_crosslink_status for lighter single-aspect reads.
+
+### sassy_crosslink_broadcast
+
+Mutating: writes the same payload as a separate message into EVERY known channel (falling back to default when no channels exist yet), so all sessions receive it regardless of which channel they poll. Payload cap is 256 KiB. Returns the channels written and per-message results. Use when a signal truly concerns every channel, such as a global shutdown notice. For a single channel use sassy_crosslink_send; to hand a task to one peer use sassy_peer_delegate.
+
+### sassy_crosslink_recv
+
+Reads the newest messages from one channel (newest first, up to limit, default 20) and returns them with ids, senders, and timestamps. Side effect: every message returned is marked read for the given session_id (default sassymcp) — even with unread_only=False — so use a distinct session_id to avoid consuming messages another session expects. unread_only=True (default) filters to messages this session has not seen. Works against the local SQLite queue; the HTTP server from sassy_crosslink_start is only needed for LAN access. For a full mesh overview without consuming messages use sassy_coordination_board.
+
+### sassy_crosslink_register
+
+Registers a session in the crosslink queue as an upsert: session_id (auto-generated session-xxxxxxxx if empty), name (e.g. claude-desktop), platform (e.g. windows). Repeat calls refresh last_seen. Non-destructive — it only creates or refreshes the row. Register before sending so recipients can attribute messages. Use sassy_peer_announce instead when the agent should appear as a live peer in the coordination mesh with capabilities and liveness heartbeats.
+
+### sassy_crosslink_send
+
+Mutating: appends one message to a single channel of the shared local queue (SQLite, so it works without sassy_crosslink_start; the HTTP server is only needed for LAN access). payload is the message content, capped at 256 KiB — split larger blobs or use state tools instead. channel defaults to default, with task-handoff the convention for cross-client resume handoffs. session_id defaults to an auto-generated sassymcp-xxxxxx sender. ttl_seconds=0 means never expire, otherwise the message auto-deletes after N seconds. Returns the message id, channel, and timestamp. Use for targeted single-channel messages; use sassy_crosslink_broadcast to reach every channel.
+
+### sassy_crosslink_start
+
+Mutating: starts the Crosslink HTTP API (GET/POST /health, /sessions, /messages) on port (default 9377). bind defaults to 0.0.0.0 only when a token (param or SASSYMCP_CROSSLINK_TOKEN env) is set, otherwise 127.0.0.1 — never expose it unauthenticated on the LAN. Auth is Authorization: Bearer <token> or the ?token= query param; CORS is limited to localhost:9377 origins. Returns already_running if up, plus bind, port, lan_url, and auth status. Only needed for cross-device access; local sessions share the SQLite queue directly. Stop with sassy_crosslink_stop; check state with sassy_crosslink_status.
+
+### sassy_crosslink_status
+
+Read-only: reports whether the Crosslink HTTP server is running (and its port), the SQLite DB path, the total stored message count, the distinct channel names, and the registered sessions ordered by last_seen. Shows counts only, never message contents — use sassy_crosslink_recv to read messages or sassy_coordination_board for a combined mesh and handoff snapshot. No parameters; it creates the DB on first call as a side effect.
+
+### sassy_crosslink_stop
+
+Mutating but non-destructive: shuts down the Crosslink HTTP API server (the background thread and auth token are cleared). The SQLite queue, sessions, and all messages persist, so local sessions can keep sending and receiving after it stops. Returns stopped or not_running. Use before sassy_crosslink_start when you need to change the port, bind address, or token.
+
+### sassy_find_text_on_screen
+
+Searches the screen for text via OCR and returns the bounding box and center of each match in absolute screen pixels: text, x, y, w, h, center_x, center_y, plus a found flag and match count. search_text is a case-insensitive substring, not regex; window_title scopes the search to one window (the window offset is added back so coordinates stay absolute). click=True also left-clicks the first match's center — a mutating UI action, so verify the matches first. Requires pytesseract plus the Tesseract binary (not bundled in the shipped exe). Use when you need coordinates; use sassy_screen_ocr when you only need the text.
+
+### sassy_focus_window
+
+Mutating: brings a window to the foreground by case-insensitive title substring (first match). Windows uses pywinauto, macOS its native helper, Linux wmctrl -a (errors if wmctrl is unavailable). Returns the focused title or an error when no window matches. Use before interacting with a window's UI or capturing it, since background windows may not render or respond correctly.
+
+### sassy_launch_app
+
+Mutating: launches an application by name — Windows via Start-menu search, macOS via open -a, Linux by executing the name on PATH. name examples: notepad, chrome, code. Then waits wait_seconds (default 2.0) and reports whether a window for it was found. Returns an error if the launch fails or no window appears. Use when you know the friendly app name; use sassy_launch_exe when you have an exact file path to an executable or installer.
+
+### sassy_launch_exe
+
+Mutating: launches an executable directly by file path and returns its pid. path must be an existing file; on Windows only .exe and .msi are accepted, on macOS a .app bundle is opened via open, and elsewhere the file is executed directly. args is an optional space-separated argument string. It pauses briefly after spawn (1s on Windows, 0.5s elsewhere) so startup errors surface. Use for exact paths, installers, and scripts; use sassy_launch_app for friendly app names resolved through the OS.
+
+### sassy_list_windows
+
+Read-only: lists windows as JSON with title, process name, pid, left/top/width/height, and a visible flag. include_hidden=False (default) skips invisible windows; windows with empty titles are always skipped. Windows requires pywinauto and psutil; macOS uses System Events (needs Accessibility permission); Linux without wmctrl returns an error. Use to get exact titles for focus, close, resize, and snap, and pixel rects for sassy_screen_region before acting on a window.
+
+### sassy_peer_announce
+
+Mutating (queue write): announces or refreshes this agent as a live peer in the coordination mesh on the peer-announce channel. peer_id is auto-generated if empty; name (e.g. claude-desktop), platform (e.g. windows), capabilities (comma-separated like shell,github,vision), and endpoint (URL for a remote peer) describe it; ttl_seconds auto-expires the heartbeat (0 = never). A message is posted only when new or identity changed, otherwise liveness is just refreshed — re-call at least every stale window (default 300s) to keep alive=true in sassy_peer_list. Use for mesh presence; use sassy_crosslink_register for a plain crosslink session.
+
+### sassy_peer_delegate
+
+Mutating: hands one specific task to ONE peer by posting a targeted handoff message. peer_id is the recipient (see sassy_peer_list); task describes the work, context carries the state the peer needs, next_steps gives an ordered plan, from_peer is the sender id (auto-generated if empty), and channel defaults to device-handoff. The recipient reads it with sassy_crosslink_recv on that channel and acts on messages whose to equals its peer_id. Use for one-to-one task handoffs; use sassy_crosslink_send for channel messages and sassy_crosslink_broadcast for all channels.
+
+### sassy_peer_list
+
+Read-only: lists peers in the coordination mesh newest-first with peer_id, name, platform, capabilities, endpoint, last_seen, age_seconds, and alive (true when a heartbeat arrived within stale_seconds, default 300). Derived from the latest announce per peer over the last 500 peer-announce messages; nothing is marked read. Use to pick a recipient for sassy_peer_delegate; use sassy_coordination_board for peers plus channels and handoffs in one call.
+
+### sassy_resize_window
+
+Mutating: moves, resizes, or changes the state of a window found by title substring. x and y are the new position, width and height the new size, each defaulting to -1 to keep the current value. maximize, minimize, restore (default false) change window state instead of or alongside geometry. Windows uses pywinauto, macOS its native helper, Linux wmctrl -e (minimize goes through xdotool; missing helpers error). Use sassy_list_windows first to confirm the exact title.
+
+### sassy_screen_capture
+
+Read-only: captures the screen as a compressed base64 JPEG with metadata (original and captured size, byte count). No args captures the full primary screen; window_title captures a specific window by title substring; region takes an x,y,w,h string rectangle. max_width (default 1280) downscales for transport limits; quality (default 70) sets JPEG 1-100; save_path also writes the file to disk (protected paths refused). Use when you need a detailed color image; use sassy_screen_glance for cheap frequent polling, sassy_screen_region for integer-coordinate rects, or sassy_screen_ocr when you only need text.
+
+### sassy_screen_diff
+
+Read-only: captures a grayscale frame now, waits wait_seconds (clamped 0.5-30, default 2.0), captures again, and returns the before/after images, an amplified difference image highlighting changed pixels, the change_percent, and a changed flag (true above 1%). max_width defaults to 640; window_title or a region string scopes the capture. Use to verify a UI action had the expected visual effect; use sassy_screen_watch to monitor changes over a longer window with frame filtering.
+
+### sassy_screen_glance
+
+Read-only: fast low-res grayscale JPEG capture (~3-6 KB per frame) optimized for AI-vision polling. window_title or a region string scopes the capture; max_width (default 640) and quality (default 20) trade detail for size. Returns the base64 image, size, byte count, and timestamp. Use when you need to poll the screen repeatedly; use sassy_screen_capture for a detailed color image, sassy_screen_watch for change-filtered monitoring, and sassy_screen_ocr for reading text.
+
+### sassy_screen_ocr
+
+Read-only: screenshot plus Tesseract OCR in one call, returning the extracted text, the non-empty line count, and whether a dark theme was auto-detected and inverted for accuracy. window_title or a region string scopes the capture; language defaults to eng. Requires pytesseract and the Tesseract binary (not bundled in the shipped exe). Use when you need to read on-screen text; use sassy_find_text_on_screen when you also need the coordinates of the text.
+
+### sassy_screen_region
+
+Read-only: captures one rectangle given as integer x, y, width, height pixel coordinates, returning a base64 JPEG plus the region and captured size. max_width (default 1024) downscales wide regions; quality defaults to 80. Use when you already have exact coordinates (e.g. from sassy_list_windows); use sassy_screen_capture with window_title or its region string for windows and ad-hoc rectangles.
+
+### sassy_screen_watch
+
+Read-only: monitors the screen for a duration, capturing grayscale frames every interval and returning only frames whose changed-pixel percentage meets change_threshold, with the first frame always included. Parameters are clamped: seconds 1-30 (default 5.0), interval 0.3-5.0 (default 0.5), threshold 0-100 (default 2.0), max_frames 1-20 (default 10), max_width 320-800 (default 480), quality 5-50 (default 15). A 1 MiB cumulative byte cap may truncate the session (flagged in the result). Returns frames with elapsed time and change percent, totals, and settings. Use for observing dynamic processes; use sassy_screen_diff for a single before/after comparison or sassy_screen_glance for one-off polls.
+
+### sassy_snap_window
+
+Mutating: snaps a window to a screen edge like Win+Arrow on Windows (matches by title substring, multi-monitor aware via the monitor index, 0 = primary). position defaults to left and accepts left, right, top-left, top-right, bottom-left, bottom-right, center. macOS has limited support; Linux is unsupported. Use for quick half-screen tiling; use sassy_resize_window when you need exact pixels or window state changes.
+
+### sassy_url_headers
+
+Read-only: issues an HTTP HEAD request (follows redirects by default) and audits security headers — HSTS, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, COOP, CORP, X-XSS-Protection. Returns an A+ to F grade, per-header present/value/severity, server-info leaks (server, x-powered-by, etc.), and remediation recommendations. URL validation rejects non-http(s) schemes and private, link-local, and metadata IPs (SSRF guard). Use for security posture; use sassy_url_tech_stack for detected technologies or sassy_url_performance for timing and size.
+
+### sassy_url_links
+
+Read-only: GETs the page and regex-extracts all hrefs (deduped), classifying them as internal, external, resources (css/js/images/fonts), or anchors, and returns the lists plus counts. external_only=True returns just the external list. There is no cap on list size, so large pages can be verbose. URL validation rejects non-http(s) schemes and private IPs (SSRF guard). Use for site auditing and SEO link checks; use sassy_url_tech_stack for technology detection or sassy_url_headers for the security posture.
+
+### sassy_url_performance
+
+Read-only: performs one timed GET of the page and reports response_time_ms, page_size_bytes and page_size_kb, whether content-encoding compression is present (and which), cache-control, the count of external http(s) src/href resources, and content-type. URL validation rejects non-http(s) schemes and private IPs (SSRF guard). This measures a single fetch, not a full page-load waterfall. Use for a quick fetch-speed and weight check; use sassy_url_headers for security headers or sassy_url_tech_stack for detected technologies.
+
+### sassy_url_screenshot
+
+Read-only: renders the URL in headless Chromium and returns a base64 JPEG. Tries Playwright first (viewport width/height default 1280x720, waits for networkidle, 30s timeout), then falls back to a Chrome/Chromium --headless --screenshot CLI; errors if neither backend exists. full_page=True captures the whole scroll height; save_path controls where the PNG is kept (default system temp dir; protected paths refused). URL validation rejects non-http(s) schemes and private IPs (SSRF guard). Use for a rendered-page image; use the other url_* tools for headers, links, performance, or tech stack.
+
+### sassy_url_tech_stack
+
+Read-only: GETs the page (first 50 KB of HTML plus response headers) and detects its stack: CDN from headers (Cloudflare, Vercel, Netlify), server and x-powered-by, CMS markers (WordPress, Shopify), framework markers (Next.js, Nuxt.js, Angular), analytics scripts (Google, Cloudflare, Plausible), and HSTS presence. Detection is heuristic marker matching, so a missing signal is not proof a technology is unused. URL validation rejects non-http(s) schemes and private IPs (SSRF guard). Use for stack fingerprinting; use sassy_url_headers for the security grade or sassy_url_screenshot to see the rendered page.
+
+## persona — 7 tools
+
+*Expert-mode persona, decision framework, engineering standards*
+
+### sassy_persona_capabilities
+
+Read-only. Returns the SassyMCP capabilities guide, the instruction manual for advanced features: dynamic desktop vision (sassy_screen_glance for cheap repeated watches, sassy_screen_watch for change-triggered frames, sassy_screen_diff for before/after verification, sassy_screen_capture for full-res), Android phone vision (sassy_phone_ui for the structured accessibility tree with coordinates, sassy_phone_state, sassy_phone_watch, sassy_phone_glance) and interaction (tap, swipe, type, key, open), sensitive context detection (interaction tools refuse on login, payment, account, 2FA, or permission screens unless confirmed=True after explicit user confirmation), pause/resume for user handoff, the setup wizard steps, and the hook playbook system (sassy_hooks_suggest/activate/deactivate with categories like web_audit, security_scan, code_review, phone_autonomous). Takes no parameters, returns plain text. Use before any vision, phone, or hook workflow to learn the tool roles and safety rules.
+
+### sassy_persona_context
+
+Read-only. Returns the current user context loaded at startup from the persona file at $SASSYMCP_HOME/persona.md (default ~/.sassymcp/persona.md): role, expertise, managed systems, active projects, and communication preferences. If no file exists it returns a template telling you how to create one. Takes no parameters, returns plain text. This is personal user configuration, not server state. Use when you need who-you-are-working-for context; to get it bundled with all persona documents in one call, use sassy_persona_full instead.
+
+### sassy_persona_decisions
+
+Read-only. Returns the decision framework defining when to act without discussion versus when to slow down: execute immediately for file ops, code changes, git, builds, and diagnostics; state approach then execute for architectural changes, schema changes, or breaking API changes; require explicit confirmation for production data destruction without backup, credential rotation on live systems, security posture reduction, or financial transactions; hard stop and refuse for SQLi/XSS/command-injection introduction, hardcoded secrets, or disabled auth. Takes no parameters, returns plain text. Use to calibrate caution on risky operations; pair with sassy_persona_full for the complete bundle.
+
+### sassy_persona_full
+
+Read-only. Loads the complete operating bundle in one call and returns a JSON object with six keys: style, decisions, practices, observability, capabilities, and context (each the same plain text document returned by the corresponding narrow tool). Takes no parameters. Call this on first connection to a SassyMCP session so the session starts with operating parameters, decision rules, engineering standards, the observability guide, the capabilities manual, and user context all at once. It is the heaviest of the persona tools in context cost; if you only need one section, call the narrow tool (sassy_persona_style, sassy_persona_decisions, sassy_persona_practices, sassy_persona_observability, sassy_persona_capabilities, or sassy_persona_context) instead.
+
+### sassy_persona_observability
+
+Read-only. Returns the cross-system observability guide: which introspection tools exist and what each returns — sassy_get_config (system info, uptime, loaded modules), tool analytics (invocation counts, frequency scores), sassy_context_estimate (token use by tool definitions, critical for 100+ tool sessions), audit trail (every invocation with timestamp, sanitized args, elapsed ms), health metrics, cross-session status, and the capability map (sassy_self_check reconciles the module manifest against the live registry and flags BROKEN modules; sassy_tool_catalog lists every registered tool). Also prescribes the recommended first-call sequence: sassy_self_check, then sassy_tool_catalog, then sassy_persona_full, then sassy_hooks_suggest. Takes no parameters, returns plain text. Use when starting a session or debugging what the server can do.
+
+### sassy_persona_practices
+
+Read-only. Returns the engineering standards document: security defaults applied to every project (input validation, output escaping, parameterized queries, CSRF, auth best practices, security headers, rate limiting, upload validation, secrets handling, dependency audits, TLS, structured logging), code quality rules (types, tests, comments explain why, error handling), architecture patterns (env config, health checks, graceful shutdown, idempotency, circuit breakers, feature flags), platform-specific guidelines (Cloudflare, Rust, Python, TypeScript, Go, Docker, Git), and MCP GitHub tool patterns (use sassy_gh_push_files rather than create_or_update_file for existing files). Takes no parameters, returns plain text. Use before writing or reviewing code to know the expected standards.
+
+### sassy_persona_style
+
+Read-only. Returns the expert-mode operating parameters injected into the AI session: execution priority (act first, explain later), communication style (declarative, no preambles, no safety disclaimers on standard operations), autonomy level (never ask permission for reversible operations, complete full scope), and precision standards (exact tool names, paths, line numbers, quantified results). Takes no parameters and returns a plain text document. Use when you want the session's behavior directives alone; for the whole bundle (style + decisions + practices + observability + capabilities + user context) in one call, use sassy_persona_full instead.
+
+## utility — 11 tools
+
+*Env vars, toast notifications, zip/tar archives, file diff, HTTP requests*
+
+### sassy_diff
+
+Read-only. Compares two files and returns a unified diff. Both files are read as UTF-8 (decoding errors replaced); returns an error if either path does not exist. context_lines (integer, default 3) sets how many unchanged lines surround each hunk. The response includes identical (true when files match), lines_added and lines_removed counts, and diff text truncated at 20,000 characters. It compares file contents only, not metadata like timestamps or permissions. Use it to verify exactly what changed between two file versions before copying, restoring, or reviewing them.
+
+### sassy_env_get
+
+Read-only. Returns the value of one environment variable from the SassyMCP server process; returns an error if the variable is not set. If the variable name contains token, key, secret, password, or api (case-insensitive), the value is masked: values longer than 12 characters show the first 4 and last 4 characters, shorter ones show as ****. Non-sensitive values are returned in full. Use it to check a single variable; use sassy_env_list when you need to browse the environment or do not know the exact name.
+
+### sassy_env_list
+
+Read-only. Lists environment variables of the SassyMCP server process, sorted by name, with their count. filter_str (string, default empty) limits results to variable names containing that case-insensitive substring. Values that look sensitive (names containing token, key, secret, password, api, or credential) are masked to the first 4 and last 4 characters (or **** if short); other values are truncated at 200 characters. Use it to discover available variables before calling sassy_env_get, and use sassy_env_set to change one.
+
+### sassy_env_set
+
+Mutating: changes the process environment of the running SassyMCP server. Sets one variable immediately for the server process and anything it spawns from this point on. It does NOT modify system or user environment settings, and the change is lost when the server restarts. Returns the variable name, scope process, and an expiry note. Use it only for values needed during the current session; for permanent configuration change the OS or shell profile instead of calling this.
+
+### sassy_http
+
+Can mutate or read depending on method. GET, HEAD, and OPTIONS run freely; POST, PUT, PATCH, and DELETE require allow_mutating=True (default False). Only http and https URLs are accepted, and SSRF validation blocks private IPs, link-local addresses, and cloud metadata endpoints. headers is a JSON object string, body is a UTF-8 string, timeout_seconds defaults to 15, and redirects are followed automatically. Returns status code, headers dict, method, url, and body, which is JSON-parsed when possible and otherwise plain text truncated at 10,000 characters. Use it for quick API calls; prefer web_inspector for deep page inspection.
+
+### sassy_http_ping
+
+Read-only. Health-checks one or more URLs with a HEAD request each and reports status code plus round-trip time. urls is a single comma-separated string. Each URL gets a 5-second timeout, redirects are followed, and the response lists per-URL results (status code and ms), with status blocked when SSRF validation rejects a URL or error when the request fails. SSRF protection blocks private IPs, link-local addresses, cloud metadata, and non-http(s) schemes. Use it for quick up/down and latency checks; prefer sassy_http when you need the response body or anything beyond HEAD.
+
+### sassy_tar
+
+Mutating: writes a new tar archive to disk. Creates a tar from a file or directory path in source; directory contents are stored under the top-level directory name. compress (default gz) accepts gz, bz2, xz, or none, and any other value returns an error. output defaults to the source path plus .tar.gz, .tar.bz2, .tar.xz, or .tar according to compress. Sensitive members are not blocked (full-directory backups must keep working): if any archived file matches the sensitive-read denylist (SSH keys, credential stores, ...), the archive is still created but the result carries a 'warning' field listing them and the event is audit-logged. Returns the created path, a file count, and the archive size in bytes. There is no password option, unlike sassy_unzip. Use it to bundle directories for transport or backup; use sassy_untar to extract what it creates.
+
+### sassy_toast
+
+Shows a desktop notification on the machine running SassyMCP; no files or data are changed. Routed per platform: Windows tries BurntToast, then .NET toast, then msg.exe; macOS uses osascript; Linux uses notify-send and fails if libnotify is not installed. title and message are required; duration accepts short or long (default short) and anything else is treated as short, mapping to normal or critical urgency on Linux. Returns sent or failed plus the method used, with a 10-second per-method timeout. Use it to alert on completion of a long-running task the user is watching for.
+
+### sassy_untar
+
+Mutating: writes extracted files to disk. Extracts tar, tar.gz, tar.bz2, or tar.xz archives using a data-only extraction filter. destination defaults to the archive's parent directory under the archive name with the .tar extension removed. Existing files at the destination are silently overwritten. There is no password option, unlike sassy_unzip. Returns the extraction path, the file count, and a sample of the first 20 member names. Use it to open archives created by sassy_tar or downloaded from the web.
+
+### sassy_unzip
+
+Mutating: writes extracted files to disk. Extracts a .zip archive to destination, defaulting to the archive's parent directory under the archive's stem name. password (default empty) unlocks encrypted zips. Zip-slip protection rejects the whole archive with an error if any entry path escapes the destination. Existing files at the destination are silently overwritten. Returns the extraction path, the file count, and a sample of the first 20 entry names. Use it to open zips from any source; use sassy_zip to create archives for extraction with this tool.
+
+### sassy_zip
+
+Mutating: writes a new zip archive to disk. Creates a zip from a file or directory in source; directories are walked recursively and files are stored with paths relative to the source root, while a single file is stored under its basename. compression (default deflated) accepts deflated, stored, bzip2, or lzma, and unrecognized values fall back to deflated. output defaults to source plus .zip, replacing the extension for files. Sensitive members are not blocked (full-directory backups must keep working): if any archived file matches the sensitive-read denylist (SSH keys, credential stores, ...), the archive is still created but the result carries a 'warning' field listing them and the event is audit-logged. Returns the created path, file count, original and zip byte sizes, and a compression ratio percentage. Use it to package files for sharing; use sassy_unzip to extract what it creates.
+
+## setup — 8 tools
+
+*First-run setup wizard, external tool bootstrap, auth token generation*
+
+### sassy_setup_check_tools
+
+Read-only scan of external tool availability. Checks six system binaries (nmap, tesseract, adb, scrcpy, plink, chrome) by searching PATH plus known install locations, and three Python packages (pytesseract, playwright, watchdog). For each tool it reports installed true/false, the resolved path, whether it is required, which sassy_* tools use it, and an install URL when missing. Only tesseract is marked required, since OCR/vision tools need it unconditionally. The returned summary lists installed, missing_required, and missing_optional. Takes no parameters and writes nothing. Use this first when diagnosing missing dependencies; when you are ready to install them, use sassy_setup_tools instead.
+
+### sassy_setup_generate_token
+
+Mutating: creates a cryptographically secure auth token (secrets.token_urlsafe(32)) and saves it to ~/.sassymcp/tokens.json, replacing any existing entry for the same client_id, then locks the file to owner-only (chmod 0600 on POSIX, ACL lockdown on Windows). The client_id parameter defaults to "default" and identifies the MCP client (e.g. claude-desktop, cursor). The scopes parameter is a comma-separated string defaulting to "read,write"; valid scopes are read, write, and admin. The returned token is shown once only, with usage instructions for the SASSYMCP_AUTH_TOKEN environment variable, the Authorization: Bearer <token> header, and the ?token= query form. Use this when onboarding a new MCP client that needs to authenticate. Trust assumption (deliberate): this tool is intentionally not gated by a confirmation — any MCP client that can call tools can mint bearer tokens, equivalent to the generate-token CLI subcommand, so local automation can bootstrap client auth. Treat every minted token like a password and review ~/.sassymcp/tokens.json if a session behaves unexpectedly. For a read-only view of existing token state, call sassy_setup_status first.
+
+### sassy_setup_github
+
+Mutating when saving; read-only for check and open_browser. The action parameter (default "check") selects the step. action=check validates the GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN environment variable against the GitHub API and reports the login and scopes, or that no token exists. action=open_browser opens the GitHub token creation page locally and returns instructions with the recommended scopes (Contents, Issues, Pull Requests, Metadata). action=save_token validates the supplied token parameter (must start with ghp_ or github_pat_) against api.github.com/user; on success it stores the token in the process environment and records github_configured plus the GitHub username in config. The token lasts only for this session unless also set in system env or MCP client config. action=skip records the skip. Use this to enable the sassy_github_* tools.
+
+### sassy_setup_license
+
+Manages the optional SassyMCP supporter license against LemonSqueezy. The action parameter (default "status") accepts status, activate, deactivate, validate; the key parameter is required only for activate and must look like XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX. All tool groups are unlocked for everyone with no key, so activating registers your seat and tier label but unlocks nothing. action=status is read-only and reports tier, addons, validity, email, expiry, the license file path, and any LemonSqueezy instance identifiers. action=activate registers this machine and mints a local HMAC payload for offline use. action=deactivate frees the machine's seat and deletes the local file. action=validate forces an immediate LemonSqueezy re-check (normally weekly). Use status to inspect the current tier; only activate with a key purchased from sassyconsultingllc.com/store.
+
+### sassy_setup_ssh
+
+Mutating: saves SSH credentials to the process environment and config, and can open a real test connection. The action parameter (default "check") accepts check, save, test, skip. action=check is read-only: reports whether plink (Windows) or native ssh (macOS/Linux) was found, plus which of SSH_HOST, SSH_USER, SSH_PASS, SSH_KEY, SSH_SESSION are set. action=save requires host and user plus at least one auth source: key (a .ppk path, preferred), session (a saved PuTTY session name), or password (fed via stdin, never in the process list); missing pieces return status=incomplete. action=test runs the actual ssh command with a 15 second timeout and reports connected, failed, or error. Credentials last only for this session unless also set in system env or MCP client config.
+
+### sassy_setup_status
+
+Read-only aggregated setup report with no parameters. Reports setup_complete, persona file existence/size/path, auth state (whether SASSYMCP_AUTH_TOKEN is set in the environment, whether ~/.sassymcp/tokens.json exists, and overall auth_active), integrations (GitHub token configured plus the saved GitHub username, SSH configured plus the saved SSH host), the config file path with its key names, the SassyMCP data directory, and the files currently in it. If setup is not complete it includes an action_required field pointing at the next steps. This is the best first call when diagnosing an unknown machine or confirming what first-run steps remain. It never modifies anything. To fix what it reports as missing, call sassy_setup_wizard for the persona, sassy_setup_github or sassy_setup_ssh for integrations, or sassy_setup_tools for dependencies.
+
+### sassy_setup_tools
+
+Mutating installer for external tool dependencies; use action=check for the read-only report. The action parameter (default "check") accepts check, install, install_required, add_to_path. The tool_name parameter is required only for action=install and must be one of tesseract, adb, scrcpy, nmap, plink, cloudflared. action=check reports each tool as found with its path and required flag; only tesseract is required (OCR/vision need it unconditionally), while adb/scrcpy serve Android tools and plink serves SSH/Linux tools. action=install_required installs every missing required tool; action=install installs the named tool, both via the host package manager (winget, brew, or sudo apt-get) with a 180 second per-package timeout, so installs take minutes. Run action=add_to_path (or restart) afterward. For a read-only scan also covering Chrome and Python packages, use sassy_setup_check_tools.
+
+### sassy_setup_wizard
+
+Mutating: first-run questionnaire that writes the user profile to ~/.sassymcp/persona.md (keeping a one-deep persona.md.bak backup of any existing file before overwriting) and marks setup_complete in config. All parameters are optional: role (developer, sysadmin, security, devops, data, designer, manager, other; default developer), expertise_level (junior, mid, senior, principal, staff; default senior), communication_style (terse, balanced, verbose; default terse), security_posture (standard, hardened, paranoid; default standard), plus comma-separated specializations, languages, frameworks, newline-separated systems and projects, mcp_clients, and notes. The has_android and has_linux booleans (default false) drive the returned tools_to_install list: tesseract always included, adb and scrcpy when has_android is true, plink when has_linux is true. The wizard installs nothing itself; the response includes next_steps and a hint to run sassy_setup_tools(action=install_required), and reloads the persona module in-process. Re-run anytime to update the profile. The result includes a persona_backup field with the backup path (null on first run).
+
+## memory — 9 tools
+
+*Persistent cross-session memory, task handoffs, milestones, pattern learning*
+
+### sassy_memory_context
+
+Read-only: loads the standard session-start context bundle in one call. Call this at the START of every session. project (default "") is an optional substring filter that adds a project_memories section. Returns a dict with eight sections: critical (up to 10 priority-critical records), high_priority (up to 10), active_tasks (up to 10 tagged task-active), blockers (up to 10 tagged blocker), recent_memories (up to 10 most recently updated), project_memories (up to 15, only when project is given), patterns (up to 10 tagged pattern), and milestones (up to 5 newest). Use instead of issuing many separate searches at startup; use sassy_memory_search for targeted follow-up queries and sassy_memory_recall for one exact record.
+
+### sassy_memory_forget
+
+Mutating and destructive: permanently deletes the single memory record whose key exactly matches. key (required) must match exactly — only that one record is removed, and there is no undo, trash, or recovery. Returns {"forgotten": true|false, "key", "error"}; forgotten is false with an error message if no record matches. Use only when stored information is obsolete, wrong, or should not persist across sessions. Milestones written by sassy_memory_log live in a separate append-only table and cannot be deleted by this tool. Never use to clear state at session end — that is what sassy_memory_handoff is for.
+
+### sassy_memory_handoff
+
+Mutating: runs the session-end handoff protocol — three writes at once. task (required) names the work. status defaults to "in-progress" (also: blocked, needs-review, paused, completed). completed, next_steps, blockers, files_touched are comma-separated lists; project scopes the entry; context_notes holds anything the next session must know. It (1) upserts memory record task_<slug>_<project>_state (task lowercased, spaces to underscores, first 40 chars) tagged task-active,handoff with high priority — repeat calls for the same task and project overwrite the previous handoff; (2) posts the payload to the crosslink channel "task-handoff"; (3) logs a milestone. Returns {"handoff_saved", "memory_key", "crosslink_channel", "next_session", "crosslink_posted"} — crosslink_posted is false when the crosslink post failed and the handoff is local-only. The next session resumes with sassy_memory_context plus sassy_crosslink_recv on "task-handoff". Use at session end or when context runs low — not as a substitute for sassy_memory_remember.
+
+### sassy_memory_log
+
+Mutating: appends a milestone event to the separate milestones table (not the memories table). event (required) is the free-text description of what happened (e.g. "deployed v1.0"); project and tags (comma-separated) are optional. Milestones are append-only — they cannot be edited or deleted, so phrase entries as finished facts. Returns {"logged", "project"}. Use for significant completions, decisions, or changes worth a durable timeline; use sassy_memory_remember for ongoing state you will later update, and sassy_memory_milestones to read the milestone history back.
+
+### sassy_memory_milestones
+
+Read-only: reads back milestone events written by sassy_memory_log, newest first. project (default "") is an optional substring filter on the project field. limit (default 20, hard-capped at 100) controls how many of the newest entries are returned. Returns {"count", "milestones"} with each entry carrying id, event, project, tags, and timestamp. Use to review the timeline of completions and decisions for a project or overall; use sassy_memory_search to find arbitrary memory records, which live in a different table.
+
+### sassy_memory_recall
+
+Read-only: fetches one memory record by exact key match (fetching also bumps the record's access counter). key (required) must match exactly — if you do not know the key, use sassy_memory_search instead. Returns {"found", "memory", "error"} where memory is the full record (key, value, tags, priority, project, created_at, updated_at, access_count); when no record matches, found is false and error names the key. Use when you know precisely which record you need, e.g. a task state key from sassy_memory_handoff or sassy_memory_context. It does not search text: for keyword discovery use sassy_memory_search, and for the whole session-start bundle use sassy_memory_context.
+
+### sassy_memory_remember
+
+Mutating: writes a persistent memory record (SQLite, survives server restarts). Upserts by key: if the key already exists the record is fully overwritten (value, tags, priority, project) and updated_at refreshed; otherwise a new record is created. key (required) is the unique identifier — use the naming conventions task_<concept>_<project>_state, pattern_<concept>, blocker_<concept>_<project>, decision_<concept> so later lookups work. value (required) is the content. tags is a comma-separated string (e.g. "task-active,tls"). priority defaults to "normal" (critical|high|normal|low); high-priority items appear in the session-start bundle. project scopes the record. Returns {"key", "action": "created"|"updated"}. Use whenever you learn something worth keeping across sessions; use sassy_memory_forget to remove a stale entry.
+
+### sassy_memory_search
+
+Read-only keyword search over all memories using substring matching (not semantic: the query must appear literally in the key or value). query (default "") is free text matched against keys and values; tags is a comma-separated list where each tag must appear in the record's tags; project is a substring match on the project field; priority is an exact match (critical|high|normal|low). All filters combine with AND. Results are ordered by most recently updated first and capped at 50 (limit defaults to 20; an empty query returns everything). Returns {"count", "results"} as full records. Use when you know what to find but not its key; use sassy_memory_recall for an exact key and sassy_memory_context for the standard session-start bundle.
+
+### sassy_memory_stats
+
+Read-only: reports aggregate health of the memory system. Takes no parameters. Returns {"total_memories", "by_priority" (counts keyed by priority level), "milestones" (total milestone count), "projects" (sorted list of distinct non-empty project names)}. Use to get an overview of how much is stored and how it is organized before deciding how to query; use sassy_memory_context to load the actionable session-start bundle.
+
+## updater — 4 tools
+
+*Kali-style version checks and self-update (check, list, changelog, apply)*
+
+### sassy_update_apply
+
+Mutating (writes a downloaded file to disk; does NOT execute anything). Downloads one release asset to staging and returns the local path plus a run command the user executes manually. Required: asset_name (exact filename; get valid names from sassy_update_list). Optional tag (default latest) and dest_dir (default LOCALAPPDATA/SassyMCP/updates on Windows, ~/SassyMCP/updates otherwise). If the release publishes a SHA-256 sidecar, the download is verified: on mismatch the file is deleted and the tool errors; with no sidecar it warns but proceeds. The run command is per asset type AND host OS: msiexec /i for .msi on Windows (.msi is Windows-only and refused with guidance on POSIX), Expand-Archive for .zip on Windows vs unzip -o plus chmod +x on POSIX, tar -xzf for .tar.gz/.tgz, direct path otherwise. Disabled in packaged/frozen builds: returns an error telling you to install a new release artifact instead. Requires network access.
+
+### sassy_update_changelog
+
+Read-only. Returns the release notes for one release as JSON with tag, release name, published_at, the notes body, and the release URL. Optional tag; defaults to the latest release when omitted. If the tag is not found among recent releases it returns an error. Requires network access to the GitHub releases endpoint. Use to see what changed before deciding to upgrade; for the downloadable assets of that release use sassy_update_list, and to stage the download use sassy_update_apply. Does not check whether you are behind; for that use sassy_update_check.
+
+### sassy_update_check
+
+Read-only (fetches remote release state; changes nothing). The apt-update equivalent: contacts the GitHub releases endpoint and reports current version versus latest version as JSON with an upgradable boolean and a one-line summary. Results are cached for 5 minutes; pass force=true to bypass the cache and hit the network again. If GitHub is unreachable it returns an error instead of guessing. Takes no other parameters and requires network access. Use as the first update step to learn whether an upgrade exists; then use sassy_update_changelog to read the notes, sassy_update_list to see the assets, and sassy_update_apply to download.
+
+### sassy_update_list
+
+Read-only. Lists the downloadable assets for one release as JSON: tag, current version, asset_count, and per-asset name, size_bytes, download_url, content_type, and download count. Optional tag; defaults to the latest release. Lookup is limited to the five newest published releases (older tags return a not-found error) and drafts are excluded. Requires network access to the GitHub releases endpoint. Use after sassy_update_check to pick the right asset_name for sassy_update_apply; use sassy_update_changelog for the release notes. Nothing here downloads or installs anything.
+
+## combos — 3 tools
+
+*Multi-step combo tools (pr_review, phone_observe, codebase_grep) — collapse N round-trips into one*
+
+### sassy_combo_codebase_grep
+
+Read-only. Orchestrates a ranked codebase search in one call: runs sassy_search_files (content search, up to 200 results), then reads the matching files to return context windows. Required: pattern. Optional path (search root, default .), max_files (how many matched files get context, default 5), and context_lines (lines before AND after each hit, default 5; the hit line is marked with > in the snippet). At most 5 hit lines per file are returned. Output is JSON with pattern, matches (each with path, line, context), and total_files_with_matches. Prerequisite: sassy_search_files must be registered (it comes from the core fileops group), or the tool errors. Use for where-is-X-defined or find-references-to-Y; for full file reads use sassy_read_file, and for paths-only listings use sassy_search_files directly.
+
+### sassy_combo_phone_observe
+
+Read-only. Bundles three phone observations into one call: phone state (foreground app, screen on/off, battery, WiFi, notification count), the structured UI accessibility tree (visible elements with text, coordinates, and clickable/focused/checked state), and an optional low-res grayscale screenshot as glance_b64. Optional device (ADB selector, default empty means the default device) and include_glance (default true; set false to skip the screenshot and save bandwidth when only the tree is needed). Output JSON has state, ui_tree, and glance_b64 keys. Requires an ADB-connected Android phone via the phone_screen group logic. Use as the first call for whats-on-the-phone, and always before tap/swipe/type since you need the UI tree for coordinates. Replaces sassy_phone_state + sassy_phone_ui + sassy_phone_glance.
+
+### sassy_combo_pr_review
+
+Read-only. Fetches everything needed to review a pull request in one call: PR metadata, the raw diff, the top 20 comments, and CI check runs. Required: owner, repo, pr (PR number as an integer). Output is JSON with pr (metadata, minified to strip bulky URL fields), diff (raw diff truncated to the first 5000 characters), diff_truncated (boolean; when true the text notes the full character length), comments, and check_runs (status plus conclusion from the head SHA, falling back to the PR commits endpoint when the SHA is missing). Requires a GitHub token (GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN). Use for review-this-PR or is-it-merge-ready tasks; prefer this over sassy_ghq_get for reviews. For diffs beyond 5000 chars, fetch specific files with sassy_ghq_get afterward.
+
+## prompts — 0 tools
+
+*MCP prompts — slash-menu shortcuts (pr-review, phone-status, resume, brain-status, setup-sassy)*
+

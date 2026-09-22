@@ -119,6 +119,11 @@ def _hermes_paths() -> dict[str, Any]:
     }
 
 
+def _ps_quote(value: Any) -> str:
+    """Single-quote a value for PowerShell (' is escaped as '')."""
+    return "'" + str(value).replace("'", "''") + "'"
+
+
 # ── In-process tool surface for a local model ─────────────────────────
 #
 # The offline driver (hermes_node.py) is a SEPARATE process from the MCP
@@ -135,8 +140,17 @@ _registry_built = False
 def build_local_registry(groups: tuple[str, ...] = OFFLINE_GROUPS) -> dict[str, Any]:
     """Populate and return the in-process tool registry {name: Tool}.
 
-    Sets SASSYMCP_GROUPS to the offline set before loading so a 7-14B model
-    gets a menu it can hold, not the full surface. Idempotent.
+    Suggests SASSYMCP_GROUPS=<groups> via os.environ.setdefault before
+    loading, so a fresh Hermes process gets the small offline menu rather
+    than the full surface. setdefault (not set) is deliberate: an
+    explicitly configured SASSYMCP_GROUPS always wins, and in a process
+    where modules are already loaded (e.g. the MCP server itself) the
+    registry simply reflects the tools already loaded — it cannot shrink
+    a full registry back down. The "small curated menu" claim therefore
+    holds only for the supported Hermes launch path, where the launcher
+    exports SASSYMCP_GROUPS for the child process (see
+    sassy_offline_handoff); arbitrary in-process callers with a different
+    SASSYMCP_GROUPS get whatever groups were configured. Idempotent.
     """
     global _registry_built
     from sassymcp import server as _srv
@@ -398,7 +412,18 @@ def register(server):
             f'HERMES_MODEL={(fb["chosen"] or {}).get("model", "<pulled-model-tag>")}',
             "SASSYMCP_GROUPS=" + ",".join(OFFLINE_GROUPS),
         ])
+        # PowerShell launch line: single-quote every value ('' escapes a
+        # literal ') so spaces or specials in the channel/model names cannot
+        # break out of the $env: assignment, and quote the interpreter and
+        # node script paths for the & call operator.
         launch = f'{hermes["interpreter"]} {hermes["node_script"]}'
+        _env_vars = [
+            ("JOINT_CHANNEL", channel),
+            ("HERMES_MODEL", (fb["chosen"] or {}).get("model", "<pulled-model-tag>")),
+            ("SASSYMCP_GROUPS", ",".join(OFFLINE_GROUPS)),
+        ]
+        _setenv = "; ".join(f"$env:{name}={_ps_quote(value)}" for name, value in _env_vars)
+        _launch = f"& {_ps_quote(hermes['interpreter'])} {_ps_quote(hermes['node_script'])}"
 
         started: Any = None
         if start_node:
@@ -410,14 +435,10 @@ def register(server):
             else:
                 try:
                     from sassymcp.modules.session import start_session_impl
-                    setenv = "; ".join(
-                        f'$env:{kv.split("=", 1)[0]}="{kv.split("=", 1)[1]}"'
-                        for kv in env_line.split(" ")
-                    )
                     started = await start_session_impl(
                         name=f"hermes-{channel}",
                         shell="powershell" if os.name == "nt" else "",
-                        command=f"{setenv}; & {launch}",
+                        command=f"{_setenv}; {_launch}",
                     )
                 except Exception as e:
                     started = {"error": f"session start failed: {type(e).__name__}: {e}"}

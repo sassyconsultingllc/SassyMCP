@@ -18,9 +18,75 @@ import time
 from pathlib import Path
 
 from sassymcp.modules import audit as _audit
-from sassymcp.modules._security import is_protected_path
+from sassymcp.modules._security import is_protected_path, is_sensitive_read_path
 
 _STAGING_FOLDER = "_DELETE_"
+
+
+# ── Sensitive-read safety floor ─────────────────────────────────────
+#
+# is_sensitive_read_path() is the denylist for credential/secret material
+# (~/.ssh, ~/.aws, SassyMCP tokens, /etc/shadow, browser login DBs, ...).
+# Editing a file requires reading it (and _guard_edit snapshots it), so the
+# floor is enforced in _guard_edit: it runs before any permission-mode /
+# allowlist logic and before the file is touched, holding in bypass,
+# standard, and sandbox modes alike. Refusals are audit-logged and reach
+# the client as "Refused: ...".
+
+_SENSITIVE_READ_LABELS = (
+    (".ssh", "SSH private key material"),
+    (".gnupg", "PGP/GPG key material"),
+    (".aws", "AWS credential file"),
+    (".kube", "Kubernetes credential file"),
+    (".docker", "Docker credential file"),
+    (".netrc", "stored credential file"),
+    (".pypirc", "stored credential file"),
+    (".npmrc", "stored credential file"),
+    ("tokens", "SassyMCP token/credential file"),
+    ("license", "SassyMCP license file"),
+    ("login data", "browser credential database"),
+    ("cookies", "browser cookie store"),
+    ("keychains", "OS keychain"),
+    ("credentials", "OS credential vault"),
+    ("profiles", "browser profile data"),
+    ("shadow", "OS password hash store"),
+    ("gshadow", "OS password hash store"),
+    ("sudoers", "OS privilege configuration"),
+    ("sam", "Windows SAM credential hive"),
+    ("security", "Windows SECURITY credential hive"),
+)
+
+
+def _sensitive_read_label(reason: str) -> str:
+    """Best-effort human class name for a sensitive-read denylist match."""
+    lowered = reason.lower()
+    for fragment, label in _SENSITIVE_READ_LABELS:
+        if fragment in lowered:
+            return label
+    return "sensitive credential material"
+
+
+def _refuse_sensitive_read(tool_name: str, path: str) -> str | None:
+    """Safety-floor refusal for file-content reads of credential material.
+
+    Runs BEFORE any permission-mode / allowlist logic and before the file
+    is touched (no existence probe, no bytes read), so it holds in bypass,
+    standard, and sandbox modes alike. Every refusal attempt is written to
+    the audit log. Returns the client-facing refusal string, or None when
+    the path is not on the denylist.
+    """
+    try:
+        denied, reason = is_sensitive_read_path(path)
+    except Exception as e:  # the floor must never crash a tool
+        _audit.log_intercept(tool_name, "sensitive_read_check_error",
+                             str(path), [str(path)], [repr(e)])
+        return None
+    if not denied:
+        return None
+    label = _sensitive_read_label(reason or "")
+    _audit.log_intercept(tool_name, "sensitive_read_refused",
+                         str(path), [str(path)], [reason or label])
+    return f"Refused: will not read {label} ({path}): {reason}"
 
 
 def _snapshot_before_edit(p: Path) -> tuple[bool, str]:
@@ -45,11 +111,19 @@ def _snapshot_before_edit(p: Path) -> tuple[bool, str]:
 
 
 def _guard_edit(path_str: str, tool_name: str) -> tuple[bool, str, Path | None]:
-    """Protection + snapshot gate for edit tools.
+    """Sensitive-read floor + protection + snapshot gate for edit tools.
+
+    The sensitive-read floor runs first: credential/secret material is
+    refused before the file is touched (no existence probe, no content
+    read, no snapshot), regardless of permission mode.
 
     Returns (ok, error_or_snapshot_path, resolved_path).
     If ok is False, the caller must return error_or_snapshot_path.
     """
+    # Sensitive-read floor: refuse before touching the file.
+    refusal = _refuse_sensitive_read(tool_name, path_str)
+    if refusal:
+        return False, refusal, None
     p = Path(path_str).absolute()
     if not p.exists():
         return False, f"Error: {path_str} does not exist", None

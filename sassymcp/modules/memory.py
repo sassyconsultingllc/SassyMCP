@@ -270,8 +270,8 @@ Call sassy_memory_log with what was accomplished.
 
 try:
     _register_hooks()
-except Exception:
-    pass
+except Exception as e:
+    logger.warning("memory: hook registration failed: %s", e)
 
 
 # ── Output schemas ─────────────────────────────────────────────────────
@@ -357,6 +357,7 @@ class HandoffResult(TypedDict):
     memory_key: str
     crosslink_channel: str
     next_session: str
+    crosslink_posted: bool
 
 
 class StatsResult(TypedDict):
@@ -497,12 +498,16 @@ def register(server):
         _memory.remember(key, json.dumps(handoff), tags=["task-active", "handoff"],
                          priority="high", project=project)
 
-        # Save to crosslink for immediate pickup
+        # Save to crosslink for immediate pickup. A failure here must not
+        # silently degrade to local-only (audit 3.3): log it and report
+        # crosslink_posted=False so the caller knows.
+        crosslink_posted = True
         try:
             from sassymcp.modules.crosslink import _post_message
             _post_message("memory", "task-handoff", json.dumps(handoff))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("memory handoff: crosslink post to 'task-handoff' failed: %s", e)
+            crosslink_posted = False
 
         # Log milestone
         _memory.log_milestone(f"Handoff: {task} ({status})", project, ["handoff"])
@@ -512,6 +517,7 @@ def register(server):
             memory_key=key,
             crosslink_channel="task-handoff",
             next_session="Call sassy_memory_context to resume.",
+            crosslink_posted=crosslink_posted,
         )
 
     @server.tool()

@@ -11,18 +11,20 @@ via `python -m sassymcp._phone_status`.
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 
+from sassymcp import _platform
+
 
 def _adb_path() -> str | None:
-    # Honor an explicit override, else PATH, else a couple of common spots.
-    for cand in (os.environ.get("SASSYMCP_ADB"), "adb", shutil.which("adb")):
-        if cand and (cand in ("adb",) or os.path.exists(cand)):
-            return cand
-    local = os.path.expanduser(r"~\AppData\Local\Android\Sdk\platform-tools\adb.exe")
-    return local if os.path.exists(local) else None
+    # Single shared resolution (audit F-5): honors SASSYMCP_ADB, then PATH,
+    # then per-OS candidates. Returns None when nothing resolves so the
+    # cockpit degrades to its clean "adb not found" message.
+    resolved = _platform.resolve_adb()
+    if resolved == "adb":
+        return None
+    return resolved if os.path.isfile(resolved) else None
 
 
 def snapshot() -> dict:

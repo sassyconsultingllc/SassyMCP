@@ -64,8 +64,15 @@ from sassymcp.modules._tool_loader import (
 
 # ── Self-Signed Cert Generation ──────────────────────────────────────
 
-def _generate_self_signed_cert():
-    """Generate a self-signed SSL cert for HTTPS mode. Zero external deps."""
+def _generate_self_signed_cert(host: str = "localhost"):
+    """Generate a self-signed SSL cert for HTTPS mode. Zero external deps.
+
+    host: the bind host the cert is generated for. It is added to the SAN
+    alongside the loopback entries because auto-TLS fires exactly on
+    non-loopback binds — without the bind host in the SAN every client
+    would fail hostname verification for the address it actually connects
+    to, pushing users toward disabling verification (re-opening MITM).
+    """
     from sassymcp._paths import HOME as cert_dir
     from sassymcp._paths import SSL_CERT as cert_path
     from sassymcp._paths import SSL_KEY as key_path
@@ -85,6 +92,18 @@ def _generate_self_signed_cert():
             x509.NameAttribute(NameOID.ORGANIZATION_NAME, "SassyMCP"),
         ])
         import ipaddress as _ip
+        _san_names: list = [
+            x509.DNSName("localhost"),
+            x509.IPAddress(_ip.IPv4Address("127.0.0.1")),
+        ]
+        # The bind host must verify too: add it to the SAN so clients
+        # connecting to the actual address (LAN IP / hostname) get a
+        # name match instead of a verification error.
+        try:
+            _san_names.append(x509.IPAddress(_ip.ip_address(host)))
+        except ValueError:
+            if host not in ("localhost", "127.0.0.1"):
+                _san_names.append(x509.DNSName(host))
         cert = (
             x509.CertificateBuilder()
             .subject_name(subject)
@@ -94,10 +113,7 @@ def _generate_self_signed_cert():
             .not_valid_before(datetime.datetime.now(datetime.UTC))
             .not_valid_after(datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=365 * 5))
             .add_extension(
-                x509.SubjectAlternativeName([
-                    x509.DNSName("localhost"),
-                    x509.IPAddress(_ip.IPv4Address("127.0.0.1")),
-                ]),
+                x509.SubjectAlternativeName(_san_names),
                 critical=False,
             )
             .sign(key, hashes.SHA256())
@@ -107,6 +123,20 @@ def _generate_self_signed_cert():
             serialization.PrivateFormat.TraditionalOpenSSL,
             serialization.NoEncryption(),
         ))
+        # The private key must not be group/world-readable (P0 #7).
+        # Best-effort: chmod 600 on POSIX, Windows ACL lockdown mirroring
+        # the tokens.json pattern in sassymcp/auth.py.
+        if os.name == "nt":
+            try:
+                from sassymcp.auth import _lockdown_windows_acl
+                _lockdown_windows_acl(key_path)
+            except Exception as e:
+                logger.warning(f"server.key ACL lockdown failed: {e}")
+        else:
+            try:
+                os.chmod(key_path, 0o600)
+            except OSError as e:
+                logger.warning(f"Could not chmod 600 {key_path}: {e}")
         cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
         logger.info(f"Self-signed cert generated: {cert_path}")
     except ImportError:
@@ -291,13 +321,31 @@ def _import_module(name: str):
 
 # ── Rate Limiter Setup ────────────────────────────────────────────────
 
+def _strict_rate_limit() -> bool:
+    """True when the operator opted into fail-closed rate limiting.
+
+    SASSYMCP_STRICT_RATE_LIMIT=1 is opt-in; when unset the server keeps
+    today's fail-open behavior (a broken limiter logs loudly but lets
+    calls through). When set:
+      - a rate-limiter setup failure aborts startup instead of running
+        unthrottled;
+      - a limiter error during acquire() refuses the call instead of
+        letting it through.
+    Read per call (a cheap env lookup) so tests can toggle it without
+    restarting the process.
+    """
+    return os.environ.get("SASSYMCP_STRICT_RATE_LIMIT", "").strip() == "1"
+
+
 def _setup_rate_limiter():
     """Configure per-group rate limits from TOOL_GROUPS.
 
     Logs at error level if setup fails so an operator noticing the
     miss in the logs knows there's no concurrency cap any more. The
     server still starts (rate limiting is a defense-in-depth layer,
-    not the auth boundary), but the failure is loud rather than silent.
+    not the auth boundary), but the failure is loud rather than silent —
+    unless SASSYMCP_STRICT_RATE_LIMIT=1, in which case a setup failure
+    aborts startup instead.
     """
     try:
         from sassymcp.modules._rate_limiter import get_limiter
@@ -310,6 +358,14 @@ def _setup_rate_limiter():
             )
         return limiter
     except Exception as e:
+        if _strict_rate_limit():
+            # Strict mode (opt-in): a broken limiter is a hard startup
+            # failure, not a silent downgrade to unthrottled.
+            logger.error(
+                "Rate limiter setup failed and SASSYMCP_STRICT_RATE_LIMIT=1 "
+                f"— aborting startup: {e}"
+            )
+            raise
         logger.error(
             f"Rate limiter setup failed; tools will run UNTHROTTLED: {e}. "
             "Investigate before exposing this instance over a tunnel or LAN."
@@ -326,6 +382,49 @@ def _get_audit_logger():
         return log_tool_call
     except Exception:
         return None
+
+
+def _audit_refusal(log_fn, tool_name: str, reason: str) -> None:
+    """Emit an explicit audit entry for a pre-execution refusal.
+
+    The offline gate and rate limiter return before the wrapper's logging
+    try/finally, so without this their refusals would be invisible in the
+    audit trail. Follows the codebase's log_tool_call(tool_name, args,
+    elapsed_ms, error) convention: actor="server" plus the refusal reason
+    in args, the reason as the error text. Never raises — audit must not
+    break tools.
+    """
+    if log_fn is None:
+        return
+    try:
+        log_fn(
+            tool_name=tool_name,
+            args={"actor": "server", "refused": True, "reason": reason},
+            elapsed_ms=0,
+            error=f"refused: {reason}",
+        )
+    except Exception:
+        pass  # never let audit break tools
+
+
+# Tools whose missing group mapping we've already warned about
+# (process-local), so the warning fires once per tool instead of on
+# every call of an ungrouped tool.
+_warned_ungrouped: set[str] = set()
+
+
+def _warn_ungrouped_once(tool_name: str) -> None:
+    """Warn when a tool skips the rate limiter for lack of a group mapping.
+
+    Ungrouped tools otherwise bypass the limiter silently. The warning is
+    once-per-tool-per-process to avoid flooding the log from a hot path.
+    """
+    if tool_name not in _warned_ungrouped:
+        _warned_ungrouped.add(tool_name)
+        logger.warning(
+            f"Tool '{tool_name}' has no group mapping — skipping rate "
+            "limiter. Check register_tool_group for the owning module."
+        )
 
 
 def _is_retryable(exc: Exception) -> bool:
@@ -403,6 +502,8 @@ def audit_tool(fn):
             from sassymcp import _netstate
             refusal = _netstate.gate(tool_name, group, kwargs)
             if refusal is not None:
+                _audit_refusal(log_tool_call, tool_name,
+                               f"offline gate: {refusal.get('error', 'offline')}")
                 return json.dumps(refusal, indent=2)
         except Exception:
             pass
@@ -412,14 +513,36 @@ def audit_tool(fn):
             try:
                 acquired = await _rate_limiter.acquire(group)
                 if not acquired:
+                    _audit_refusal(log_tool_call, tool_name,
+                                   f"rate limit hit (group: {group})")
                     return json.dumps({
                         "error": f"Rate limited (group: {group})",
                         "retryable": True,
                         "retry_after_seconds": 5,
                         "retry_hint": f"Group '{group}' is at capacity. Wait a moment.",
                     })
-            except Exception:
+            except Exception as e:
+                if _strict_rate_limit():
+                    # Strict mode (opt-in): fail CLOSED. A limiter that
+                    # throws is indistinguishable from no limiter at all,
+                    # so refuse the call instead of letting it through
+                    # unthrottled.
+                    _audit_refusal(log_tool_call, tool_name,
+                                   f"rate limiter errored in strict mode "
+                                   f"(group: {group}): {e}")
+                    return json.dumps({
+                        "error": f"Rate limited (group: {group})",
+                        "retryable": True,
+                        "retry_after_seconds": 5,
+                        "retry_hint": "Rate limiter errored and "
+                                      "SASSYMCP_STRICT_RATE_LIMIT=1 fails "
+                                      "closed. Wait a moment and retry.",
+                    })
                 acquired = False  # limiter failure = allow through
+        elif _rate_limiter:
+            # Limiter is up but this tool has no group mapping — it would
+            # otherwise bypass rate limiting silently.
+            _warn_ungrouped_once(tool_name)
 
         # Usage tracking
         tracker = get_tracker()
@@ -528,6 +651,54 @@ def _wrap_all_tools():
         logger.info(f"Audit middleware applied to {len(tools)} tools")
     except Exception as e:
         logger.warning(f"Audit middleware wiring failed (non-fatal): {e}")
+
+
+def _apply_tool_metadata():
+    """Apply curated descriptions and MCP annotations to registered tools.
+
+    The metadata lives in generated modules (tool_descriptions.py,
+    tool_annotations.py) so per-tool source stays untouched. Applied here,
+    after registration, so tools/list serves the curated metadata to clients.
+    Non-fatal: if the generated modules are missing, tools keep their
+    decorator-provided descriptions.
+    """
+    try:
+        from sassymcp import tool_annotations as _ta_mod
+        from sassymcp import tool_descriptions as _td_mod
+    except Exception as e:
+        logger.warning(f"Tool metadata modules unavailable (non-fatal): {e}")
+        return
+    try:
+        from mcp.types import ToolAnnotations as _ToolAnnotations
+    except Exception:
+        _ToolAnnotations = None  # type: ignore
+    applied_desc = 0
+    applied_ann = 0
+    try:
+        tools = mcp._tool_manager._tools
+        for name, tool in tools.items():
+            desc = _td_mod.TOOL_DESCRIPTIONS.get(name)
+            if desc:
+                tool.description = desc
+                applied_desc += 1
+            ann = _ta_mod.TOOL_ANNOTATIONS.get(name)
+            if ann and _ToolAnnotations is not None:
+                try:
+                    tool.annotations = _ToolAnnotations(
+                        readOnlyHint=bool(ann.get("readOnlyHint", False)),
+                        destructiveHint=bool(ann.get("destructiveHint", False)),
+                        idempotentHint=bool(ann.get("idempotentHint", False)),
+                        openWorldHint=bool(ann.get("openWorldHint", False)),
+                    )
+                    applied_ann += 1
+                except Exception:
+                    pass
+        logger.info(
+            f"Tool metadata applied: {applied_desc} descriptions, "
+            f"{applied_ann} annotations"
+        )
+    except Exception as e:
+        logger.warning(f"Tool metadata application failed (non-fatal): {e}")
 
 
 # ── Graceful Shutdown ─────────────────────────────────────────────────
@@ -687,6 +858,22 @@ def _load_modules():
     # Wire audit middleware after all tools are registered
     _wrap_all_tools()
 
+    # Apply curated tool descriptions + MCP annotations (generated modules).
+    # Runs before the schema-version computation so the version hash covers
+    # the final served metadata.
+    _apply_tool_metadata()
+
+    # Bind per-session tool profiles (dashboard-controlled gating of the
+    # MCP tool set). install() stashes the full registry and activates the
+    # default "full" profile; the control panel can then swap
+    # tool_manager._tools per session at runtime. Runs before the
+    # schema-version computation so the hash covers the full tool set.
+    try:
+        from sassymcp.modules import tool_profiles
+        tool_profiles.install(mcp._tool_manager)
+    except Exception as e:
+        logger.warning(f"tool profile init failed (non-fatal): {e}")
+
     # Compute schema version for cache invalidation
     try:
         tools_list = []
@@ -827,10 +1014,11 @@ def _print_banner(tool_count, host, port, first_run, *, transport="http",
     print(flush=True)
     print(f"   MCP endpoint:  {endpoint}", flush=True)
     if token:
-        # Never dump the full token. Preview is masked; short tokens show
-        # only asterisks so a misconfigured short value cannot leak.
+        # Never dump the full token. Preview shows only the first 4 chars
+        # plus an ellipsis (no trailing chars); short tokens show only
+        # asterisks so a misconfigured short value cannot leak.
         if len(token) >= 12:
-            preview = f"{token[:6]}...{token[-4:]}"
+            preview = f"{token[:4]}..."
         else:
             preview = "*" * len(token)
         print(f"   Auth:          Bearer {preview}  (use show-token for the full value)", flush=True)
@@ -1180,7 +1368,8 @@ def main():
     parser = argparse.ArgumentParser(
         description=f"SassyMCP Server v{__version__}",
         epilog="Subcommands: setup | install | supervise | mesh | generate-token | show-token  "
-               "(e.g. `sassymcp.exe setup` opens the interactive wizard)",
+               "(e.g. `sassymcp.exe setup` opens the interactive wizard)\n"
+               "Note: --serve is a silent alias of --http.",
     )
     parser.add_argument(
         "--http", "--serve", action="store_true",
@@ -1225,7 +1414,14 @@ def main():
             first_ever = not _persona_check.exists()
         except Exception:
             first_ever = False
-        if first_ever and sys.stdin.isatty() and sys.stdout.isatty():
+        try:
+            _stdin_is_tty = sys.stdin.isatty()
+        except ValueError:
+            # Closed stdin (neither a pipe nor a TTY) raises ValueError on
+            # isatty(). Treat it as non-interactive so startup falls through
+            # to the auto-detect below (HTTP) instead of crashing.
+            _stdin_is_tty = False
+        if first_ever and _stdin_is_tty and sys.stdout.isatty():
             from sassymcp._cli_wizard import run_wizard
             result = run_wizard()
             if result != "run_server":
@@ -1290,7 +1486,9 @@ def main():
             # panel.port to the default rather than raising.
             _pinfo = _panel.start_panel(port=_cfg_get("panel.port", _panel.DEFAULT_PORT))
             if _pinfo.get("url"):
-                logger.info(f"Control Panel: {_pinfo['url']}")
+                # Log the TOKENLESS url — the tokenized ?token= form must
+                # never land in logs (see control_panel.panel_base_url).
+                logger.info(f"Control Panel: {_panel.panel_base_url()}")
     except Exception as _pe:
         logger.warning(f"Control Panel did not start: {_pe}")
 
@@ -1335,6 +1533,16 @@ def main():
                 )
                 args.ssl = True
 
+        if not _ACTIVE_AUTH_TOKEN and not host_is_loopback:
+            # SASSYMCP_NO_AUTH=1 (or token bootstrap failure) on a
+            # non-loopback bind is a fully open LAN server — that deserves
+            # a warning, not just the banner's info-level "Auth: disabled".
+            logger.warning(
+                f"Auth is DISABLED (SASSYMCP_NO_AUTH=1) on non-loopback "
+                f"host {args.host} — this server is OPEN to your LAN/network "
+                "with no credentials. Bind to 127.0.0.1 or enable auth."
+            )
+
         if args.sse:
             logger.info(f"Starting SassyMCP (SSE) on {args.host}:{args.port}")
             app = mcp.sse_app()
@@ -1354,7 +1562,7 @@ def main():
             ssl_key = args.ssl_key or str(_DEFAULT_KEY)
             if not _P2(ssl_cert).exists() or not _P2(ssl_key).exists():
                 logger.info("SSL cert/key not found — generating self-signed certificate...")
-                _generate_self_signed_cert()
+                _generate_self_signed_cert(args.host)
                 ssl_cert = str(_DEFAULT_CERT)
                 ssl_key = str(_DEFAULT_KEY)
             uvicorn_kwargs["ssl_certfile"] = ssl_cert

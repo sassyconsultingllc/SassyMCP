@@ -540,6 +540,16 @@ def register(server):
             )
             return await _run_subprocess(shell, command, timeout_seconds)
         if _decision.mode == "bypass":
+            # INVARIANT (documented 2026-09-21): bypass forfeits the
+            # safe-delete interceptor AND its staging. This branch returns
+            # straight to _run_subprocess — the detect_delete_intent() /
+            # _safe_move_to_staging() path below never fires, so a delete
+            # in bypass mode runs destructively, with no staging folder.
+            # The catastrophic block-list scan (validate_command_tiered,
+            # above) still runs BEFORE this branch: blocklist-first ordering
+            # is the intended invariant — bypass skips the destructive-
+            # pattern interceptor, never the catastrophic block list.
+            # No policy_bypass event should ever claim staging happened.
             _audit.log_pattern_event(
                 "policy_bypass", "sassy_shell", "bypass mode", command, {},
             )

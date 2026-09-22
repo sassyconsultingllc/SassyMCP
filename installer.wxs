@@ -1,6 +1,15 @@
 ﻿<?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <!--
+    SAMPLE / DEAD TEMPLATE (2026-09-21): this file is NOT built by CI —
+    .github/workflows/release.yml publishes sassymcp.exe, the DXT/MCPB
+    bundle, the VSIX, and the macOS universal binary; no MSI job exists.
+    build-msi.ps1 is the manual-build path (WiX 3.x) for anyone who needs
+    an MSI. This file is kept only as a manual-build reference (it still
+    pins Product Version="1.14.2" and an older file layout) and may be
+    stale. Do not treat it as the maintained installer definition.
+  -->
+  <!--
     ExtractRoot is resolved relative to the .wxs file's directory at
     candle/light time. The previous version of this file hard-coded
     'V:\Projects\SassyMCP\dist\Most recent extract\...' as the Source

@@ -5,7 +5,7 @@
 -->
 # SassyMCP for VS Code
 
-*Last updated: 2026-09-16 — extension v1.15.1, server v1.15.1*
+*Last updated: 2026-09-21 — extension v1.16.0, server v1.16.0*
 
 One MCP server replacing 75+. Auto-configures every detected MCP client on your machine — Claude Desktop, Cursor, Windsurf, Continue, Cline, Zed, Grok, and VS Code's Copilot agent — so all your AI tools share the same brain.
 
@@ -23,12 +23,12 @@ On activation, this extension:
 You need `sassymcp.exe` on your PATH OR set `sassymcp.exePath` in VS Code settings. Get it from:
 
 - GitHub Release: [latest](https://github.com/sassyconsultingllc/SassyMCP/releases/latest) (`sassymcp.exe`, or install the `.vsix` from the same release)
-- PyPI: `pip install sassymcp` (current index latest is 1.15.1)
+- PyPI: `pip install sassymcp` (current index latest is 1.16.0)
 - One-click Claude Desktop: download `sassymcp.dxt` / `.mcpb` from the same release and double-click
 
 There is no Pro/free tool split as of v1.13.0. Every tool group ships unlocked. A LemonSqueezy key is an optional supporter purchase (seat + label), not a feature unlock. Buy at [sassyconsultingllc.com/store](https://sassyconsultingllc.com/store) if you want to support development.
 
-The Visual Studio Marketplace listing is not live yet. Sideload `sassymcp-1.15.1.vsix` from GitHub Releases until it is.
+The Visual Studio Marketplace listing is not live yet. Sideload `sassymcp-1.16.0.vsix` from GitHub Releases until it is.
 
 ## Commands
 

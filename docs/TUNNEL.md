@@ -144,6 +144,30 @@ doesn't match what the bridge expects — re-read it from
 `scripts/smoke-test.ps1 -RemoteUrl https://mcp.<your-domain>.tld/mcp`
 does the same call wrapped in a one-shot script.
 
+## Token rotation cadence
+
+The bridge's Bearer <redacted> a long-lived secret — treat it like a
+password and rotate it on a schedule:
+
+- **Recommended cadence:** every 90 days for personal use; every 30 days
+  if the tunnel hostname is shared with other people or services.
+- **Rotate immediately** if the token was ever pasted into a chat log,
+  screenshot, ticket, CI output, or anywhere outside your password manager.
+- **How:**
+  1. On the bridge machine, mint a replacement:
+     ```powershell
+     sassymcp.exe generate-token --client-id default
+     ```
+     (Copy the printed token — it is shown once.)
+  2. Set it at User scope so the bridge picks it up on next launch:
+     ```powershell
+     [Environment]::SetEnvironmentVariable("SASSYMCP_AUTH_TOKEN", "<new-token>", "User")
+     ```
+  3. Update every client's `Authorization: Bearer` header / `mcpServers`
+     config with the new value.
+  4. Restart the bridge (re-run `start-tunnel.bat`; the old token stops
+     working the moment the new bridge starts).
+
 ## Optional — OAuth proxy in front of the tunnel
 
 The bare-bones setup above issues a static bearer token that *you* paste

@@ -55,9 +55,11 @@ _TOKEN_ALPHABET = re.compile(r"^[A-Za-z0-9_\-]+$")
 
 
 def _check_file_permissions(path: Path) -> bool:
-    """Verify token file is owner-only readable. Returns True if safe.
+    """Verify token file is owner-only readable/writable. Returns True if safe.
 
-    POSIX: rejects mode bits that grant group/world read access.
+    POSIX: rejects mode bits that grant group/world read OR write access —
+    a group-writable token file lets any local user replace the token and
+    take the server.
     Windows: enumerates the DACL via icacls and rejects the file if
     BUILTIN\\Users, Authenticated Users, Everyone, or NT AUTHORITY\\INTERACTIVE
     have any access to it. If icacls isn't available we fall back to a
@@ -68,7 +70,7 @@ def _check_file_permissions(path: Path) -> bool:
         return _check_windows_acl(path)
     try:
         mode = stat.S_IMODE(os.stat(path).st_mode)
-        if mode & (stat.S_IRGRP | stat.S_IROTH):
+        if mode & (stat.S_IRGRP | stat.S_IROTH | stat.S_IWGRP | stat.S_IWOTH):
             logger.error(
                 f"Token file {path} has unsafe permissions ({oct(mode)}). "
                 "Must be 0600 or stricter. Run: chmod 600 " + str(path)
@@ -188,6 +190,17 @@ class SassyTokenVerifier(TokenVerifier):
 
     def __init__(self):
         self._static_token: str | None = os.environ.get("SASSYMCP_AUTH_TOKEN")
+        # Fail closed: verify_token() rejects anything outside the URL-safe
+        # alphabet, so an invalid env token would leave the server running
+        # with auth "enabled" while no token could ever validate (silent
+        # total lockout). Refuse to start instead, naming the problem.
+        if self._static_token and not _token_format_valid(self._static_token):
+            raise ValueError(
+                "SASSYMCP_AUTH_TOKEN is set but invalid: it must be "
+                f"{_MIN_TOKEN_LENGTH}-{_MAX_TOKEN_LENGTH} characters using only "
+                "URL-safe characters [A-Za-z0-9_-]. Generate one with "
+                "`secrets.token_urlsafe(32)` (or leave the variable unset)."
+            )
         self._token_map: dict[str, dict] = {}  # keyed by sha256 hash of token
         self._load_tokens()
 

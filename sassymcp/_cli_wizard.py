@@ -66,19 +66,24 @@ def _hr():
     print(_dim("─" * 60))
 
 
-def _prompt(msg: str, default: str = "") -> str:
+def _prompt(msg: str, default: str = "") -> str | None:
+    """Prompt for input. Returns None on EOF / Ctrl+C — the caller must treat
+    that as "exit now" (returning "" here is what sent the menu into an
+    infinite banner-print loop on closed stdin; audit C F8)."""
     hint = f" [{default}]" if default else ""
     try:
         v = input(f"{msg}{hint}: ").strip()
     except (EOFError, KeyboardInterrupt):
         print()
-        return ""
+        return None
     return v or default
 
 
-def _confirm(msg: str, default: bool = True) -> bool:
+def _confirm(msg: str, default: bool = True) -> bool | None:
     d = "Y/n" if default else "y/N"
     v = _prompt(f"{msg} ({d})")
+    if v is None:
+        return None
     if not v:
         return default
     return v.lower().startswith("y")
@@ -193,7 +198,7 @@ def _action_install_specific(_info: dict):
         print(f"  {i:>2}) {c}")
     print()
     sel = _prompt("Pick a number (or blank to cancel)")
-    if not sel:
+    if sel is None or not sel:
         return
     try:
         client = choices[int(sel) - 1]
@@ -219,6 +224,8 @@ def _action_license(info: dict):
     print("  5) Open purchase page in browser")
     print("  6) Back")
     sel = _prompt("Pick a number")
+    if sel is None:
+        return
     if sel == "1":
         key = _prompt("Paste your LS license key")
         if not key:
@@ -277,6 +284,8 @@ def _action_tokens(_info: dict):
     print("  2) Generate a new token")
     print("  3) Back")
     sel = _prompt("Pick a number")
+    if sel is None:
+        return
     if sel == "1":
         from sassymcp._paths import TOKENS_FILE
         if not TOKENS_FILE.exists():
@@ -292,6 +301,8 @@ def _action_tokens(_info: dict):
         if not client_id:
             return
         scopes = _prompt("scopes (comma-separated)", default="read,write")
+        if scopes is None:
+            return
         # Reuse the CLI subcommand instead of re-implementing token
         # generation — it already handles ACL lockdown + atomic write.
         from sassymcp.server import _cli_generate_token
@@ -337,6 +348,10 @@ def run_wizard() -> str | None:
             print(f"  {i}) {label}")
         print()
         sel = _prompt("Choose an option")
+        if sel is None:
+            # EOF / Ctrl+C on stdin — exit the wizard cleanly instead of
+            # spinning the banner forever (audit C F8).
+            return None
         if not sel:
             continue
         try:

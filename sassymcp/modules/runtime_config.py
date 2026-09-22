@@ -221,6 +221,7 @@ def register(server):
         mode: str = "",
         path: str = "",
         rule: str = "",
+        confirm: str = "",
     ) -> str:
         """View and control the permission engine (sassymcp.policy).
 
@@ -239,14 +240,23 @@ def register(server):
                           bypass  — allow all except protected paths
                           ""      — clear the override; derive from the legacy
                                     interceptor.destructiveAction setting
-          add_root      add path= to permission.sandboxRoots (the jail)
-          remove_root   remove path= from permission.sandboxRoots
+                        Switching to bypass is privilege escalation: it
+                        disables the destructive-pattern gating for shell
+                        and file tools (only protected paths stay blocked),
+                        so it requires confirm='YES' (exact, case-sensitive).
+          add_root      add path= to permission.sandboxRoots (the jail);
+                        widens the sandbox, so requires confirm='YES'
+          remove_root   remove path= from permission.sandboxRoots (shrinks
+                        the jail; no confirmation needed)
           add_rule      append rule= (JSON: {"action","tool","path","command"})
                         to permission.rules; first match wins, evaluated before
-                        the mode default
-          clear_rules   remove all rules
+                        the mode default. Rules can allow destructive tools,
+                        so this requires confirm='YES'
+          clear_rules   remove all rules; requires confirm='YES'
         """
         from sassymcp import policy
+
+        _PRIVILEGE_ACTIONS = ("add_root", "add_rule", "clear_rules")
 
         def _status() -> dict:
             return {
@@ -267,10 +277,32 @@ def register(server):
         if action == "status":
             return json.dumps(_status(), indent=2)
 
+        # Privilege mutations (audit C F1 parity with set_mode=bypass): adding
+        # a sandbox root widens the jail, and adding/clearing rules can
+        # silently allow destructive tools — all require explicit consent.
+        if action in _PRIVILEGE_ACTIONS and confirm != "YES":
+            return (
+                f"Refused: '{action}' is a privilege mutation of the permission "
+                "engine. add_root widens the sandbox jail, and add_rule/"
+                "clear_rules can grant destructive tools a free pass, so any "
+                "MCP client that can call this tool could weaken your safety "
+                "gating. Re-run with confirm='YES' (exact, case-sensitive) "
+                "to acknowledge this."
+            )
+
         if action == "set_mode":
             m = (mode or "").strip().lower()
             if m and m not in policy.VALID_MODES:
                 return f"Invalid mode {mode!r}. Valid: {list(policy.VALID_MODES)} (or '' to clear)"
+            if m == "bypass" and confirm != "YES":
+                return (
+                    "Refused: set_mode to 'bypass' requires confirm='YES'. "
+                    "Bypass mode disables the destructive-pattern gating for "
+                    "shell and file tools (only protected paths stay blocked), "
+                    "so any MCP client that can call this tool could then run "
+                    "destructive operations without further checks. Re-run "
+                    "with confirm='YES' to acknowledge this risk."
+                )
             set_val("permission.mode", m)
             return json.dumps({"set": "permission.mode", "value": m or "(cleared)",
                                "effective_mode": policy.current_mode()}, indent=2)
@@ -313,15 +345,27 @@ def register(server):
         """Control the SassyMCP Control Panel — the loopback web UI for the
         permission engine, settings, event log, and classifiers.
 
+        The bearer token is revealed ONLY by the explicit `url` or `rotate`
+        actions. `status` and `start` deliberately return a tokenless URL so
+        the token is not handed to every caller that checks panel health.
+
         action:
-          status (default) — running state + URL (with token) if up
-          start            — launch the panel and enable it at future startups
+          status (default) — running state + tokenless URL (never the token)
+          start            — launch the panel and enable it at future startups;
+                             returns a tokenless URL; call action="url" for the
+                             tokenized link to open in a browser
           stop             — shut the panel down and disable auto-start
-          url              — print the tokenized URL (does not start it)
+          url              — print the tokenized URL (reveals the bearer token;
+                             does not start the panel)
+          rotate           — regenerate the panel bearer token, persist it to
+                             the token file, audit-log the rotation, and return
+                             the NEW token (the old token stops working
+                             immediately, no restart needed)
 
         The panel binds 127.0.0.1 only and requires the per-install token
-        (stored owner-only in ~/.sassymcp/control_panel.token). Open the
-        printed URL in a browser on this machine.
+        (stored owner-only in ~/.sassymcp/control_panel.token). Send the token
+        in the X-Panel-Token header (the ?token= query form still works but is
+        deprecated).
         """
         from sassymcp import control_panel as cp
         action = (action or "status").strip().lower()
@@ -331,7 +375,15 @@ def register(server):
         if action == "start":
             info = cp.start_panel(port=port)
             set_val("panel.enabled", True)
-            return {"started": cp.is_running(), **info}
+            out: dict[str, Any] = {"started": cp.is_running(),
+                                   "url": cp.panel_base_url(port=port),
+                                   "port": cp.current_port() or port}
+            if info.get("error"):
+                out["error"] = info["error"]
+            else:
+                # tokenless on purpose — the caller must explicitly ask for it
+                out["hint"] = 'call sassy_panel(action="url") for the tokenized URL'
+            return out
         if action == "stop":
             cp.stop_panel()
             set_val("panel.enabled", False)
@@ -339,10 +391,24 @@ def register(server):
         if action == "url":
             # panel_info reports the actual bound port when running, else `port`.
             return cp.panel_info(port=port)
-        # status
+        if action == "rotate":
+            new_token = cp.rotate_panel_token()
+            # the MCP audit wrapper logs the tool call itself; this extra event
+            # mirrors the panel-mutation audit entries for settings/rules
+            try:
+                from sassymcp.modules.audit import log_tool_call
+                log_tool_call("control_panel",
+                              {"actor": "mcp:sassy_panel", "api": "rotate_token"},
+                              0)
+            except Exception:
+                pass
+            return {"rotated": True, **cp.panel_info(port=port)}
+        # status — tokenless by design (audit C F2); unknown actions also land
+        # here, matching the historical fall-through behavior
         return {"running": cp.is_running(),
-                           "enabled_at_startup": get("panel.enabled", False),
-                           **cp.panel_info(port=port)}
+                "enabled_at_startup": get("panel.enabled", False),
+                "url": cp.panel_base_url(port=port),
+                "port": cp.current_port() or port}
 
     @server.tool()
     def sassy_recent_tool_calls(

@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from sassymcp import __version__
+from sassymcp import _platform
 
 logger = logging.getLogger("sassymcp.updater")
 
@@ -307,21 +308,44 @@ class Updater:
                 )
 
         name_lower = asset_name.lower()
+        # Staging dir for extracted bundles (same on every host).
+        extract_dir = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "SassyMCP" / info["tag"]
         if name_lower.endswith(".msi"):
             # Legacy MSI assets — kept working for older releases (<= v1.3.0).
-            run_cmd = f'msiexec /i "{dest}"'
+            if _platform.IS_WINDOWS:
+                run_cmd = f'msiexec /i "{dest}"'
+                next_step = f"Run: {run_cmd}"
+            else:
+                # An MSI cannot install on POSIX — say so explicitly instead
+                # of handing the user a Windows-only command (audit F-4).
+                next_step = (
+                    f"The .msi asset is Windows-only and cannot install on "
+                    f"{_platform.OS_LABEL}. Download the .zip portable bundle "
+                    f"from release {info['tag']} instead."
+                )
+        elif name_lower.endswith((".tar.gz", ".tgz")):
+            # tar preserves the executable bit — no chmod needed.
+            run_cmd = f'tar -xzf "{dest}" -C "{extract_dir}"'
+            next_step = f"Run: {run_cmd}"
         elif name_lower.endswith(".zip"):
             # Portable bundle — extract over the existing install dir.
-            extract_dir = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "SassyMCP" / info["tag"]
-            run_cmd = f'Expand-Archive -Path "{dest}" -DestinationPath "{extract_dir}" -Force'
+            if _platform.IS_WINDOWS:
+                run_cmd = f'Expand-Archive -Path "{dest}" -DestinationPath "{extract_dir}" -Force'
+            else:
+                # zip archives do not preserve the executable bit — re-add
+                # it to the main binary after extracting (audit F-4).
+                run_cmd = (f'unzip -o "{dest}" -d "{extract_dir}" && '
+                           f'chmod +x "{extract_dir}/sassymcp"')
+            next_step = f"Run: {run_cmd}"
         else:
             run_cmd = f'"{dest}"'
+            next_step = f"Run: {run_cmd}"
         return {
             "tag": info["tag"],
             "asset": asset_name,
             "downloaded_to": str(dest),
             "size_bytes": dest.stat().st_size,
-            "next_step": f"Run: {run_cmd}",
+            "next_step": next_step,
             # The license-gated download mirror was retired (see the note above);
             # `license_key` no longer exists in this scope and referencing it
             # raised NameError on every successful download. Always False now.

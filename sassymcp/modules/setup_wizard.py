@@ -297,7 +297,15 @@ def register(server):
             "notes": notes,
         }
 
-        # Generate persona.md
+        # Generate persona.md — keep a one-deep backup first so a hand-edited
+        # persona is never silently destroyed by a re-run (audit C F10).
+        backup_path = None
+        try:
+            if _PERSONA_FILE.exists():
+                backup_path = _PERSONA_FILE.with_name(_PERSONA_FILE.name + ".bak")
+                backup_path.write_bytes(_PERSONA_FILE.read_bytes())
+        except Exception as e:
+            logger.warning(f"persona.md backup failed (non-fatal): {e}")
         content = _generate_persona_md(answers)
         atomic_write_text(_PERSONA_FILE, content)
 
@@ -341,7 +349,7 @@ def register(server):
         return {
             "status": "setup_complete",
             "persona_file": str(_PERSONA_FILE),
-            "profile": answers,
+            "persona_backup": str(backup_path) if backup_path else None,            "profile": answers,
             "tools_to_install": tools_to_install,
             "next_steps": next_steps,
             "tool_install_hint": (
@@ -363,6 +371,15 @@ def register(server):
 
         Creates a secure token and saves it to ~/.sassymcp/tokens.json.
         Use this token in SASSYMCP_AUTH_TOKEN env var or in client config.
+
+        Trust assumption (deliberate, not an oversight): this tool is NOT
+        gated by a confirmation — any MCP client that can call tools can
+        mint bearer tokens, equivalent to the `generate-token` CLI
+        subcommand. Gating it would break legitimate local automation that
+        bootstraps client auth. The flip side: a compromised or
+        prompt-injected model session can create persistent credentials, so
+        treat every minted token like a password and review
+        ~/.sassymcp/tokens.json if a session ever behaves unexpectedly.
 
         client_id: identifier for the client (e.g. "claude-desktop", "grok", "cursor")
         scopes: comma-separated permissions (read, write, admin)

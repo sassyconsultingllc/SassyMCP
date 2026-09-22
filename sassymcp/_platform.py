@@ -54,6 +54,7 @@ __all__ = [
     "SHELL_MAP",
     "UnsupportedPlatform",
     "adb_candidates",
+    "adb_semaphore",
     "clipboard_get_argv",
     "clipboard_set_argv",
     "default_shell",
@@ -61,6 +62,7 @@ __all__ = [
     "open_app_argv",
     "open_path_argv",
     "pick",
+    "resolve_adb",
     "shell_argv",
     "unsupported",
     "which",
@@ -304,3 +306,48 @@ def adb_candidates() -> list[str]:
         "/usr/lib/android-sdk/platform-tools/adb",
         "/usr/local/bin/adb",
     ]
+
+
+def resolve_adb() -> str:
+    """Single shared adb-binary resolution (audit F-5).
+
+    Precedence: SASSYMCP_ADB env override (when it points at an existing
+    file) -> "adb" on PATH -> adb_candidates() best-first -> bare "adb"
+    (which surfaces a clean "not found" error downstream).
+
+    adb.py, phone_screen.py, _phone_status.py, and eventlog.py all resolve
+    through this one function so the env override behaves identically for
+    the cockpit snapshot and the real tool paths.
+    """
+    env = os.environ.get("SASSYMCP_ADB")
+    if env and os.path.isfile(env):
+        return env
+    path = which("adb")
+    if path:
+        return path
+    for c in adb_candidates():
+        if os.path.isfile(c):
+            return c
+    return "adb"
+
+
+_adb_semaphore = None
+
+
+def adb_semaphore():
+    """Shared in-flight cap for ADB subprocesses (audit F-6).
+
+    Created lazily on first call — never at import — so no event loop is
+    bound until the semaphore is actually used inside a running loop. On
+    Python 3.10+ asyncio primitives bind to the first running loop that
+    acquires them; the MCP server runs a single loop for its lifetime, so
+    sharing one semaphore across adb.py and phone_screen.py is safe there.
+    Cap is 4 in flight: enough for real use, refuses a flood that would
+    wedge the device's adb service.
+    """
+    global _adb_semaphore
+    if _adb_semaphore is None:
+        import asyncio
+
+        _adb_semaphore = asyncio.Semaphore(4)
+    return _adb_semaphore

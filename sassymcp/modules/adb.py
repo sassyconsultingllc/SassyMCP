@@ -12,8 +12,6 @@ Security:
 
 import asyncio
 import ipaddress
-import os
-import shutil
 
 from sassymcp import _platform
 from sassymcp.modules import audit as _audit
@@ -26,30 +24,48 @@ from sassymcp.modules._security import (
 
 
 def _adb_path() -> str:
-    path = shutil.which("adb")
-    if path: return path
-    for c in _platform.adb_candidates():
-        if os.path.isfile(c): return c
-    return "adb"
+    # Single shared resolution (audit F-5): honors SASSYMCP_ADB, then PATH,
+    # then per-OS candidates, else bare "adb" for a clean not-found error.
+    return _platform.resolve_adb()
+
+
+def _adb_state_hint(text: str) -> str:
+    """One-line remediation hint when adb reports an unauthorized/offline
+    device (audit F-2). Empty string when the text shows no such state."""
+    low = text.lower()
+    if "unauthorized" in low:
+        return (" Remediation: the device is 'unauthorized' — accept the RSA "
+                "fingerprint prompt on the phone's screen, then run "
+                "`adb reconnect` (or re-plug the cable).")
+    if "offline" in low:
+        return (" Remediation: the device is 'offline' — try `adb reconnect` "
+                "or re-plug the USB cable.")
+    return ""
 
 
 async def _run_adb(*args, timeout=30):
     cmd = [_adb_path()] + list(args)
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        out = stdout.decode("utf-8", errors="replace").strip()
-        err = stderr.decode("utf-8", errors="replace").strip()
-        if proc.returncode != 0 and err: return f"Error (exit {proc.returncode}): {err}"
-        return out if out else err
-    except TimeoutError:
+    # Shared flood cap with phone_screen._adb: at most 4 adb subprocesses
+    # in flight across both modules (audit F-6).
+    async with _platform.adb_semaphore():
         try:
-            proc.kill()
-        except Exception:
-            pass
-        return f"Timed out after {timeout}s"
-    except FileNotFoundError: return "Error: adb not found"
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            out = stdout.decode("utf-8", errors="replace").strip()
+            err = stderr.decode("utf-8", errors="replace").strip()
+            if proc.returncode != 0 and err:
+                return f"Error (exit {proc.returncode}): {err}{_adb_state_hint(err)}"
+            result = out if out else err
+            hint = _adb_state_hint(result)
+            return f"{result}{hint}" if hint else result
+        except TimeoutError:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            return f"Timed out after {timeout}s"
+        except FileNotFoundError: return "Error: adb not found"
 
 
 def _device_args(device: str) -> list[str]:

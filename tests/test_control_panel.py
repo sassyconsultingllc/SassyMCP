@@ -18,10 +18,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from sassymcp import control_panel as cp
 
 
-def _mem_cfg(monkeypatch, store):
+def _mem_cfg(monkeypatch, store, audit_log=None):
     import sassymcp.modules.runtime_config as rc
     monkeypatch.setattr(rc, "get", lambda k, d=None: store.get(k, d))
     monkeypatch.setattr(rc, "set_val", lambda k, v: store.__setitem__(k, v))
+    if audit_log is not None:
+        # keep the suite hermetic: record panel-mutation audit calls instead
+        # of appending to the real ~/.sassymcp/audit.jsonl
+        monkeypatch.setattr(
+            cp, "_audit_panel_mutation",
+            lambda actor, api, changes: audit_log.append(
+                {"actor": actor, "api": api, "changes": changes}),
+        )
 
 
 def test_status_route(monkeypatch):
@@ -48,10 +56,61 @@ def test_settings_get(monkeypatch):
 
 def test_settings_post_valid(monkeypatch):
     store = {}
-    _mem_cfg(monkeypatch, store)
-    s, _o = cp.handle_api("POST", "/api/settings", {}, {"mode": "bypass"})
+    audit_log = []
+    _mem_cfg(monkeypatch, store, audit_log)
+    # bypass mode requires confirm:"YES" (trust-tier parity with the
+    # sassy_permission MCP tool) — the panel UI sends it on every save
+    s, _o = cp.handle_api("POST", "/api/settings", {}, {"mode": "bypass", "confirm": "YES"},
+                          actor="panel:header")
     assert s == 200
     assert store["permission.mode"] == "bypass"
+    # the mutation must be audit-logged with actor, keys, and old->new
+    assert len(audit_log) == 1
+    ev = audit_log[0]
+    assert ev["actor"] == "panel:header"
+    assert ev["api"] == "/api/settings"
+    assert ev["changes"]["permission.mode"] == {"old": "", "new": "bypass"}
+
+
+def test_settings_post_bypass_requires_confirm(monkeypatch):
+    store = {}
+    audit_log = []
+    _mem_cfg(monkeypatch, store, audit_log)
+    # missing confirm -> 400 and NO mutation (behavior change, audit C F2)
+    s, o = cp.handle_api("POST", "/api/settings", {}, {"mode": "bypass"},
+                         actor="panel:header")
+    assert s == 400
+    assert "confirm" in o["error"]
+    assert "permission.mode" not in store
+    assert audit_log == []
+    # wrong-case confirm is also rejected
+    s, _o = cp.handle_api("POST", "/api/settings", {}, {"mode": "bypass", "confirm": "yes"})
+    assert s == 400
+    # non-bypass modes don't need the field
+    s, _o = cp.handle_api("POST", "/api/settings", {}, {"mode": "strict"})
+    assert s == 200
+    assert store["permission.mode"] == "strict"
+
+
+def test_settings_post_rejects_relative_roots(monkeypatch):
+    store = {}
+    audit_log = []
+    _mem_cfg(monkeypatch, store, audit_log)
+    s, o = cp.handle_api("POST", "/api/settings", {},
+                         {"sandboxRoots": ["relative/path"]})
+    assert s == 400
+    assert o["bad"] == ["relative/path"]
+    assert "permission.sandboxRoots" not in store
+    # empty strings are not absolute either
+    s, _o = cp.handle_api("POST", "/api/settings", {}, {"sandboxRoots": [""]})
+    assert s == 400
+    # absolute paths (posix or windows style on their own platform) pass
+    import os
+    abs_root = os.path.abspath(os.sep)
+    s, _o = cp.handle_api("POST", "/api/settings", {},
+                          {"sandboxRoots": [abs_root]})
+    assert s == 200
+    assert store["permission.sandboxRoots"] == [abs_root]
 
 
 def test_settings_post_invalid_mode(monkeypatch):
@@ -71,10 +130,61 @@ def test_settings_post_bad_roots_type(monkeypatch):
 
 def test_rules_post_valid(monkeypatch):
     store = {}
-    _mem_cfg(monkeypatch, store)
-    s, _o = cp.handle_api("POST", "/api/rules", {}, {"rules": [{"action": "deny", "command": "rm"}]})
+    audit_log = []
+    _mem_cfg(monkeypatch, store, audit_log)
+    s, _o = cp.handle_api("POST", "/api/rules", {},
+                          {"rules": [{"action": "deny", "command": "rm"}]},
+                          actor="panel:query")
     assert s == 200
     assert len(store["permission.rules"]) == 1
+    assert len(audit_log) == 1
+    ev = audit_log[0]
+    assert ev["actor"] == "panel:query"
+    assert ev["api"] == "/api/rules"
+    assert ev["changes"]["permission.rules"]["old"] == []
+    assert ev["changes"]["permission.rules"]["new"] == [{"action": "deny", "command": "rm"}]
+
+
+def test_mutation_audit_records_old_and_new_values(monkeypatch):
+    store = {"permission.mode": "strict", "interceptor.destructiveAction": "block"}
+    audit_log = []
+    _mem_cfg(monkeypatch, store, audit_log)
+    s, _o = cp.handle_api("POST", "/api/settings", {},
+                          {"mode": "sandbox", "destructiveAction": "confirm"})
+    assert s == 200
+    assert len(audit_log) == 1
+    changes = audit_log[0]["changes"]
+    assert changes["permission.mode"] == {"old": "strict", "new": "sandbox"}
+    assert changes["interceptor.destructiveAction"] == {"old": "block", "new": "confirm"}
+
+
+def test_failed_mutation_is_not_audited(monkeypatch):
+    store = {}
+    audit_log = []
+    _mem_cfg(monkeypatch, store, audit_log)
+    s, _o = cp.handle_api("POST", "/api/settings", {}, {"mode": "wideopen"})
+    assert s == 400
+    assert audit_log == []
+
+
+def test_mutation_audit_redacts_secrets(monkeypatch, tmp_path):
+    # exercise the REAL audit path (not the stub) against a temp HOME and
+    # confirm key-named and value-shaped secrets are masked in the entry
+    import sassymcp._paths as paths
+    monkeypatch.setattr(paths, "HOME", tmp_path)
+    import sassymcp.modules.audit as audit_mod
+    monkeypatch.setattr(audit_mod, "_LOG_DIR", tmp_path)
+    monkeypatch.setattr(audit_mod, "_LOG_FILE", tmp_path / "audit.log")
+    monkeypatch.setattr(audit_mod, "_JSONL_FILE", tmp_path / "audit.jsonl")
+    cp._audit_panel_mutation(
+        "panel:header", "/api/settings",
+        {"panel.token": {"old": "", "new": "ghp_" + "A" * 40}},
+    )
+    entry = json.loads((tmp_path / "audit.jsonl").read_text().strip())
+    assert entry["tool"] == "control_panel"
+    assert "ts" in entry and "timestamp" in entry
+    masked = entry["args"]["panel.token"]
+    assert masked == "***REDACTED***" or "ghp_" not in str(masked)
 
 
 def test_rules_post_invalid_action(monkeypatch):
@@ -151,6 +261,60 @@ def test_token_roundtrip(monkeypatch, tmp_path):
     assert cp._token_ok(t1)
     assert not cp._token_ok("wrong")
     assert not cp._token_ok(None)
+
+
+def test_rotate_panel_token(monkeypatch, tmp_path):
+    monkeypatch.setattr(cp, "_token", None)
+    monkeypatch.delenv("SASSYMCP_PANEL_TOKEN", raising=False)
+    monkeypatch.setattr(cp, "_token_file", lambda: tmp_path / "panel.token")
+    old = cp.panel_token()
+    new = cp.rotate_panel_token()
+    assert new != old and len(new) >= 16
+    # the new token is what the handler compares against now (old is dead)
+    assert cp._token_ok(new)
+    assert not cp._token_ok(old)
+    # persisted: a fresh process reading the file gets the new token
+    assert (tmp_path / "panel.token").read_text().strip() == new
+    monkeypatch.setattr(cp, "_token", None)
+    assert cp.panel_token() == new
+
+
+def test_panel_base_url_has_no_token(monkeypatch):
+    cp.stop_panel()
+    monkeypatch.setattr(cp, "_token", "SHOULD-NOT-APPEAR")
+    url = cp.panel_base_url(port=8765)
+    assert url == "http://127.0.0.1:8765/"
+    assert "token" not in url and "SHOULD-NOT-APPEAR" not in url
+
+
+def test_token_persist_failure_warns_stderr_once(monkeypatch, tmp_path, capsys):
+    # point the token file somewhere unwritable: parent is a regular file
+    blocker = tmp_path / "blocker"
+    blocker.write_text("x")
+    monkeypatch.setattr(cp, "_token_file", lambda: blocker / "panel.token")
+    monkeypatch.setattr(cp, "_persist_stderr_warned", False)
+    assert cp._persist_token_file("tok-1") is False
+    assert cp._persist_token_file("tok-2") is False  # second call: no repeat
+    err = capsys.readouterr().err
+    assert "could not write the panel token file" in err
+    assert err.count("could not write the panel token file") == 1
+
+
+def test_query_token_emits_deprecation_warning(monkeypatch, caplog):
+    import logging
+    from unittest.mock import MagicMock
+    handler = MagicMock()
+    handler.headers = {}
+    with caplog.at_level(logging.WARNING, logger="sassymcp.control_panel"):
+        tok = cp._provided_token(handler, {"token": ["abc"]})
+    assert tok == "abc"
+    assert any("deprecated" in r.message for r in caplog.records)
+    # the header path stays silent
+    handler.headers = {"X-Panel-Token": "abc"}
+    with caplog.at_level(logging.WARNING, logger="sassymcp.control_panel"):
+        caplog.clear()
+        assert cp._provided_token(handler, {}) == "abc"
+    assert not [r for r in caplog.records if "deprecated" in r.message]
 
 
 # ── Cockpit (read-only tool visualizers) ─────────────────────────────

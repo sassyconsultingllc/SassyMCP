@@ -129,12 +129,17 @@ async def _mac_desktop_state():
     proc = await asyncio.create_subprocess_exec(
         "osascript", "-e", script,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=20)
+    stdout, _stderr = await asyncio.wait_for(proc.communicate(), timeout=20)
     raw = stdout.decode("utf-8", errors="replace").strip()
     if not raw:
-        err = stderr.decode("utf-8", errors="replace").strip()
-        return json.dumps({"error": err or "no windows",
-                           "hint": "Grant Accessibility permission to the app running SassyMCP."})
+        # Empty output from System Events is the Accessibility-denial
+        # symptom: wrap it in the same clean unsupported-style message as
+        # the Linux path, naming the permission requirement explicitly.
+        return json.dumps({"error": (
+            f"{_platform.unsupported('desktop window enumeration')} — "
+            "grant Accessibility permission to the app running SassyMCP "
+            "(System Settings → Privacy & Security → Accessibility), "
+            "then retry.")})
     windows = []
     for line in raw.splitlines():
         parts = line.split("\t")
@@ -159,8 +164,18 @@ def register(server):
         # Fallback
         import pyautogui
         w, h = pyautogui.size()
+        note = "single-monitor fallback"
+        if _platform.IS_MACOS:
+            # _mac_monitors() silently downgrades to this fallback when
+            # pyobjc is missing (audit F-7) — say so in the note field.
+            try:
+                import AppKit  # noqa: F401
+            except ImportError:
+                note = ("single-monitor fallback: pyobjc is not installed, so "
+                        "native multi-monitor info is unavailable "
+                        "(pip install pyobjc to enable it)")
         return {"monitors": [{"left": 0, "top": 0, "width": w, "height": h,
-            "scale_percent": 100, "primary": True, "note": "single-monitor fallback"}],
+            "scale_percent": 100, "primary": True, "note": note}],
             "count": 1}
 
     @server.tool()
@@ -230,7 +245,6 @@ def register(server):
         """Take screenshot. Optional region as x,y,w,h. monitor=-1 for all, 0 for primary, 1+ for others."""
         from pathlib import Path
 
-        import pyautogui
         if not path:
             path = str(Path.home() / "sassymcp_screenshot.png")
         ok, err = _validate_path(path)
@@ -241,13 +255,21 @@ def register(server):
             return f"Refused: path is protected ({reason})"
         kwargs = {}
         if region:
-            parts = [int(x) for x in region.split(",")]
-            if len(parts) == 4: kwargs["region"] = tuple(parts)
+            try:
+                parts = [int(x) for x in region.split(",")]
+            except ValueError:
+                return (f"Error: invalid region {region!r}: expected four "
+                        "integers as 'x,y,w,h'")
+            if len(parts) != 4:
+                return (f"Error: invalid region {region!r}: expected four "
+                        f"integers as 'x,y,w,h', got {len(parts)} parts")
+            kwargs["region"] = tuple(parts)
         elif monitor >= 0:
             monitors = _get_monitors()
             if monitors and monitor < len(monitors):
                 m = monitors[monitor]
                 kwargs["region"] = (m["left"], m["top"], m["width"], m["height"])
+        import pyautogui
         img = pyautogui.screenshot(**kwargs)
         img.save(path)
         return f"Screenshot saved to {path} ({img.size[0]}x{img.size[1]})"

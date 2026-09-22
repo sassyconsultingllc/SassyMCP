@@ -20,6 +20,7 @@ in); wmctrl/xdotool (Linux, optional).
 
 import asyncio
 import json
+import shlex
 import subprocess
 import time
 from typing import Any
@@ -452,7 +453,12 @@ def register(server):
             return await asyncio.to_thread(_win_launch_app, name, wait_seconds)
         if _platform.IS_MACOS:
             return await _mac_launch_app(name, wait_seconds)
-        rc, out = await _linux_exec("/bin/sh", "-c", f"nohup {name} >/dev/null 2>&1 &")
+        # shlex.quote so `name` cannot break out of the shell string. The shell
+        # stays because `&` (background) and the redirect are what let a launch
+        # return immediately — _linux_exec waits on communicate(), so dropping
+        # the shell would block every launch until the 10s timeout.
+        rc, out = await _linux_exec(
+            "/bin/sh", "-c", f"nohup {shlex.quote(name)} >/dev/null 2>&1 &")
         return json.dumps({"launched": name} if rc == 0 else {"error": out})
 
     @server.tool()
