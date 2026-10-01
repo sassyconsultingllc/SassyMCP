@@ -10,6 +10,57 @@ All notable changes to SassyMCP. Newest first. Versions follow semver:
 for new user-visible features, PATCH for fixes that don't move buyer-
 facing surfaces.
 
+## [1.18.0] — 2026-10-01 — Built-in OAuth 2.1 authorization server
+
+SassyMCP's HTTP server can now act as its own OAuth 2.1 authorization
+server — no Cloudflare Worker required. On loopback-HTTP or any-HTTPS
+binds it serves authorization-server metadata
+(`/.well-known/oauth-authorization-server`), dynamic client
+registration (`POST /register`), the authorization endpoint
+(`GET|POST /authorize`, PKCE S256 required), token exchange and
+refresh rotation (`POST /token`), and RFC 7009 revocation
+(`POST /revoke`).
+
+- `/authorize` never auto-approves: it stages the request and redirects
+  to an operator consent page (`GET|POST /oauth/consent`), bound to a
+  per-flow `HttpOnly`/`SameSite=Lax` CSRF cookie. On non-loopback binds
+  the consent form additionally requires an `admin`-scoped bearer token.
+- Authorization codes are single-use, 10-minute expiry; access tokens
+  live 1 hour and plug into the existing `tokens.json` system;
+  refresh tokens live 30 days, are stored only as hashes, and rotate
+  on use (sweeping the old grant's access tokens).
+- OAuth state persists in `~/.sassymcp/oauth.json`; the store fails
+  closed on corruption or unsafe permissions.
+- Disabled automatically when `SASSYMCP_OAUTH_ISSUER` is set (pure
+  resource server behind an external issuer) or on wildcard plain-HTTP
+  binds such as `0.0.0.0` (warning logged).
+- SDK quirk to know: `/revoke` requires the `client_secret` form field
+  even for public clients — send it empty.
+
+## [1.17.0] — 2026-10-01 — Configurable HTTP port and live config reload
+
+The HTTP server's bind is no longer hardcoded to `127.0.0.1:21001`.
+
+- **Port (and host) resolution order**: `--port` / `--host` CLI flags >
+  `SASSYMCP_PORT` / `SASSYMCP_HOST` env vars > `config.json`
+  `http.port` / `http.host` > built-in defaults. New
+  `sassymcp/_httpbind.py` is the single source of truth; the setup wizard,
+  `supervise start`, and the Grok Desktop install entry all resolve through
+  it instead of hardcoding 21001.
+- **OAuth metadata fix**: the protected-resource metadata /
+  `WWW-Authenticate` responses now advertise the *effective* bind URL
+  (`http://<host>:<port>`) instead of a hardcoded
+  `http://localhost:21001`. Fixes exact-match address-check failures in
+  clients (e.g. Claude Code) when connecting via `127.0.0.1`.
+- **Live config reload**: a watcher thread (HTTP mode only) reloads
+  `config.json` on change — no manual restart. Ordinary settings apply on
+  next read; changes to `http.host` / `http.port` / `http.ssl` trigger an
+  automatic restart (graceful re-exec standalone, SIGTERM handoff under
+  `sassymcp supervise`) so a port change takes effect immediately. Opt out
+  with `SASSYMCP_NO_CONFIG_WATCH=1` or `http.liveReload: false`.
+- New config keys: `http.host`, `http.port`, `http.ssl`, `http.liveReload`.
+  New tests: `tests/test_httpbind.py` (20 tests).
+
 ## [1.16.0] — 2026-09-21 — Tool description and annotation overhaul
 
 All 278 tool descriptions rewritten from per-tool implementation analysis:

@@ -245,6 +245,9 @@ class SassyTokenVerifier(TokenVerifier):
                 "client_id": entry.get("client_id", "unknown"),
                 "scopes": entry.get("scopes", []),
                 "expires_at": expires_at,
+                # OAuth grant tag (if any) so grant rotation/revocation can
+                # sweep the access tokens that belong to it.
+                "oauth_grant": entry.get("oauth_grant"),
             }
 
         logger.info(f"Loaded {len(self._token_map)} scoped token(s)")
@@ -303,8 +306,179 @@ class SassyTokenVerifier(TokenVerifier):
             expires_at=entry.get("expires_at"),
         )
 
+    def issue_token(
+        self,
+        client_id: str,
+        scopes: list[str],
+        expires_at: int | None,
+        grant: str | None = None,
+    ) -> str:
+        """Mint a new bearer token at runtime and persist it to tokens.json.
 
-def get_auth_config(server_url: str = "http://localhost:21001") -> dict | None:
+        Used by the OAuth authorization-code flow so freshly issued access
+        tokens validate immediately — without this, tokens minted after
+        startup would sit in tokens.json unrecognised until a restart
+        (the verifier loads the file once in __init__).
+
+        The raw token is returned (shown once, like a password); only its
+        SHA-256 hash is used as the in-memory map key. `grant` optionally
+        tags the token with an OAuth grant id so rotating/revoking that
+        grant can sweep its access tokens too.
+        """
+        import secrets
+
+        from sassymcp._atomic import atomic_write_json
+
+        raw = secrets.token_urlsafe(32)
+        entry: dict = {
+            "token": raw,
+            "client_id": client_id,
+            "scopes": list(scopes),
+        }
+        if expires_at is not None:
+            entry["expires_at"] = int(expires_at)
+        if grant is not None:
+            entry["oauth_grant"] = grant
+
+        # Read-modify-write the file so a concurrent CLI `new-token` (or
+        # another process) doesn't lose entries we don't know about.
+        data: dict = {"tokens": []}
+        if _TOKENS_FILE.exists():
+            try:
+                data = json.loads(_TOKENS_FILE.read_text(encoding="utf-8"))
+                if not isinstance(data, dict) or not isinstance(data.get("tokens"), list):
+                    data = {"tokens": []}
+            except (json.JSONDecodeError, OSError) as e:
+                raise ValueError(f"Cannot issue token: tokens.json unreadable: {e}") from e
+        data["tokens"].append(entry)
+        atomic_write_json(_TOKENS_FILE, data)
+        if os.name == "nt":
+            _lockdown_windows_acl(_TOKENS_FILE)
+        else:
+            try:
+                os.chmod(_TOKENS_FILE, 0o600)
+            except OSError:
+                pass
+
+        token_hash = self._hash_token(raw)
+        self._token_map[token_hash] = {
+            "raw_token": raw,
+            "client_id": client_id,
+            "scopes": list(scopes),
+            "expires_at": int(expires_at) if expires_at is not None else None,
+            "oauth_grant": grant,
+        }
+        logger.info(f"Issued token for client {client_id} (id {self._token_id(raw)})")
+        return raw
+
+    def revoke_token(self, token: str) -> bool:
+        """Revoke a bearer token by its raw value. Returns True if found.
+
+        Removes it from the in-memory map and from tokens.json. Unknown
+        tokens are a no-op returning False (RFC 7009 §2.2.1: invalid
+        tokens are not an error).
+        """
+        from sassymcp._atomic import atomic_write_json
+
+        if not _token_format_valid(token):
+            return False
+        token_hash = self._hash_token(token)
+        entry = self._token_map.get(token_hash)
+        if entry is None or not hmac.compare_digest(token, entry["raw_token"]):
+            return False
+        del self._token_map[token_hash]
+
+        if _TOKENS_FILE.exists():
+            try:
+                data = json.loads(_TOKENS_FILE.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                data = None
+            if isinstance(data, dict) and isinstance(data.get("tokens"), list):
+                kept = []
+                for e in data["tokens"]:
+                    t = e.get("token", "")
+                    if (
+                        isinstance(t, str)
+                        and _token_format_valid(t)
+                        and hmac.compare_digest(t, token)
+                    ):
+                        continue
+                    kept.append(e)
+                data["tokens"] = kept
+                atomic_write_json(_TOKENS_FILE, data)
+
+        logger.info(f"Revoked token for client {entry['client_id']} (id {token_hash[:12]})")
+        return True
+
+    def revoke_token_by_id_prefix(self, token_id: str) -> int:
+        """Revoke token(s) whose id (sha256 hex prefix) matches. Returns count.
+
+        The OAuth revocation handler passes the loaded AccessToken object
+        rather than the raw token, and AccessToken.token carries only the
+        12-char id prefix (raw tokens are never embedded). A 48-bit prefix
+        will not collide in practice; if it ever matches several entries,
+        all of them are revoked (fail safe).
+        """
+        from sassymcp._atomic import atomic_write_json
+
+        if not token_id or not _TOKEN_ALPHABET.match(token_id):
+            return 0
+        doomed = [h for h in self._token_map if h.startswith(token_id.lower())]
+        for h in doomed:
+            del self._token_map[h]
+
+        if doomed and _TOKENS_FILE.exists():
+            try:
+                data = json.loads(_TOKENS_FILE.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                data = None
+            if isinstance(data, dict) and isinstance(data.get("tokens"), list):
+                kept = []
+                for e in data["tokens"]:
+                    t = e.get("token", "")
+                    if (
+                        isinstance(t, str)
+                        and _token_format_valid(t)
+                        and hashlib.sha256(t.encode("utf-8")).hexdigest().startswith(
+                            token_id.lower()
+                        )
+                    ):
+                        continue
+                    kept.append(e)
+                data["tokens"] = kept
+                atomic_write_json(_TOKENS_FILE, data)
+
+        if doomed:
+            logger.info(f"Revoked {len(doomed)} token(s) by id prefix {token_id}")
+        return len(doomed)
+
+    def revoke_grant_tokens(self, grant: str) -> int:
+        """Revoke every token tagged with an OAuth grant id. Returns count."""
+        from sassymcp._atomic import atomic_write_json
+
+        doomed = [
+            h for h, e in self._token_map.items() if e.get("oauth_grant") == grant
+        ]
+        for h in doomed:
+            del self._token_map[h]
+
+        if doomed and _TOKENS_FILE.exists():
+            try:
+                data = json.loads(_TOKENS_FILE.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                data = None
+            if isinstance(data, dict) and isinstance(data.get("tokens"), list):
+                data["tokens"] = [
+                    e for e in data["tokens"] if e.get("oauth_grant") != grant
+                ]
+                atomic_write_json(_TOKENS_FILE, data)
+
+        if doomed:
+            logger.info(f"Revoked {len(doomed)} token(s) for OAuth grant {grant[:12]}…")
+        return len(doomed)
+
+
+def get_auth_config(server_url: str = "http://127.0.0.1:21001") -> dict | None:
     """Return auth kwargs for FastMCP if auth is configured.
 
     Returns None if auth is not configured (no token env var, no tokens file).

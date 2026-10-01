@@ -61,6 +61,20 @@ _DEFAULTS = {
     "panel.enabled": False,
     # panel.port: preferred loopback port (auto-increments if taken).
     "panel.port": 8765,
+    # ── HTTP bind (sassymcp._httpbind) ─────────────────────────────────
+    # http.host / http.port: bind address for --http / --serve mode.
+    # Precedence: CLI flags (--host/--port) > SASSYMCP_HOST/SASSYMCP_PORT
+    # env vars > these keys > built-in defaults (127.0.0.1:21001).
+    # Changing them while the server runs triggers an automatic restart
+    # (standalone) or supervised respawn so the new port takes effect
+    # without a manual restart.
+    "http.host": "127.0.0.1",
+    "http.port": 21001,
+    # http.ssl: serve HTTPS with the self-signed cert (same as --ssl).
+    "http.ssl": False,
+    # http.liveReload: watch config.json and apply changes without a manual
+    # restart (SASSYMCP_NO_CONFIG_WATCH=1 disables the watcher entirely).
+    "http.liveReload": True,
 }
 
 _config: dict = {}
@@ -92,6 +106,26 @@ def get(key: str, default=None):
     if not _config:
         _load()
     return _config.get(key, default)
+
+
+def reload():
+    """Re-read config.json from disk, replacing the in-memory config.
+
+    Used by the server's live-reload watcher so edits made while the
+    server runs take effect. On a corrupt/unreadable file the last good
+    config is kept (fail static, never fail empty).
+    """
+    fresh: dict = {}
+    try:
+        if CONFIG_FILE.exists():
+            fresh.update(json.loads(CONFIG_FILE.read_text()))
+    except Exception as e:
+        logger.warning(f"Failed to reload config (keeping previous): {e}")
+        return
+    for k, v in _DEFAULTS.items():
+        fresh.setdefault(k, v)
+    _config.clear()
+    _config.update(fresh)
 
 
 def set_val(key: str, value):
