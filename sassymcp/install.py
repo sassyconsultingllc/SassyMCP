@@ -184,7 +184,12 @@ def _server_entry_for(client: ClientInfo, exe_path: Path) -> dict:
         "env": {"SASSYMCP_LOAD_ALL": "1"},
     }
     if client.short_name == "grok":
-        entry["args"] = ["--http", "--host", "127.0.0.1", "--port", "21001"]
+        # Grok Desktop launches the server itself over HTTP. Pin the
+        # install-time bind (CLI > env > config > defaults) so the entry
+        # matches the port the server will actually listen on.
+        from sassymcp._httpbind import resolve_http_bind
+        _bind = resolve_http_bind(argv=[])
+        entry["args"] = ["--http", "--host", _bind.host, "--port", str(_bind.port)]
     return entry
 
 

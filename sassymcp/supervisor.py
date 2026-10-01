@@ -497,8 +497,11 @@ def main(argv: list[str] | None = None) -> int:
     sub = p.add_subparsers(dest="action", required=True)
 
     p_start = sub.add_parser("start", help="become the supervisor (foreground)")
-    p_start.add_argument("--host", default="127.0.0.1")
-    p_start.add_argument("--port", type=int, default=21001)
+    # --host/--port default to None so an unset flag falls through to the
+    # server's own resolution (SASSYMCP_HOST/_PORT env > config http.host /
+    # http.port > 127.0.0.1:21001) instead of clobbering it.
+    p_start.add_argument("--host", default=None)
+    p_start.add_argument("--port", type=int, default=None)
     p_start.add_argument("--tunnel-mode", choices=["managed", "service", "none"],
                          default="none", help="managed: run cloudflared as a child; "
                          "service/none: don't own a tunnel")
@@ -514,6 +517,12 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
 
     if args.action == "start":
+        # Resolve the effective bind the same way the server does, so the
+        # readiness probe and the child command pin the real port.
+        from sassymcp._httpbind import resolve_http_bind
+        _base = resolve_http_bind(argv=[])
+        args.host = args.host or _base.host
+        args.port = args.port if args.port is not None else _base.port
         specs = _build_specs(args)
         sup = Supervisor(specs, restart=not args.no_restart, adopt_self=True)
         try:
