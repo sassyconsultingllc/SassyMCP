@@ -28,6 +28,7 @@ import logging
 import os
 import signal
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -152,6 +153,12 @@ def _generate_self_signed_cert(host: str = "localhost"):
 # the user has not configured anything).
 _ACTIVE_AUTH_TOKEN: str | None = None
 
+# Holds the OAuth authorization-server provider when run_http enables it
+# (see _maybe_enable_oauth_server). None means the local OAuth endpoints
+# are off -- either auth itself is off, an external AS is configured, or
+# the effective issuer is not a valid OAuth issuer.
+_OAUTH_PROVIDER = None  # SassyOAuthProvider | None
+
 
 def _ensure_default_token() -> str | None:
     """First-run bootstrap so copy-paste configs work without manual setup.
@@ -220,6 +227,22 @@ def _ensure_default_token() -> str | None:
 
 # ── Server Construction ───────────────────────────────────────────────
 
+# Effective HTTP bind, resolved once at import time:
+#   CLI --host/--port/--ssl > SASSYMCP_HOST/_PORT/_SSL env
+#   > config.json http.host/http.port/http.ssl > built-in defaults.
+# Resolving here (before the full argparse in main()) lets the OAuth
+# protected-resource metadata below advertise the exact URL clients must
+# match — previously the metadata hardcoded http://localhost:21001 while
+# the server bound 127.0.0.1, failing clients' exact-match address checks.
+from sassymcp._httpbind import BindConfigError as _BindConfigError
+from sassymcp._httpbind import resolve_http_bind as _resolve_http_bind
+
+try:
+    _BIND = _resolve_http_bind()
+except _BindConfigError as _bind_err:
+    sys.exit(f"sassymcp: invalid HTTP bind configuration: {_bind_err}")
+
+
 def _build_server() -> FastMCP:
     """Construct FastMCP with optional auth."""
     global _ACTIVE_AUTH_TOKEN
@@ -230,10 +253,13 @@ def _build_server() -> FastMCP:
     # loopback-only, since the product runs locally on first boot.
     #
     # The MCP SDK's TransportSecurityMiddleware does **exact-match** on the
-    # full Host header (including port). Clients send `Host: localhost:21001`,
-    # so a bare `localhost` entry never matches. We use the SDK's `:*`
-    # wildcard-port syntax to accept any port on each loopback host, while
-    # still keeping the entries port-less as a defense-in-depth fallback.
+    # full Host header (including port). Clients send `Host: <bind-host>:<port>`
+    # (e.g. `Host: 127.0.0.1:21001`), so a bare hostname entry never matches.
+    # We use the SDK's `:*` wildcard-port syntax to accept any port on each
+    # loopback host, while still keeping the entries port-less as a
+    # defense-in-depth fallback. The bind itself (host/port) is resolved once
+    # at import time into `_BIND` (see above); the OAuth metadata below
+    # advertises that exact bind so clients' address checks pass.
     #
     # To expose this server over a tunnel or LAN, add your hostname via the
     # SASSYMCP_ALLOWED_HOSTS env var (comma-separated). Use `host:*` to
@@ -263,7 +289,11 @@ def _build_server() -> FastMCP:
 
     # FAIL CLOSED: if auth is configured but broken, refuse to start.
     from sassymcp.auth import get_auth_config
-    auth_config = get_auth_config()
+    # Advertise the effective bind URL in the OAuth protected-resource
+    # metadata / WWW-Authenticate responses. Clients (e.g. Claude Code)
+    # exact-match this against the URL they were configured with, so it
+    # must be the real bind — not a hardcoded default.
+    auth_config = get_auth_config(server_url=_BIND.url)
     if auth_config:
         kwargs.update(auth_config)
         logger.info("Auth enabled (bearer token verification)")
@@ -271,6 +301,46 @@ def _build_server() -> FastMCP:
         logger.info("Auth disabled (no token configured)")
 
     return FastMCP(**kwargs)
+
+
+def _maybe_enable_oauth_server(args):
+    """Enable this server as its own OAuth authorization server, if appropriate.
+
+    Returns the SassyOAuthProvider, or None when the local OAuth endpoints
+    should stay off:
+
+    * SASSYMCP_OAUTH_ISSUER is set -> an external authorization server
+      handles OAuth (e.g. the sassymcp-oauth Cloudflare worker); we stay a
+      pure resource server.
+    * auth is disabled (no token verifier) -> minting OAuth tokens would be
+      meaningless.
+    * the bind host is a wildcard (0.0.0.0/::) -> no valid issuer address.
+    * the effective issuer is not https/loopback -> the SDK refuses it
+      (RFC 8414); warn instead of crashing.
+
+    Called from run_http after the TLS policy is final, because the
+    effective issuer scheme (http vs https) is only known then.
+    """
+    if os.environ.get("SASSYMCP_OAUTH_ISSUER"):
+        logger.info(
+            "SASSYMCP_OAUTH_ISSUER is set -- OAuth is served by that external "
+            "authorization server; local OAuth endpoints stay off."
+        )
+        return None
+    if mcp._token_verifier is None:
+        return None
+    if args.host in ("0.0.0.0", "::"):
+        logger.warning(
+            "OAuth authorization server disabled: bound to wildcard host "
+            f"{args.host}, which cannot serve as an OAuth issuer address. "
+            "Bind a concrete host/IP to enable it."
+        )
+        return None
+    scheme = "https" if args.ssl else "http"
+    issuer = f"{scheme}://{args.host}:{args.port}"
+    from sassymcp._oauth import enable_oauth_server
+
+    return enable_oauth_server(mcp, issuer)
 
 
 mcp = _build_server()
@@ -755,6 +825,127 @@ def _register_shutdown_handlers():
         for sig in (signal.SIGINT, signal.SIGTERM):
             signal.signal(sig, _sync_shutdown)
         logger.info("Graceful shutdown handlers registered (sync fallback)")
+
+
+# ── Live Config Reload ────────────────────────────────────────────────
+# Watches $SASSYMCP_HOME/config.json while the HTTP server runs. Edits made
+# while the server is in use take effect without a manual restart:
+#   - ordinary settings are re-read into memory (anything the code looks up
+#     per-call via runtime_config.get() applies immediately);
+#   - bind settings (http.host / http.port / http.ssl) trigger an automatic
+#     restart so the new port actually takes effect: a graceful re-exec when
+#     standalone, or a SIGTERM handoff when running under `sassymcp supervise`
+#     (the supervisor owns respawning and would otherwise race us for the
+#     port).
+# Opt out entirely with SASSYMCP_NO_CONFIG_WATCH=1, or per-config with
+# http.liveReload=false (checked on every poll, so flipping it off stops the
+# watcher; flipping it back on needs one manual restart).
+
+_CONFIG_WATCH_INTERVAL = 2.0
+
+
+def _reexec_process() -> None:
+    """Replace this process with a fresh one launched the same way."""
+    if getattr(sys, "frozen", False):
+        argv = [sys.executable, *sys.argv[1:]]
+    elif str(sys.argv[0]).endswith("__main__.py"):
+        # Launched as `python -m sassymcp`
+        argv = [sys.executable, "-m", "sassymcp", *sys.argv[1:]]
+    else:
+        # Console script / `python -m sassymcp.server` / direct file — the
+        # -m form reaches the same main() either way.
+        argv = [sys.executable, "-m", "sassymcp.server", *sys.argv[1:]]
+    logger.warning(f"Config bind changed — re-executing: {' '.join(argv)}")
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except Exception:
+        pass
+    try:
+        os.execv(argv[0], argv)
+    except Exception as e:
+        logger.error(
+            f"Automatic restart failed ({e}) — please restart SassyMCP "
+            f"manually to apply the new bind."
+        )
+
+
+def _on_config_changed() -> None:
+    """Reload config.json and restart if the HTTP bind moved."""
+    from sassymcp._httpbind import BindConfigError
+    from sassymcp._httpbind import resolve_http_bind
+    from sassymcp.modules import runtime_config as _rc
+
+    _rc.reload()
+    try:
+        new_bind = resolve_http_bind()
+    except BindConfigError as e:
+        logger.error(
+            f"config.json changed but the new HTTP bind is invalid ({e}) — "
+            f"keeping {_BIND.host}:{_BIND.port}"
+        )
+        return
+    if new_bind != _BIND:
+        logger.warning(
+            f"HTTP bind changed in config.json: "
+            f"{_BIND.url} -> {new_bind.url} — restarting to apply"
+        )
+        if os.environ.get("SASSYMCP_SUPERVISED") == "1":
+            # Under the supervisor: exit gracefully and let it respawn us
+            # with the new config (it owns the port).
+            os.kill(os.getpid(), signal.SIGTERM)
+        else:
+            _reexec_process()
+    else:
+        logger.info("config.json reloaded (no bind change)")
+
+
+def _start_config_watcher() -> None:
+    """Start the config.json watcher thread. HTTP mode only; safe no-op otherwise."""
+    if os.environ.get("SASSYMCP_NO_CONFIG_WATCH", "").strip().lower() in ("1", "true", "yes"):
+        logger.info("Config watcher disabled (SASSYMCP_NO_CONFIG_WATCH=1)")
+        return
+    try:
+        from sassymcp._paths import CONFIG_FILE
+        from sassymcp.modules import runtime_config as _rc
+    except Exception as e:
+        logger.debug(f"Config watcher not started: {e}")
+        return
+    if not _rc.get("http.liveReload", True):
+        logger.info("Config watcher disabled (http.liveReload=false)")
+        return
+
+    def _watch() -> None:
+        def _mtime() -> float:
+            try:
+                return CONFIG_FILE.stat().st_mtime if CONFIG_FILE.exists() else 0.0
+            except OSError:
+                return 0.0
+
+        last = _mtime()
+        while True:
+            time.sleep(_CONFIG_WATCH_INTERVAL)
+            try:
+                if not _rc.get("http.liveReload", True):
+                    logger.info("Config watcher stopping (http.liveReload=false)")
+                    return
+                cur = _mtime()
+                if cur == last:
+                    continue
+                # Debounce: wait for the write to settle (atomic writes are
+                # instant, but editors can save twice in quick succession).
+                time.sleep(0.5)
+                settled = _mtime()
+                if settled != cur:
+                    continue  # still being written; catch it next poll
+                last = settled
+                _on_config_changed()
+            except Exception as e:
+                logger.warning(f"Config watcher error: {e}")
+
+    thread = threading.Thread(target=_watch, name="sassymcp-config-watch", daemon=True)
+    thread.start()
+    logger.info("Config watcher started (config.json live reload)")
 
 
 # ── Module Loading ─────────────────────────────────────────────────────
@@ -1377,14 +1568,22 @@ def main():
     )
     parser.add_argument("--stdio", action="store_true",
                         help="Force stdio mode (for MCP clients that pipe stdin/stdout)")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=21001)
+    # --host/--port/--ssl defaults come from the import-time bind resolution
+    # (_BIND): CLI flags > SASSYMCP_HOST/_PORT/_SSL env > config.json
+    # http.host/http.port/http.ssl > built-in defaults. An explicit flag here
+    # was already accounted for during that resolution, so these defaults
+    # are always the final effective values.
+    parser.add_argument("--host", default=_BIND.host,
+                        help="Bind host (default: SASSYMCP_HOST / config http.host / 127.0.0.1)")
+    parser.add_argument("--port", type=int, default=_BIND.port,
+                        help="Bind port (default: SASSYMCP_PORT / config http.port / 21001)")
     parser.add_argument("--sse", action="store_true",
                         help="Use legacy SSE transport instead of streamable-http")
     parser.add_argument("--setup", action="store_true",
                         help="Force first-run setup wizard (regenerate persona.md)")
-    parser.add_argument("--ssl", action="store_true",
+    parser.add_argument("--ssl", action="store_true", default=_BIND.ssl,
                         help="Enable HTTPS with self-signed cert ($SASSYMCP_HOME/server.crt/key). "
+                             "Also enabled via SASSYMCP_SSL=1 / config http.ssl. "
                              "Auto-enabled when bearer auth is active AND --host is non-loopback "
                              "(bearer tokens MUST NOT cross the wire in plaintext).")
     parser.add_argument("--ssl-cert", default="",
@@ -1543,12 +1742,30 @@ def main():
                 "with no credentials. Bind to 127.0.0.1 or enable auth."
             )
 
+        # -- OAuth authorization server ---------------------------------
+        # When bearer auth is active and the effective issuer is a valid
+        # OAuth issuer, this server also acts as its own OAuth 2.0
+        # authorization server (metadata, DCR, /authorize, /token, /revoke
+        # via the SDK; /oauth/consent mounted below for operator approval).
+        # Bearer-token auth on /mcp itself is unchanged.
+        global _OAUTH_PROVIDER
+        _OAUTH_PROVIDER = _maybe_enable_oauth_server(args)
+
         if args.sse:
             logger.info(f"Starting SassyMCP (SSE) on {args.host}:{args.port}")
             app = mcp.sse_app()
         else:
             logger.info(f"Starting SassyMCP (streamable-http) on {args.host}:{args.port}")
             app = mcp.streamable_http_app()
+
+        if _OAUTH_PROVIDER is not None:
+            from sassymcp._oauth import create_consent_routes
+
+            app.routes.extend(
+                create_consent_routes(
+                    _OAUTH_PROVIDER, host_is_loopback=host_is_loopback
+                )
+            )
 
         uvicorn_kwargs = {"host": args.host, "port": args.port, "log_level": "info"}
 
@@ -1577,6 +1794,11 @@ def main():
             token=_ACTIVE_AUTH_TOKEN,
             update_info=update_info,
         )
+
+        # Live config reload: edits to config.json made while the server runs
+        # take effect without a manual restart (bind changes re-exec).
+        # Stdio mode is excluded — the MCP client owns our pipes there.
+        _start_config_watcher()
 
         uvicorn.run(app, **uvicorn_kwargs)
 

@@ -170,10 +170,18 @@ password and rotate it on a schedule:
 
 ## Optional — OAuth proxy in front of the tunnel
 
+As of v1.18.0, SassyMCP has a built-in OAuth 2.1 authorization server
+(metadata, dynamic client registration, `/authorize` with PKCE, token
+exchange, refresh rotation, and revocation) that activates automatically
+on loopback-HTTP or any-HTTPS binds. If your client can reach the
+server's bind address directly, you don't need anything below — point
+the client at it and approve each grant on the operator consent screen.
+
 The bare-bones setup above issues a static bearer token that *you* paste
 into each client. That works for personal use; it doesn't work for
 clients (like claude.ai's hosted Connectors UI) that require an OAuth
-2.1 dynamic-client-registration flow.
+2.1 dynamic-client-registration flow *and* can't reach your server
+directly.
 
 For the hosted-Claude case, deploy `sassymcp-oauth/` — a Cloudflare
 Worker that handles DCR, consent, PKCE, and token issuance, then

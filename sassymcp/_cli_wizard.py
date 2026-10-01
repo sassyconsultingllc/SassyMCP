@@ -314,8 +314,10 @@ def _action_tokens(_info: dict):
 
 
 def _action_run_server(_info: dict):
+    from sassymcp._httpbind import resolve_http_bind
+    _bind = resolve_http_bind()
     print()
-    print(_bold("Starting HTTP server on 127.0.0.1:21001"))
+    print(_bold(f"Starting HTTP server on {_bind.host}:{_bind.port}"))
     print(_dim("Press Ctrl+C to stop."))
     # Returning a sentinel lets main() know to start the server. We
     # don't start it from inside the wizard so the wizard's stdout

@@ -41,6 +41,7 @@ HOME: Path = _resolve_home()
 PERSONA_FILE: Path = HOME / "persona.md"
 CONFIG_FILE: Path = HOME / "config.json"
 TOKENS_FILE: Path = HOME / "tokens.json"
+OAUTH_FILE: Path = HOME / "oauth.json"
 LICENSE_FILE: Path = HOME / "license.json"
 AUDIT_LOG: Path = HOME / "audit.log"
 CROSSLINK_DB: Path = HOME / "crosslink.db"
@@ -66,6 +67,7 @@ __all__ = [
     "CROSSLINK_DB",
     "HOME",
     "LICENSE_FILE",
+    "OAUTH_FILE",
     "PERSONA_FILE",
     "SSL_CERT",
     "SSL_KEY",
