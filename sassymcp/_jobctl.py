@@ -26,15 +26,18 @@ POSIX
 -----
 Each child is started in a new session (``start_new_session=True``) so it
 leads its own process group; teardown signals the whole group via
-``killpg`` (SIGTERM then SIGKILL). There is no portable Linux+macOS
-kernel primitive for kill-on-parent-death, so POSIX relies on the
-supervisor's teardown path. On Linux we additionally arm
-``PR_SET_PDEATHSIG`` so a hard-killed parent still takes its direct
-children down.
+``killpg`` (SIGTERM then SIGKILL). On Linux each child also arms
+``PR_SET_PDEATHSIG``, but the kernel clears that on fork(), so it only
+ever covers direct children. For the hard-kill case an adopted supervisor
+also starts a keeper (see ``_KEEPER_SH``) that outlives it and signals
+every job process group once it is gone, which takes grandchildren such
+as a PyInstaller onefile worker down too. A descendant that leaves its
+group (setsid/setpgid) escapes the keeper.
 """
 from __future__ import annotations
 
 import ctypes
+import functools
 import os
 import signal
 import subprocess
@@ -45,13 +48,15 @@ IS_LINUX = sys.platform.startswith("linux")
 
 
 # ── POSIX: arm parent-death signal on Linux ───────────────────────────
-def _posix_preexec() -> None:  # pragma: no cover - exercised only on POSIX
+def _posix_preexec(register_fd: int | None = None) -> None:  # pragma: no cover - exercised only on POSIX
     """Run in the child between fork and exec (POSIX only).
 
     Start a new session (group leader) and, on Linux, ask the kernel to
     SIGKILL us if our parent dies. setsid is also requested via
     start_new_session=True; calling it here too is harmless and keeps the
-    PDEATHSIG arming in one place.
+    PDEATHSIG arming in one place. With a keeper running, also register our
+    process group with it (``register_fd``) so a hard-killed supervisor
+    still takes the whole group down, grandchildren included.
     """
     try:
         os.setsid()
@@ -63,6 +68,39 @@ def _posix_preexec() -> None:  # pragma: no cover - exercised only on POSIX
             ctypes.CDLL("libc.so.6", use_errno=True).prctl(1, signal.SIGKILL, 0, 0, 0)
         except Exception:
             pass
+    if register_fd is not None:
+        try:
+            os.write(register_fd, b"%d\n" % os.getpgrp())
+        except OSError:
+            pass
+
+
+# ── POSIX: keeper that sweeps job process groups after a hard kill ────
+# PDEATHSIG is cleared on fork(), so a grandchild starts without one and
+# survives a `kill -9` of the supervisor, reparented to init. The keeper
+# closes that gap. It is /bin/sh rather than Python so it also works from a
+# frozen build. Its stdin is the read end of a pipe whose write end only the
+# supervisor holds (non-inheritable; job children write to it from preexec,
+# before exec closes it). Each line is a process-group id to sweep, or
+# "-<pgid>" to forget one. When the supervisor dies for any reason the
+# kernel closes the write end, `read` hits EOF, and the keeper signals
+# every registered group, SIGTERM then SIGKILL.
+_KEEPER_SH = r'''
+trap "" HUP INT TERM
+groups=" "
+while read -r g; do
+  case $g in
+    ""|*[!0-9-]*|0|1|-0|-1) ;;
+    -*) keep=" "
+        for x in $groups; do [ "$x" = "${g#-}" ] || keep="$keep$x "; done
+        groups=$keep ;;
+    *) groups="$groups$g " ;;
+  esac
+done
+for g in $groups; do kill -TERM -$g 2>/dev/null; done
+sleep 2
+for g in $groups; do kill -KILL -$g 2>/dev/null; done
+'''
 
 
 # ── Windows Job Object via ctypes/kernel32 ────────────────────────────
@@ -162,6 +200,8 @@ class ProcessJob:
     def __init__(self) -> None:
         self._handle: int | None = None
         self._adopted = False  # True once the current process joined the job
+        self._keeper: subprocess.Popen | None = None  # POSIX hard-kill sweeper
+        self._keeper_w: int | None = None  # keeper pipe; EOF tells it we are gone
         self.kind = "none"
         if IS_WINDOWS:
             self._handle = _win_create_job()
@@ -183,7 +223,10 @@ class ProcessJob:
         """
         if IS_WINDOWS:
             return {"creationflags": subprocess.CREATE_NO_WINDOW}
-        return {"start_new_session": True, "preexec_fn": _posix_preexec}
+        preexec = _posix_preexec
+        if self._keeper_w is not None:
+            preexec = functools.partial(_posix_preexec, self._keeper_w)
+        return {"start_new_session": True, "preexec_fn": preexec}
 
     def assign(self, proc: subprocess.Popen) -> bool:
         """Bring a just-spawned child under the job (Windows). No-op on POSIX.
@@ -218,16 +261,67 @@ class ProcessJob:
         Supervisor runs embedded in another process (e.g. a test thread):
         joining a KILL_ON_JOB_CLOSE job would tie that host process's life to
         the job handle. Returns True on success.
+
+        POSIX has no job a process can join, so adopting starts the keeper
+        instead; children spawned with ``spawn_kwargs()`` afterwards register
+        their process groups with it, and their descendants inherit those.
         """
-        if not IS_WINDOWS or self._handle is None:
-            self._adopted = self.kind == "process_group"
-            return self._adopted
+        if not IS_WINDOWS:
+            if self.kind != "process_group":
+                return False
+            if self._keeper is None:
+                try:
+                    self._start_keeper()
+                except OSError:
+                    return False
+            self._adopted = True
+            return True
+        if self._handle is None:
+            return False
         try:
             _win_assign(self._handle, os.getpid())
             self._adopted = True
             return True
         except OSError:
             return False
+
+    def _start_keeper(self) -> None:
+        """Start the POSIX keeper (see ``_KEEPER_SH``), keeping its pipe's write end."""
+        r, w = os.pipe()  # both ends non-inheritable (PEP 446)
+        try:
+            self._keeper = subprocess.Popen(
+                ["/bin/sh", "-c", _KEEPER_SH], stdin=r,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                # its own session: our teardown signals never reach it
+                start_new_session=True,
+            )
+        except OSError:
+            os.close(w)
+            raise
+        finally:
+            os.close(r)
+        self._keeper_w = w
+
+    def release(self, proc: subprocess.Popen) -> None:
+        """Tell the keeper to forget a reaped child's process group (POSIX).
+
+        Only once the group is empty: a pgid stays reserved while any member
+        lives, so forgetting it earlier would let a straggler escape the
+        sweep, and keeping an empty one risks signalling a reused pgid.
+        No-op without a keeper."""
+        if self._keeper_w is None:
+            return
+        try:
+            os.killpg(proc.pid, 0)
+            return  # members left: keep it registered for the sweep
+        except ProcessLookupError:
+            pass
+        except OSError:
+            return
+        try:
+            os.write(self._keeper_w, b"-%d\n" % proc.pid)
+        except OSError:
+            pass
 
     def close(self) -> None:
         """Release the job handle.

@@ -243,6 +243,7 @@ class Supervisor:
         if child.proc is not None:
             code = terminate_tree(child.proc, grace=grace)
             child.last_exit_code = code
+            self.job.release(child.proc)
         child.proc = None
         child.state = "stopped"
 
@@ -282,6 +283,7 @@ class Supervisor:
             if child.proc.poll() is not None:
                 child.last_exit_code = child.proc.returncode
                 _log(f"[{child.spec.role}] exited code={child.last_exit_code}")
+                self.job.release(child.proc)
                 child.proc = None
                 self._schedule_restart(child)
                 continue
