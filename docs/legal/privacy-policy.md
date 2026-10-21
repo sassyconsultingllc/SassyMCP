@@ -1,7 +1,7 @@
 <!--
    Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
    Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
-   CodeMark: SCLLC1-SassyMCP-TCK2NFUDLGKC
+   CodeMark: SCLLC1-SassyMCP-EWHYXBXNLXL6
 -->
 
 # SassyMCP — Privacy Policy
@@ -11,9 +11,9 @@
 > attorney** in each relevant jurisdiction before use or publication. Do not
 > post, ship, or rely on it as-is.
 
-**Effective date:** [TODO: OWNER]
-**Contact:** [TODO: OWNER — privacy contact email]
-**Controller:** [TODO: OWNER — company legal name and address]
+**Effective date:** 2026-09-24
+**Contact:** privacy@sassyconsultingllc.com
+**Controller:** Sassy Consulting LLC
 
 ---
 
@@ -67,7 +67,8 @@ only in the circumstances listed:
 | **Update tools** (`sassy_update_check` / `_list` / `_apply`, called on demand by you or your agent) | Version string + User-Agent; on download, release asset request | GitHub Releases API and release download hosts |
 | **Offline-probe** (background connectivity check, daemon thread) | TCP probes only, no data payload | `1.1.1.1`, `8.8.8.8`, `9.9.9.9:53`, `api.github.com:443` |
 | **License activation** (only if you buy and activate a supporter key) | License key, machine instance ID, email, order/variant IDs | LemonSqueezy API (`api.lemonsqueezy.com`) |
-| **Fast revocation check** (at startup, only if a paid license is present) | SHA-256 *hash* of the license key (not the key itself) | Operator's billing Worker at `SASSYMCP_BILLING_BASE` [TODO: OWNER — confirm production hostname] |
+| **Fast revocation check** (at startup, only if a paid license is present) | SHA-256 *hash* of the license key (not the key itself) | Operator's billing Worker at `SASSYMCP_BILLING_BASE` (production default `https://billing.sassyconsultingllc.com`) |
+| **Remote policy evaluate** (only if you explicitly enable `remote_policy.enabled` plus endpoint + license key; **default off**) | Redacted argument summaries (tool name, group, truncated cmd/path preview — never full arguments or file bytes) | Operator's policy Worker (`workers/policy-worker/`; not deployed in the default local-first install) |
 | **Weekly license re-validation** (only if a paid license is present and ≥7 days since last check) | License key + instance ID | LemonSqueezy API |
 | **Cloudflare tunnel** (only if *you* run `start-tunnel.bat`) | Your traffic, TLS-terminated at the Cloudflare edge | Your own configured Cloudflare tunnel |
 | **Crosslink LAN queue** (only if you start it) | Messages between your own sessions | Your local network (default binds `0.0.0.0:9377` when a token is set) |
@@ -117,7 +118,7 @@ grants residents broader rights, it controls for those residents.
 No federal omnibus privacy law applies as of this draft. This policy is
 written to satisfy FTC Act §5 expectations: it describes actual practices,
 and we will honor it. If you believe a practice misled you, contact us at
-[TODO: OWNER] or the FTC.
+privacy@sassyconsultingllc.com or the FTC.
 
 ## Addendum 2 — California (CCPA / CPRA)
 
@@ -128,20 +129,20 @@ and we will honor it. If you believe a practice misled you, contact us at
   device and is not "collected" by us.
 - **Rights:** to know, delete, correct, opt out of sale/sharing (not
   applicable), and limit use of sensitive personal information (we do not use
-  any). Submit requests to [TODO: OWNER]. We will verify you via the email on
+  any). Submit requests to privacy@sassyconsultingllc.com. We will verify you via the email on
   record and respond within 45 days. No discrimination for exercising rights.
 - **Service providers:** LemonSqueezy (payments) and GitHub (update checks)
   process limited data as service providers under contract.
 
 ## Addendum 3 — European Union (GDPR)
 
-- **Controller:** [TODO: OWNER — name/address].
+- **Controller:** Sassy Consulting LLC.
 - **Lawful bases:** contract (license fulfillment), legitimate interest
   (update/security checks, fraud prevention), consent (optional tunnel use —
   you opt in by running it).
 - **Rights:** access, rectification, erasure, restriction, portability,
   objection, and not to be subject to solely automated decision-making
-  (we make none). Contact [TODO: OWNER]; response within one month.
+  (we make none). Contact privacy@sassyconsultingllc.com; response within one month.
 - **Transfers:** license/purchase data may be processed in the US by
   LemonSqueezy under their DPA/SCCs; review their terms before purchase.
 - **Complaints:** to your national supervisory authority.
@@ -154,7 +155,7 @@ The UK GDPR is a **separate regime from EU GDPR post-Brexit**. The substance
 of Addendum 3 applies in the UK with these changes: complaints go to the
 **Information Commissioner's Office (ICO)**; "controller" details above;
 international transfers follow the UK Extension / UK IDTA. Contact
-[TODO: OWNER].
+privacy@sassyconsultingllc.com.
 
 ## Addendum 5 — India (DPDP Act, 2023)
 
@@ -174,14 +175,14 @@ international transfers follow the UK Extension / UK IDTA. Contact
   data we hold (support/purchase records).
 - **Notifiable Data Breaches:** if a breach of data we hold is likely to
   cause serious harm, we will notify you and the OAIC as required.
-- Access/correction requests: [TODO: OWNER]; complaints to the OAIC if
+- Access/correction requests: privacy@sassyconsultingllc.com; complaints to the OAIC if
   unresolved.
 
 ## Addendum 7 — Canada (PIPEDA + Québec Law 25)
 
 - **PIPEDA:** we collect only with knowledge and consent (purchase/support),
   limited to identified purposes; you may withdraw consent subject to legal
-  limits; access requests to [TODO: OWNER].
+  limits; access requests to privacy@sassyconsultingllc.com.
 - **Québec Law 25:** our privacy officer is [TODO: OWNER — name/contact].
   We conduct privacy impact assessments for new processing; confidentiality
   incidents presenting a risk of serious injury will be notified to you and
@@ -193,7 +194,7 @@ international transfers follow the UK Extension / UK IDTA. Contact
 - **Legal bases:** consent and contract performance (license/support).
 - **Rights:** confirmation, access, correction, anonymization/blocking/
   deletion, portability, information on sharing, and revocation of consent —
-  via [TODO: OWNER].
+  via privacy@sassyconsultingllc.com.
 - Complaints to the **ANPD**. Data on your device is not transferred to us;
   purchase data may be processed abroad by our payment provider with
   appropriate safeguards.
@@ -205,17 +206,17 @@ international transfers follow the UK Extension / UK IDTA. Contact
 - **Cross-border transfers:** data you provide (e.g., purchase email) may be
   processed outside Japan by our service providers; we take equivalent
   protective measures via contract.
-- Disclosure/correction/cessation requests: [TODO: OWNER].
+- Disclosure/correction/cessation requests: privacy@sassyconsultingllc.com.
 - [TODO: OWNER — confirm whether a Japan-local representative is required at
   your scale.]
 
 ## Addendum 10 — Singapore (PDPA)
 
 - **Consent:** providing data for purchases/support is deemed consent for
-  those purposes; withdraw via [TODO: OWNER].
+  those purposes; withdraw via privacy@sassyconsultingllc.com.
 - **Do Not Call:** we do not send marketing messages; no DNC registration
   needed.
-- Access/correction requests: [TODO: OWNER]; complaints to the PDPC if
+- Access/correction requests: privacy@sassyconsultingllc.com; complaints to the PDPC if
   unresolved.
 
 ## Addendum 11 — South Korea (PIPA)
@@ -223,7 +224,7 @@ international transfers follow the UK Extension / UK IDTA. Contact
 - We collect minimum necessary data (purchase/support) and do not process
   sensitive or resident-registration data.
 - **Rights:** access, correction, deletion, and suspension of processing —
-  via [TODO: OWNER].
+  via privacy@sassyconsultingllc.com.
 - **Breach notification:** we will notify you and the authorities without
   undue delay if required.
 - [TODO: OWNER — confirm whether a domestic agent (Article 32-5) is required

@@ -91,7 +91,7 @@ def announce_self() -> None:
 
 def open_vscode() -> None:
     try:
-        subprocess.Popen(["code", str(repo_root())], shell=True)
+        subprocess.Popen(["code", str(repo_root())], shell=False)
     except Exception:
         pass
 

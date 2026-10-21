@@ -5,10 +5,15 @@
 -->
 # Changelog
 
-*Last updated: 2026-09-16*
+*Last updated: 2026-09-24*
 
 Extension version tracks the server (`sassymcp/__init__.py`). CI rewrites this
 package.json on tag so the VSIX filename matches the GitHub release.
+
+## 1.16.0 — 2026-09-24
+
+Aligned with server v1.16.0 (tool metadata, MCP spec-gap refusals, iPhone
+group). No extension feature change beyond the version stamp.
 
 ## 1.15.1 — 2026-09-14
 

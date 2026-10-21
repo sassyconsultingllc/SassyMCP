@@ -134,6 +134,11 @@ def _word_boundary_pattern(needle: str):
 
 _SSH_BINARIES = frozenset({
     "ssh", "scp", "sftp", "slogin", "sshpass", "autossh", "ssh-copy-id",
+    # PuTTY family — first-class SSH client on Windows (sassy_linux_exec,
+    # setup wizard). -proxycmd is the local-exec sibling of OpenSSH
+    # ProxyCommand; omitting these binaries left the same RCE class open
+    # on the default Windows path.
+    "plink", "pscp", "psftp", "putty",
 })
 
 # Options whose value ssh executes locally. PermitLocalCommand is the
@@ -166,6 +171,16 @@ _SSH_EXEC_OPTION_RE = re.compile(
 # diagnostic; erring toward refusal is the right default for a local-RCE
 # shape.
 _SSH_SUBST_OPTION_RE = re.compile(r"-o\s*[\"']?\s*(?:`|\$\()")
+
+# PuTTY: `plink -proxycmd <local command>` (also -ProxyCmd). The value is
+# executed on the local host before any remote connection — identical class
+# to OpenSSH ProxyCommand. Glued forms (`-proxycmdcalc`) are not valid
+# PuTTY syntax; require a delimiter so we do not false-positive on an
+# unrelated flag prefix.
+_PLINK_PROXYCMD_RE = re.compile(
+    r"(?:^|[\s\"'])-proxycmd(?:\s+|=)",
+    re.IGNORECASE,
+)
 
 # `-F path` / `-Fpath` and `-o Include=path` both pull in a client config
 # that can itself carry ProxyCommand — the same RCE, one hop removed.
@@ -224,6 +239,13 @@ def detect_ssh_exec_option(command: str) -> tuple[bool, str, str]:
         return False, "", ""
     if not _SSH_BINARY_RE.search(command):
         return False, "", ""
+
+    if _PLINK_PROXYCMD_RE.search(command):
+        return True, "ssh-exec-option:proxycmd", (
+            "PuTTY -proxycmd runs its value as a local command, the same "
+            "class as OpenSSH ProxyCommand, and that value is invisible "
+            "to the command interceptor"
+        )
 
     m = _SSH_EXEC_OPTION_RE.search(command)
     if m:

@@ -381,6 +381,24 @@ jobs:
             echo "No docs/releases/${version}.md — falling back to auto-generated notes"
           fi
 
+      - name: Generate SHA256SUMS for release assets
+        run: |
+          set -euo pipefail
+          # One GNU coreutils-format sidecar covering every attached artifact.
+          # Updater and operators verify against this file; absence is now a
+          # hard fail in sassy_update_apply (require_checksum default True).
+          {
+            find release-artifacts -type f \( \
+              -name 'sassymcp.exe' -o -name 'sassymcp-macos' \
+              -o -name '*.dxt' -o -name '*.mcpb' -o -name '*.vsix' \
+            \) | sort | while read -r f; do
+              (cd "$(dirname "$f")" && sha256sum "$(basename "$f")")
+            done
+          } > SHA256SUMS
+          echo "=== SHA256SUMS ==="
+          cat SHA256SUMS
+          test -s SHA256SUMS
+
       - name: Create GitHub Release with all artifacts
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -396,6 +414,7 @@ jobs:
               release-artifacts/sassymcp-dxt/*.dxt \
               release-artifacts/sassymcp-dxt/*.mcpb \
               release-artifacts/sassymcp-vsix/*.vsix \
+              SHA256SUMS \
               --title "${{ github.ref_name }}" \
               --notes-file "${{ steps.notes.outputs.notes_file }}"
           else
@@ -405,6 +424,7 @@ jobs:
               release-artifacts/sassymcp-dxt/*.dxt \
               release-artifacts/sassymcp-dxt/*.mcpb \
               release-artifacts/sassymcp-vsix/*.vsix \
+              SHA256SUMS \
               --title "${{ github.ref_name }}" \
               --generate-notes
           fi

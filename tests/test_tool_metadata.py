@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
 # Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
-# CodeMark: SCLLC1-SassyMCP-KX5WCW45DFEF
+# CodeMark: SCLLC1-SassyMCP-QQDWCYVTT1UP
 """Regression tests for the curated tool-description + MCP annotation metadata.
 
 Every registered tool must carry the generated metadata in

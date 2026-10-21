@@ -409,7 +409,7 @@ Install the VS Code extension from the `.vsix` attached to the [latest release](
 
 ### Manual auto-config CLI
 
-If you have `sassymcp.exe` already (from the portable zip or pip install) and want to register it with every MCP client without per-client JSON editing:
+If you have `sassymcp.exe` already (from a GitHub release or pip install) and want to register it with every MCP client without per-client JSON editing:
 
 ```
 sassymcp-install
@@ -468,7 +468,7 @@ playwright install chromium
 
 ### Cloudflare Tunnel (remote access)
 
-Want to drive SassyMCP from a remote MCP client (Claude Web, another machine)? The portable bundle ships a turnkey launcher. Full step-by-step is in [**docs/TUNNEL.md**](docs/TUNNEL.md); the short version:
+Want to drive SassyMCP from a remote MCP client (Claude Web, another machine)? Install `cloudflared`, then use the `start-tunnel.bat` launcher from this repo (`deploy/start-tunnel.bat` or the copy next to a standalone `sassymcp.exe`). Full step-by-step is in [**docs/TUNNEL.md**](docs/TUNNEL.md); the short version:
 
 ```powershell
 winget install Cloudflare.cloudflared          # one-time
@@ -492,7 +492,7 @@ For hosted-Claude clients that require OAuth 2.1 DCR/PKCE instead of a static be
 
 ## MCP Client Config
 
-SassyMCP speaks standard MCP. Anything that connects works — **no client-side modifications required**. The portable bundle ships ready-to-edit templates under `deploy/*_config.template.json`. Pick the row for your client, copy the template, replace `REPLACE_WITH_PATH` with the absolute path to `sassymcp.exe`, and save it where the client expects.
+SassyMCP speaks standard MCP. Anything that connects works — **no client-side modifications required**. Ready-to-edit templates live under `deploy/*_config.template.json` in this repo. Pick the row for your client, copy the template, replace `REPLACE_WITH_PATH` with the absolute path to `sassymcp.exe`, and save it where the client expects.
 
 | Client | Transport | Config file location | Template |
 |--------|-----------|----------------------|----------|

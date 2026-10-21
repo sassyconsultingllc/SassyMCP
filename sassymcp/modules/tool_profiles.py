@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
 # Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
-# CodeMark: SCLLC1-SassyMCP-DZ3ZHFE4DIO4
+# CodeMark: SCLLC1-SassyMCP-OJBVAHWTZWI3
 """Per-session tool profiles — dashboard-controlled gating of the MCP tool set.
 
 A *profile* is a named subset of the tool catalog that the current MCP
@@ -42,10 +42,15 @@ Scope and limits
   flips `always_load` flags for the NEXT startup — it cannot add tools to
   the live registry, so it is not an escalation path (and profiles reset
   to full on restart anyway).
-* Profile changes take effect for the CURRENT process only. Clients that
-  cache the tool list should re-list; the panel cannot push a
-  `notifications/tools/list_changed` because it has no MCP session handle
-  (same degraded-but-safe posture as `sassy_tool_group_toggle`).
+* Profile changes take effect for the CURRENT process only. The server
+  advertises `tools.listChanged` (see `server._advertise_tools_list_changed`)
+  and, when the visible set actually changes, fires
+  `notifications/tools/list_changed` on the best available channel
+  (`install()` accepts an async `notify` callable; the server wires one
+  that uses the current MCP request session). SDK 1.30.0 exposes no
+  public broadcast API, so dashboard-initiated switches made outside any
+  MCP request are logged rather than pushed — clients should re-list on
+  profile-status changes.
 
 This module registers NO MCP tools: it defines no `register()` and no
 `sassy_*` callables, so the tool count (278) is unchanged.
@@ -53,6 +58,7 @@ This module registers NO MCP tools: it defines no `register()` and no
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 
@@ -164,6 +170,7 @@ _ACTIVE_PROFILE = "full"
 _CUSTOM_GROUPS: list[str] | None = None
 _TOOL_MANAGER = None          # bound FastMCP ToolManager
 _FULL_TOOLS: dict | None = None  # stashed full registry {name: Tool}
+_NOTIFY = None                # async () -> None; list_changed fan-out hook
 
 
 def is_bound() -> bool:
@@ -229,20 +236,47 @@ def _needs_confirm(new_tools: set[str]) -> bool:
     return bool(new_tools - current)
 
 
-def install(tool_manager) -> dict:
+def install(tool_manager, notify=None) -> dict:
     """Bind the tool manager at server startup; stash the full registry.
+
+    `notify` is an optional async callable invoked (fire-and-forget) after
+    a profile switch that actually changes the visible tool set, so the
+    server can push `notifications/tools/list_changed`. It must never
+    raise — notification is a courtesy, the swap already happened.
 
     Idempotent: re-installing (e.g. dev live-reload) re-stashes and
     re-applies the currently active profile so the session's gating
     survives re-registration.
     """
-    global _TOOL_MANAGER, _FULL_TOOLS
+    global _TOOL_MANAGER, _FULL_TOOLS, _NOTIFY
     with _LOCK:
         _TOOL_MANAGER = tool_manager
         _FULL_TOOLS = dict(tool_manager._tools)
+        if notify is not None:
+            _NOTIFY = notify
         logger.info(f"tool profiles bound: {len(_FULL_TOOLS)} tools stashed")
         _apply_locked(_ACTIVE_PROFILE, _CUSTOM_GROUPS)
         return profile_status()
+
+
+def _fire_notify():
+    """Schedule the list_changed notifier without blocking the switch."""
+    notify = _NOTIFY
+    if notify is None:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        logger.debug("profile changed: no running loop; skipping list_changed notify")
+        return
+
+    async def _run():
+        try:
+            await notify()
+        except Exception as e:
+            logger.warning(f"list_changed notify failed (non-fatal): {e}")
+
+    loop.create_task(_run())
 
 
 def activate_profile(profile: str, tool_manager=None, *,
@@ -286,7 +320,10 @@ def activate_profile(profile: str, tool_manager=None, *,
                 f"re-post with confirm='YES' to proceed")
         _ACTIVE_PROFILE = profile
         _CUSTOM_GROUPS = new_groups
+        old_visible = set(tm._tools)
         _apply_locked(profile, new_groups)
+        if set(_TOOL_MANAGER._tools) != old_visible:
+            _fire_notify()
         return profile_status()
 
 
@@ -345,9 +382,10 @@ def profile_status() -> dict:
 
 def reset() -> None:
     """Test hook: drop all session state (default is full, unbound)."""
-    global _ACTIVE_PROFILE, _CUSTOM_GROUPS, _TOOL_MANAGER, _FULL_TOOLS
+    global _ACTIVE_PROFILE, _CUSTOM_GROUPS, _TOOL_MANAGER, _FULL_TOOLS, _NOTIFY
     with _LOCK:
         _ACTIVE_PROFILE = "full"
         _CUSTOM_GROUPS = None
         _TOOL_MANAGER = None
         _FULL_TOOLS = None
+        _NOTIFY = None

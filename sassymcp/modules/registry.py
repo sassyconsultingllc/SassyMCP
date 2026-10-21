@@ -133,10 +133,23 @@ def register(server):
         return await _reg("query", key_path)
 
     @server.tool()
-    async def sassy_reg_write(key_path: str, value_name: str, value_data: str, value_type: str = "REG_SZ") -> str:
-        """Write a Windows registry value (Windows only)."""
+    async def sassy_reg_write(key_path: str, value_name: str, value_data: str,
+                              value_type: str = "REG_SZ", confirm: str = "") -> str:
+        """Write a Windows registry value (Windows only).
+
+        Irreversible-enough that a mistaken write is a persistence / IFEO-class
+        change — requires confirm='YES' (exact, case-sensitive), matching
+        sassy_permission privilege mutations and sassy_audit_clear.
+        """
         if not _platform.IS_WINDOWS:
             return _reg_unsupported("`defaults write <domain> <key> <value>` (macOS)")
+        if confirm != "YES":
+            return (
+                "Refused: registry writes silently overwrite with /f and are "
+                "hard to undo. Re-run with confirm='YES' (exact, "
+                "case-sensitive) after verifying the key with sassy_reg_read "
+                "and preferably backing it up with sassy_reg_export."
+            )
         valid_types = {"REG_SZ", "REG_DWORD", "REG_QWORD", "REG_EXPAND_SZ", "REG_MULTI_SZ", "REG_BINARY"}
         if value_type not in valid_types:
             return f"Error: invalid type. Use: {', '.join(sorted(valid_types))}"

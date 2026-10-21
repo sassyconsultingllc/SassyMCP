@@ -1,8 +1,5 @@
 # Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
 # Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
-# CodeMark: SCLLC1-SassyMCP-WLMPZ6KD4V7T
-# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
-# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
 """Regression tests for the extended _WRAPPER_CMDS (audit hardening, 2026-09-21).
 
 detect_delete_intent() only recurses into shells listed in _WRAPPER_CMDS.

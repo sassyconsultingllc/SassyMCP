@@ -20,8 +20,8 @@
     },
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/sassyconsultingllc/SassyMCP/releases/download/v1.15.1/sassymcp-v1.15.1.mcpb",
-      "fileSha256": "06366a120d696ab893fe15814c14f02a13fcdcf2db9775034ab3affecbe62780",
+      "identifier": "https://github.com/sassyconsultingllc/SassyMCP/releases/download/v1.16.0/sassymcp-v1.16.0.mcpb",
+      "fileSha256": "0000000000000000000000000000000000000000000000000000000000000000",
       "transport": {
         "type": "stdio"
       }

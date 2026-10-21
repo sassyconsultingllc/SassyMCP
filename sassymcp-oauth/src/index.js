@@ -20,6 +20,9 @@
 //   token:<access_token> — {client_id, issued_at, expires_at}
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
+// CORS * is required for MCP OAuth 2.1 DCR: Claude Web (and other hosted
+// clients) call /register and /token from origins we do not control.
+// Authorization is PKCE + PRE_AUTH_SECRET, not origin allowlisting.
 const CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",

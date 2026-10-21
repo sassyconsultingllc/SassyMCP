@@ -221,12 +221,10 @@ class Updater:
     ) -> dict[str, Any]:
         """Download an asset to staging. Does NOT execute it.
 
-        require_checksum (default True): refuse to return a run command if
-        the release publishes a SHA-256 sidecar AND verification fails. If
-        no sidecar is published, downgrades to a warning rather than
-        refusing — many older releases predate sidecar publication. Set
-        require_checksum=False to bypass entirely (e.g., when checksum
-        sidecar is being introduced and old assets haven't been backfilled).
+        require_checksum (default True): refuse to stage the asset unless a
+        SHA-256 sidecar verifies. Missing sidecar is a hard fail under the
+        default (v1.16.0+ publish policy). Set require_checksum=False only
+        for an audited legacy release that never published checksums.
         """
         info = self.list_assets(tag=tag)
         if "error" in info:
@@ -295,17 +293,32 @@ class Updater:
                 }
             checksum_status["status"] = "verified"
         else:
-            # Sidecar not published — downgrade to warning unless caller
-            # explicitly required a checksum.
             checksum_status["status"] = "no_sidecar_published"
-            if require_checksum is True and sidecar_name is None:
-                # Default policy: allow but flag loudly. This avoids
-                # breaking older releases that don't yet publish sidecars.
-                checksum_status["warning"] = (
-                    "No SHA-256 sidecar found for this release. Verify the "
-                    "download out-of-band before running. Future releases "
-                    "should ship <asset>.sha256 or SHA256SUMS alongside."
-                )
+            if require_checksum:
+                try:
+                    dest.unlink()
+                except OSError:
+                    pass
+                return {
+                    "error": (
+                        "No SHA-256 sidecar published for this release — "
+                        "refusing to stage."
+                    ),
+                    "tag": info["tag"],
+                    "asset": asset_name,
+                    "checksum": checksum_status,
+                    "hint": (
+                        "v1.16.0+ requires SHA256SUMS or <asset>.sha256 on "
+                        "the GitHub release. Pass require_checksum=False "
+                        "only for an audited legacy release, or wait until "
+                        "the sidecar is published."
+                    ),
+                }
+            checksum_status["warning"] = (
+                "No SHA-256 sidecar found. Staging anyway because "
+                "require_checksum=False. Verify the download out-of-band "
+                "before running."
+            )
 
         name_lower = asset_name.lower()
         # Staging dir for extracted bundles (same on every host).
@@ -320,8 +333,9 @@ class Updater:
                 # of handing the user a Windows-only command (audit F-4).
                 next_step = (
                     f"The .msi asset is Windows-only and cannot install on "
-                    f"{_platform.OS_LABEL}. Download the .zip portable bundle "
-                    f"from release {info['tag']} instead."
+                    f"{_platform.OS_LABEL}. Download the standalone .exe "
+                    f"(Windows) or use `pip install sassymcp` from release "
+                    f"{info['tag']} instead."
                 )
         elif name_lower.endswith((".tar.gz", ".tgz")):
             # tar preserves the executable bit — no chmod needed.

@@ -28,6 +28,10 @@ def open_db(path: Path, *, check_same_thread: bool = False) -> sqlite3.Connectio
     """Open a SassyMCP SQLite DB with multi-process-safe pragmas."""
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, check_same_thread=check_same_thread, timeout=5.0)
+    # busy_timeout MUST be set before journal_mode=WAL: concurrent first-open
+    # of a new DB races on the WAL conversion, and without a wait the pragma
+    # itself raises "database is locked".
+    conn.execute("PRAGMA busy_timeout=5000")
     actual_mode = conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]
     if actual_mode.lower() != "wal":
         conn.close()
@@ -36,5 +40,4 @@ def open_db(path: Path, *, check_same_thread: bool = False) -> sqlite3.Connectio
             "WAL is required for multi-process safety; refusing to return a non-WAL connection."
         )
     conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA busy_timeout=5000")
     return conn

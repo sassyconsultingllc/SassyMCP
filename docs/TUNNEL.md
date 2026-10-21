@@ -22,9 +22,7 @@ hostname with HTTP 421.
 1. A Cloudflare account with a domain you own (the apex zone must be on
    Cloudflare's nameservers).
 2. `cloudflared` on PATH. Windows: `winget install Cloudflare.cloudflared`.
-3. `sassymcp.exe` extracted from the portable zip, or installed via the
-   DXT / VSIX / `sassymcp-install` paths. The tunnel launcher expects
-   the exe next to it (`%~dp0sassymcp.exe`).
+3. `sassymcp.exe` from a GitHub release (or `pip install sassymcp` / DXT / VSIX). The tunnel launcher (`deploy/start-tunnel.bat` or a copy next to the exe) expects `sassymcp.exe` beside it (`%~dp0sassymcp.exe`).
 4. A SassyMCP auth token. Generate one with:
    ```powershell
    $b = New-Object byte[] 32

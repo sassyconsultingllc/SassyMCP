@@ -224,7 +224,7 @@ TOOL_GROUPS = {
     },
     "forensics": {
         "modules": ["security_audit", "registry"],
-        "description": "Security audit, registry inspection — paid forensics add-on",
+        "description": "Security audit, registry inspection",
         "always_load": False,
         "network": "none",
         "max_concurrent": 3,

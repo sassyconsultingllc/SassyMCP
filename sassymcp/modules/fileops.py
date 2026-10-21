@@ -360,6 +360,9 @@ def register(server):
     @server.tool()
     def sassy_list_dir(path: str, depth: int = 2) -> str:
         """List directory contents. [FILE]/[DIR] prefixes. depth controls recursion."""
+        refused = _refuse_sensitive_read("sassy_list_dir", path)
+        if refused:
+            return refused
         err = _check_path(path)
         if err:
             return f"Error: {err}"

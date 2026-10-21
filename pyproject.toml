@@ -8,7 +8,7 @@ description = "Unified MCP server for cross-platform (Windows/macOS/Linux) deskt
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "Proprietary"}
-authors = [{name = "SassyMCP Contributors"}]
+authors = [{name = "Shane Smith / Sassy Consulting LLC"}]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",

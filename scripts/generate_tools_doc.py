@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
 # Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
-# CodeMark: SCLLC1-SassyMCP-F5TX2HZG23M3
+# CodeMark: SCLLC1-SassyMCP-8S3ZMG8V4Z80
 """Generate the human-readable tool reference: docs/TOOLS.md.
 
 The reference is generated, not hand-written: it registers every module
@@ -85,7 +85,7 @@ def render(tools, tool_to_group, tool_groups) -> str:
         "<!--",
         "   Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.",
         "   Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.",
-        "   CodeMark: SCLLC1-SassyMCP-RUTQQK5VPCVE",
+        "   CodeMark: SCLLC1-SassyMCP-Q990R0I98MAB",
         "-->",
         "# SassyMCP Tool Reference",
         "",

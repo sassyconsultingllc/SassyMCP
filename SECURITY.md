@@ -1,7 +1,7 @@
 <!--
    Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
    Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
-   CodeMark: SCLLC1-SassyMCP-FJGD4K4VPY7Z
+   CodeMark: SCLLC1-SassyMCP-R10EHQPIFUAY
 -->
 # Security Policy
 
@@ -24,10 +24,6 @@ Email **`security@sassyconsultingllc.com`** with:
 - a minimal reproduction (commands, tool calls, config) — no live
   credentials, tokens, or customer data
 - your assessment of impact
-
-> **TODO (owner):** confirm `security@sassyconsultingllc.com` actually
-> routes to a monitored mailbox, and consider adding a PGP key or an
-> encrypted-report channel.
 
 We will acknowledge receipt and keep you posted on triage. Please do not
 disclose the issue publicly until we've had a chance to ship a fix.

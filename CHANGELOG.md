@@ -10,6 +10,119 @@ All notable changes to SassyMCP. Newest first. Versions follow semver:
 for new user-visible features, PATCH for fixes that don't move buyer-
 facing surfaces.
 
+## [Unreleased]
+
+Written on 2026-09-23/24 as part of a v1.16.0 respin, but v1.16.0 was tagged
+and published on 2026-09-22 without it, and v1.17.0/v1.18.0 shipped without it
+too. References to "v1.16.0" below mean this unreleased work.
+
+### Split architecture scaffold (remote policy worker)
+
+Scaffold for the split architecture: the local agent keeps executing
+tools (open, auditable), while vendor policy — license enforcement,
+revocation, per-customer tier gating, usage metering — moves to a remote
+Cloudflare Worker the vendor operates.
+
+* New `sassymcp/remote_policy/` package (opt-in, default-off): async
+  worker client (protocol v1), HMAC-signed decision cache, redacted
+  argument summaries (full args never leave the machine), fail-closed by
+  default with `fail_open` config escape hatch. Auth failures (key
+  rejected) always fail closed. Every decision is audit-logged.
+* `server._wrap_remote_policy()` wires the gate after the audit
+  middleware; no-op unless `remote_policy.enabled` + endpoint + license
+  key are all present, so default behavior is unchanged.
+* New `workers/policy-worker/` (TypeScript): `POST /v1/policy/evaluate`
+  and `GET /v1/policy/status`, LemonSqueezy key validation with KV
+  caching, per-key rate limiting (429 + retry-after), per-day usage
+  metering, owner-editable `TIER_GROUPS` / `VARIANT_TIER` tables.
+  15 vitest tests pass; `tsc --noEmit` clean.
+* New `docs/POLICY_SPLIT_ARCHITECTURE.md`: protocol, local behavior,
+  threat model, deployment, and a privacy checklist — the legal pack was
+  written for a local-first product and must be updated (with attorney
+  review) before any customer build enables the gate.
+* New `tests/test_remote_policy.py`: 27 tests (client, cache, redaction,
+  enforcement, fail-open/closed, auth-always-denies).
+
+Pre-tag MCP spec gap fixes (2026-09-23 review):
+* Policy `deny`/`ask` and audit-wrapper refusals (offline gate, rate
+  limit, exception path) now **raise** `ToolError` instead of returning
+  the envelope as a string — the MCP layer serves them with
+  `isError=true`. Previously a license denial arrived as a *successful*
+  tool result.
+* The server now advertises `tools.listChanged` and profile switches
+  fire `notifications/tools/list_changed` on the best available channel
+  (SDK 1.30.0 exposes no public broadcast API; dashboard-initiated
+  switches outside any MCP request are logged).
+* Tests: `tests/test_remote_policy.py` 28 (+1 regression asserting the
+  raise through a real `ToolManager`), `tests/test_tool_profiles.py`
+  26 (+2 for the notify contract).
+
+Pre-tag MCP spec gap fixes, continued (full review work-through):
+
+* Annotation accuracy: `sassy_untar`/`sassy_unzip`/`sassy_zip`/`sassy_tar`
+  are now `destructiveHint=true` (`extractall()` has no overwrite guard;
+  `ZipFile(output, "w")` truncates a pre-existing archive), and
+  `sassy_scrcpy_record` is now `destructiveHint=false` (a caller-requested
+  export file, like `sassy_iphone_screenshot`). `sassy_crosslink_status`,
+  `sassy_coordination_board`, and `sassy_peer_list` are `readOnlyHint=true`
+  (pure DB reads); `sassy_clipboard_to_android` and `sassy_screenshot` are
+  `idempotentHint=true` (repeat set is a no-op; matches
+  `sassy_screen_capture`). New curated totals: 157 read-only, 43
+  destructive, 214 idempotent, 146 open-world.
+* `sassy_tool_group_toggle`: removed the dead `server._session`
+  `tools/list_changed` send path (can never fire under FastMCP 1.30) and
+  rewrote the docstring + tool description to state the true semantics —
+  the toggle sets `always_load` for the **next server start**; it cannot
+  add or remove tools from a running session.
+* Remote-policy `ask` now has a documented client contract
+  (`docs/POLICY_SPLIT_ARCHITECTURE.md`): exact deny/ask JSON envelopes,
+  `retryable: false` semantics, and the advisory nature of
+  `confirm_required: true` (no confirm-token flow in v1.16.0).
+* `--sse` is deprecated (warning at startup): legacy SSE is not part of
+  MCP 2025-11-25; the flag will be removed in a future release.
+* Hardening nits: fail-closed refusals log the raw worker exception
+  server-side and return a generic reason to clients; `summarize_args`
+  filters kwargs to the wrapped function's declared parameters; the
+  single-wrap guard moved into public `wrap_fn`; `_apply_tool_metadata`
+  logs warnings instead of silently swallowing failures and defaults
+  missing `destructiveHint` to `true` (the spec's cautious default).
+
+### MCP spec roadmap (post-v1.16.0)
+
+Reviewed against MCP 2025-11-25 (the latest Final revision the installed
+SDK, mcp 1.30.0, implements) with MCP 2026-07-28 as the forward-looking
+delta. These are deliberately **not** in v1.16.0 — implementing them
+today would mean hand-rolled JSON-RPC outside the SDK with no client
+interop to test against:
+
+* `server/discover` (2026-07-28) — no SDK support yet.
+* Per-request capabilities / `logLevel` in `_meta` (2026-07-28) — no SDK
+  support yet.
+* Progress-token support — no SDK plumbing to hang it on yet.
+* Required `resultType` (2026-07-28) — no SDK support yet.
+* Optional tool `title` coverage (0/278) — spec-optional; clients fall
+  back to the tool name. Enhancement candidate.
+* Pagination of `tools/list` — spec-compliant as-is (`tools/list` MAY
+  paginate); revisit only if tool count grows past client comfort.
+* Protocol revision: stay on 2025-11-25 until the SDK ships a newer Final
+  revision; 2026-07-28 deltas above are the adoption list when it does.
+
+No new MCP tools; the tool count is unchanged. Not production: owner
+TODOs (real variant IDs, KV namespace, attorney-reviewed legal pack,
+CodeMarks) are listed in the architecture doc.
+
+### Post-candidate hardening (2026-09-24 publish audit)
+
+* SSH guard covers PuTTY `plink`/`pscp`/`psftp`/`putty` and refuses
+  `-proxycmd` (local-exec sibling of OpenSSH ProxyCommand).
+* Linux `sassy_launch_app` execs a PATH command as argv; no `/bin/sh -c`.
+* `sassy_update_apply` fail-closed unless a SHA-256 sidecar verifies.
+* `sassy_reg_write` requires `confirm='YES'`.
+* `sassy_list_dir` honors the sensitive-read floor.
+* Overlay "open VS Code" no longer uses `shell=True`.
+* Version stamps: mcpb/vscode/server.json mcpb URL are 1.16.0; CI publishes
+  `SHA256SUMS` next to release assets.
+
 ## [1.18.0] — 2026-10-01 — Built-in OAuth 2.1 authorization server
 
 SassyMCP's HTTP server can now act as its own OAuth 2.1 authorization
@@ -69,7 +182,7 @@ ordering and result caps, parameter semantics with defaults and interactions
 (compensating for 0% schema parameter-description coverage), and named
 sibling guidance ("use X instead of Y when Z"). MCP `ToolAnnotations`
 (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) now
-set explicitly on every tool: 154 read-only, 40 destructive, 212 idempotent,
+set explicitly on every tool: 157 read-only, 43 destructive, 214 idempotent,
 146 open-world. Metadata lives in generated `sassymcp/tool_descriptions.py`
 and `sassymcp/tool_annotations.py`, applied at registration in
 `server._apply_tool_metadata()`; per-tool source untouched.
@@ -79,7 +192,7 @@ and `sassymcp/tool_annotations.py`, applied at registration in
 Per-session gating of the MCP tool set, controlled from the Control Panel
 (new **Profiles** tab; `GET`/`POST /api/profile`). Seven profiles — `full`
 (default), `developer`, `forensics`, `devices`, `sysadmin`, `readonly`
-(computed per-tool from the curated `readOnlyHint` annotations: 154
+(computed per-tool from the curated `readOnlyHint` annotations: 157
 tools), and `custom` (an explicit group set ticked in the dashboard).
 Activation swaps the FastMCP tool manager's registry to the allowed subset,
 so a tool hidden from `tools/list` is also uncallable via `tools/call`
@@ -197,15 +310,11 @@ passing):
 - **`scripts/generate_tools_doc.py` + `docs/TOOLS.md`:** generated
   per-group tool reference (278 tools, 18 groups, curated descriptions),
   re-runnable via the script (`--check` fails CI on a stale doc).
-
-### Fixed
-
-- **`sassy_launch_app` command injection (Linux).** The `name` argument was
-  interpolated into a `/bin/sh -c` string, so a name containing shell
-  metacharacters ran as commands. Now passed through `shlex.quote`. The
-  Windows and macOS branches build an argv list and were never affected.
-  Present since at least 1.14.2, so 1.14.2, 1.15.0 and 1.15.2 carry it —
-  upgrade if you run SassyMCP on Linux or macOS.
+- **`SECURITY.md` (repo root):** disclosure policy, supported-versions
+  table (1.16.x supported, earlier best-effort), scope notes stating
+  plainly that authenticated command execution is the product and not a
+  bug, response-time targets, and what-not-to-report. Contact address is a
+  `security@[yourdomain]` placeholder pending owner assignment.
 
 ## [1.15.2] — 2026-09-20 — Security: SSH local-execution options bypassed the interceptor
 
