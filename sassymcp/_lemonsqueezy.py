@@ -60,6 +60,10 @@ BILLING_TIMEOUT_SECONDS = 4
 DEFAULT_VARIANT_MAP: dict[str, dict[str, Any]] = {
     # SassyMCP / SassyMCP Supporter ($25, license keys ON, activation limit 2).
     "1753676": {"tier": "pro", "addons": []},
+    # SassyMCP Commercial License ($99/seat, license keys ON, activation
+    # limit 2). Records the commercial-use seat (LICENSE v2.0); like every
+    # tier it is a label only and gates nothing.
+    "2352600": {"tier": "commercial", "addons": []},
 }
 
 
