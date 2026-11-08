@@ -1,20 +1,154 @@
-SassyMCP Proprietary License
+SassyMCP License
+Free for Personal Use - Commercial Use Requires a License
+Version 2.0, effective 2026-11-08
 
-Copyright (c) 2026 Sassy Consulting LLC.
-All rights reserved.
+Copyright (c) 2026 Sassy Consulting LLC. All rights reserved.
 
-This software and its associated documentation are proprietary and
-confidential. No part of this software may be copied, modified, distributed,
-published, sublicensed, reverse engineered, or used to create derivative
-works without prior written permission from Sassy Consulting LLC.
+-------------------------------------------------------------------------------
+PLAIN-ENGLISH SUMMARY (not part of the license; the terms below control)
 
-Limited use rights may be granted only through an explicit written agreement,
-commercial contract, or other signed authorization from Sassy Consulting LLC.
+  - Individuals: free, every tool included, on as many of your own devices
+    as you like. Nothing is held back for a paid tier.
+  - Using it for work - for a company, for clients, or as part of a paid
+    job - needs a commercial license. You can evaluate it at work for 30
+    days first.
+  - The source code is public so you can read and audit it. It is NOT open
+    source: you may not redistribute it, sell it, or host it as a service
+    for others.
+  - The optional supporter license is a tip. It does not grant commercial
+    rights.
+  - SassyMCP runs shell commands, edits files, and controls devices on your
+    behalf. Its safety features reduce risk; they do not eliminate it. You
+    use it at your own risk.
+-------------------------------------------------------------------------------
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL
-SASSY CONSULTING LLC BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY,
-WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF,
-OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+1. DEFINITIONS
+
+"Software" means SassyMCP, including its executables, packages, source code,
+documentation, and any updates made available to you.
+
+"You" means the individual or entity exercising rights under this License.
+
+"Personal Use" means use by an individual, for that individual's own
+purposes, that is not Commercial Use. Examples: personal projects, hobby
+work, personal automation, learning, research, and contributing to open
+source projects that are not themselves sold or used to provide paid
+services.
+
+"Educational Use" means use by students or teachers for coursework,
+teaching, or academic research at an accredited educational institution,
+where the use is not Commercial Use.
+
+"Commercial Use" means any use that is not Personal Use or Educational Use,
+including any use (a) by, for, or on behalf of a business, government
+agency, or other organization; (b) as part of work you are paid to do,
+whether as an employee, contractor, or freelancer; or (c) to provide a
+product or service to others for compensation.
+
+"Commercial License" means a paid license for Commercial Use purchased from
+Sassy Consulting LLC.
+
+2. PERSONAL AND EDUCATIONAL USE LICENSE
+
+Subject to this License, Sassy Consulting LLC grants You a worldwide,
+royalty-free, non-exclusive, non-transferable license to download, install,
+and run the Software on any number of devices You own or control, for
+Personal Use or Educational Use. You may modify the Software for Your own
+Personal Use or Educational Use, provided You do not distribute the
+modifications.
+
+3. COMMERCIAL USE
+
+Commercial Use requires a Commercial License, available from Sassy
+Consulting LLC at https://sassyconsultingllc.com/store or by contacting
+info@sassyconsultingllc.com. The scope of a Commercial License (number of
+seats, term, and support) is set at purchase and is governed by these terms
+together with the terms presented at purchase.
+
+Evaluation: You may use the Software for Commercial Use, free of charge, for
+up to 30 days, solely to evaluate whether to purchase a Commercial License.
+
+Supporter licenses: an optional supporter license purchased to support
+development is a contribution. It does not grant Commercial Use rights
+unless the purchase terms expressly say so.
+
+4. SOURCE CODE
+
+The source code is published so users can read, review, and audit what the
+Software does. Publication does not make the Software open source and does
+not grant any right beyond those expressly stated in this License.
+
+5. RESTRICTIONS
+
+Except as expressly permitted by this License, You may not:
+  (a) copy, distribute, publish, sell, rent, lease, or sublicense the
+      Software or any modified version of it;
+  (b) offer the Software, or functionality substantially derived from it,
+      to third parties as a hosted, managed, or network service;
+  (c) use the Software's source code to create or distribute a competing
+      product;
+  (d) remove, alter, or obscure any copyright notice, license notice, or
+      other proprietary marking in the Software; or
+  (e) circumvent, disable, or interfere with any license-key or
+      license-verification mechanism in the Software.
+
+6. AUTHORIZED USE OF SECURITY AND AUTOMATION FEATURES
+
+The Software includes network-scanning, security-auditing, device-control,
+and remote-execution features. You may use them only on systems, networks,
+and devices that You own or are expressly authorized to test or control.
+You are solely responsible for complying with all laws that apply to Your
+use of the Software.
+
+7. THIRD-PARTY COMPONENTS
+
+The Software includes or depends on third-party components that are licensed
+under their own terms. Those terms govern those components, and nothing in
+this License restricts rights You have under them.
+
+8. FEEDBACK AND CONTRIBUTIONS
+
+If You submit feedback, issues, suggestions, or code contributions, You grant
+Sassy Consulting LLC a perpetual, irrevocable, worldwide, royalty-free
+license to use, modify, and incorporate them into the Software or any other
+product, without obligation to You.
+
+9. TERMINATION
+
+This License terminates automatically if You breach it. On termination You
+must stop using the Software and delete all copies in Your possession.
+Sections 5 through 12 survive termination.
+
+10. DISCLAIMER OF WARRANTY
+
+THE SOFTWARE IS PROVIDED "AS IS" AND "AS AVAILABLE", WITHOUT WARRANTY OF ANY
+KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. THE
+SOFTWARE EXECUTES COMMANDS, MODIFIES FILES, AND CONTROLS DEVICES AT THE
+DIRECTION OF AI MODELS AND USERS. ITS SAFETY FEATURES, INCLUDING DELETE
+INTERCEPTION AND SENSITIVE-SCREEN DETECTION, ARE PROVIDED ON A BEST-EFFORT
+BASIS AND ARE NOT GUARANTEED TO PREVENT DATA LOSS, DAMAGE, OR UNINTENDED
+ACTIONS. YOU ARE RESPONSIBLE FOR BACKING UP YOUR DATA AND REVIEWING THE
+ACTIONS THE SOFTWARE TAKES.
+
+11. LIMITATION OF LIABILITY
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, IN NO EVENT SHALL SASSY CONSULTING
+LLC BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR
+PUNITIVE DAMAGES, OR FOR ANY LOSS OF DATA, PROFITS, OR BUSINESS, ARISING
+FROM OR RELATED TO THE SOFTWARE, HOWEVER CAUSED AND UNDER ANY THEORY OF
+LIABILITY. SASSY CONSULTING LLC'S TOTAL LIABILITY FOR ALL CLAIMS RELATING TO
+THE SOFTWARE SHALL NOT EXCEED THE AMOUNT YOU PAID FOR IT IN THE TWELVE MONTHS
+BEFORE THE CLAIM AROSE.
+
+12. GENERAL
+
+This License is governed by the laws of the State of Wisconsin, USA,
+without regard to its conflict-of-laws rules. If any provision is held
+unenforceable, the remaining provisions stay in effect. Sassy Consulting LLC
+may release future versions of the Software under different terms; the
+version of this License that accompanied the copy You obtained continues to
+govern that copy. Versions of the Software released before 2026-11-08 were
+distributed under the "SassyMCP Proprietary License".
+
+Questions and Commercial Licenses: info@sassyconsultingllc.com

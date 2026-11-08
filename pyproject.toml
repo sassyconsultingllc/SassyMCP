@@ -7,7 +7,7 @@ dynamic = ["version"]
 description = "Unified MCP server for cross-platform (Windows/macOS/Linux) desktop automation, Android device control, security auditing, web inspection, cross-session communication, GitHub operations, and AI workflow persona"
 readme = "README.md"
 requires-python = ">=3.11"
-license = {text = "Proprietary"}
+license = {text = "Proprietary. Free for personal and educational use; commercial use requires a license. See LICENSE and LICENSING.md."}
 authors = [{name = "SassyMCP Contributors"}]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
@@ -125,6 +125,7 @@ only-include = [
     "sassymcp",
     "README.md",
     "LICENSE",
+    "LICENSING.md",
     "pyproject.toml",
 ]
 
