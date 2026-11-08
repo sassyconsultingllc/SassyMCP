@@ -83,7 +83,7 @@ _SIGNING_SECRET = _load_signing_secret()
 # Known tier labels, purely informational since v1.13.0. Kept so key
 # generation, the LS variant map, and status displays have a stable
 # vocabulary — none of these labels gate anything anymore.
-KNOWN_TIERS = ("free", "pro")
+KNOWN_TIERS = ("free", "pro", "commercial")
 KNOWN_ADDONS = ("forensics",)
 
 
