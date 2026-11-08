@@ -10,7 +10,7 @@
 
 **278 tools | 39 modules | 18 tool groups | Replaces 75+ MCP servers | ~35MB standalone exe**
 
-*Last updated: 2026-09-21 — v1.16.0 | all tools unlocked; optional supporter license*
+*Last updated: 2026-11-08 — v1.18.0 | free for personal use, every tool included; [commercial license](LICENSING.md) for work*
 
 Compatible with Claude Desktop, Grok Desktop, Cursor, Windsurf, and any MCP client.
 
@@ -54,16 +54,26 @@ SassyMCP replaces **75+ individual MCP servers** — including [Desktop Commande
 
 ## Licensing
 
-**Every tool group ships unlocked, for everyone, with no key required.** As of v1.13.0 the release model is all-or-nothing — there is no free/pro split, no gated groups, no crippled demo. The 278 tools you see in the module table below are the product, out of the box.
+**Free for personal use. Commercial use needs a license.** Everyone runs the same build with every tool group unlocked and no key required. There is no free/pro split, no gated groups, and no crippled demo; the 278 tools in the module table below are the product, out of the box. What a commercial license changes is your *right to use it for work*, not which features you get.
 
-**Supporter licenses (optional):** SassyMCP can still be purchased through [LemonSqueezy](https://sassyconsultingllc.com/store) as a **one-time supporter license** (no subscriptions). Activating a key registers your machine as a seat and records a supporter tier that shows in the startup banner, control panel, and VS Code cockpit — all tools are unlocked regardless of tier. Buy once to support development; refunds revoke the label automatically.
+| Your situation | What you need |
+|---|---|
+| Personal projects, learning, hobby automation, coursework | Free |
+| Trying it at work to decide | Free for 30 days |
+| Using it in your job, on client work, or across a team | [Commercial license](https://sassyconsultingllc.com/store), one seat per person |
 
-**Activation flow (supporters):**
+The full plain-English terms, including what counts as commercial use, are in [LICENSING.md](LICENSING.md). The binding text is [LICENSE](LICENSE).
+
+**It's not open source.** The source is public so you can read and audit what runs on your machine, but you may not redistribute it, sell it, or host it as a service for others.
+
+**Supporter licenses (optional):** individuals who want to fund development can buy a one-time supporter license through [LemonSqueezy](https://sassyconsultingllc.com/store). It records a supporter badge in the startup banner, control panel, and VS Code cockpit and unlocks nothing, because nothing is locked. **A supporter license does not cover commercial use.** Refunds revoke the badge automatically.
+
+**Activation flow (commercial and supporter keys):**
 1. Purchase at `https://sassyconsultingllc.com/store` — LemonSqueezy emails you a key (`XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX`).
 2. Activate from your AI agent: `sassy_setup_license action=activate key=...`
 3. Or from a terminal: `sassymcp.exe setup` opens the interactive menu.
 
-**Offline operation:** Once activated, a local HMAC-signed payload lets the supporter tier validate fully offline. A weekly re-check against LS catches refunds and cancellations; a faster startup check against the SassyMCP billing oracle cuts refund-to-revocation latency to seconds. Missing, expired, tampered, or corrupt license files just show the free label — tool availability is never affected.
+**Offline operation:** Once activated, a local HMAC-signed payload lets the license tier validate fully offline. A weekly re-check against LS catches refunds and cancellations; a faster startup check against the SassyMCP billing oracle cuts refund-to-revocation latency to seconds. Missing, expired, tampered, or corrupt license files just show the free label — tool availability is never affected.
 
 **Back-compat:** `SASSYMCP_LICENSE_BYPASS=1` (the old dev escape hatch that unlocked gated groups) is accepted and ignored — there is nothing left to bypass.
 
@@ -435,14 +445,15 @@ CI publishes no Linux binary. On Linux, install the wheel: `pip install sassymcp
 
 No MSI is published by CI — `build-msi.ps1` exists for manual MSI builds (WiX 3.x) from a staged `sassymcp.exe`, and `installer.wxs` is a manual-build reference template, not a maintained installer.
 
-### Activating a supporter license (optional)
+### Activating a license key
 
 There is no separate "licensed download" and nothing to unlock — everyone runs
 the same fully-unlocked binary from the
 [GitHub releases](https://github.com/sassyconsultingllc/SassyMCP/releases/latest).
-If you want to support development, buy a license at
+Personal use needs no key. If you use SassyMCP for work, buy a commercial
+license (or, as an individual, an optional supporter license) at
 **[sassyconsultingllc.com/store](https://sassyconsultingllc.com/store)** and
-activate it to register your seat and supporter tier:
+activate it to register your seat ([what counts as commercial use](LICENSING.md)):
 
 ```powershell
 # from your AI agent:
@@ -712,4 +723,6 @@ installs (winget / brew / apt), and more.
 
 ## License
 
-Proprietary - Copyright (c) 2026 Sassy Consulting LLC. All rights reserved.
+Free for personal and educational use; commercial use requires a license. Source-available, not open source. See [LICENSING.md](LICENSING.md) for the plain-English terms and [LICENSE](LICENSE) for the binding text.
+
+Copyright (c) 2026 Sassy Consulting LLC. All rights reserved.
