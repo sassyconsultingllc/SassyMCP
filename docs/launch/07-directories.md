@@ -9,13 +9,13 @@ This is the durable revenue engine, not the launch spike. Each directory reaches
 others don't — list on **all** of them. Do this BEFORE the social launch so the spike has somewhere
 to land and the listings start accruing search traffic immediately.
 
-**Prerequisite (gates everything here):** the GitHub repo must be **public**. Glama, the official
-registry, and the awesome-list index from GitHub. If `github.com/sassyconsultingllc/SassyMCP` is
-private, publish at least a public free-tier repo with the README. Verify before submitting.
+**Prerequisite (gates everything here):** the GitHub repo must be **public**. It is (verified
+2026-11-08). Glama, the official registry, and the awesome-list all index from GitHub.
 
-**The free tier is what you list everywhere.** Directories are discovery for the free server; the
-paid unlock happens in-product via license key. Don't try to list "Pro" — list SassyMCP (free),
-and let the upgrade path live inside the tool.
+**List it as Free everywhere.** It is free for personal use with every tool included; there is no
+paid unlock. Where a form asks about pricing, choose **Free** and, if there's a notes field, add
+"commercial license required for work use." Never tag it "open source": it's source-available
+under a proprietary license, and a mislabel invites delisting or a credibility hit.
 
 ---
 
@@ -23,21 +23,23 @@ and let the upgrade path live inside the tool.
 
 ```
 Name:           SassyMCP
-One-liner:      One MCP server that replaces 75+ — 274 tools in a single exe, smart-loaded.
-Description:    SassyMCP collapses 75+ individual MCP servers into one 34 MB exe with 274 tools
+One-liner:      One MCP server that replaces 75+ — 278 tools, smart-loaded, free for personal use.
+Description:    SassyMCP collapses 75+ individual MCP servers into one server with 278 tools
                 across files, shell, full GitHub API, Android control, dynamic vision, memory,
                 and security audit. A smart loader keeps tool-definition context under ~5K tokens.
                 Includes safe-delete interception (agents can't destroy files) and phone control
-                with sensitive-context auto-block. Free tier is a full daily driver. Works with
-                any MCP client. Install via the SHA256-pinned .mcpb from GitHub Releases (preferred)
+                with sensitive-context auto-block. Free for personal use with every tool
+                included; commercial use requires a license. Works with any MCP client.
+                Install via the SHA256-pinned .mcpb from GitHub Releases (preferred)
                 or `pip install sassymcp` — do not use unverified curl|exe install commands.
 Categories:     Developer Tools, Automation, GitHub, Security, Productivity
 Transport:      stdio (primary), HTTP/SSE, HTTPS
-Tool count:     274 (36 modules, 18 groups)
-Platform:       Windows 10/11
-License:        Proprietary (all rights reserved)
+Tool count:     278 (39 modules, 18 groups)
+Platform:       Windows 10/11 (standalone exe), macOS 12+ (universal2), Linux (pip)
+Pricing:        Free (personal use); commercial license required for work use
+License:        Proprietary, source-available. Free for personal use. See LICENSING.md
 Repo:           https://github.com/sassyconsultingllc/SassyMCP
-Homepage:       https://sassyconsultingllc.com/store   (NOT /pricing.html — that 404s as of 2026-07-15)
+Homepage:       https://sassyconsultingllc.com/sassymcp   (redirects to the store's SassyMCP section)
 Icon:           (use the bolt logo — see 08-assets-to-capture.md)
 Clients tested: Claude Desktop, Cursor, Windsurf, VS Code Copilot, Cline, Continue, Zed, Grok Desktop
 ```
@@ -49,7 +51,7 @@ Clients tested: Claude Desktop, Cursor, Windsurf, VS Code Copilot, Cline, Contin
 ### 1. Official MCP Registry (modelcontextprotocol.io) — highest credibility
 - **What:** the canonical registry; many clients/directories pull from it.
 - **How:** install the `mcp-publisher` CLI → authenticate via GitHub device login → publish a `server.json`. It hosts *metadata*, not artifacts, so you must publish the package first.
-  - SassyMCP has `pyproject.toml` → publish the free tier to **PyPI** (`pip`/`uv` installable), or use the **MCPB/DXT** package type (you already ship a `.dxt`). Either satisfies the artifact requirement.
+  - SassyMCP has `pyproject.toml` → publish to **PyPI** (done: `sassymcp` is live there) (`pip`/`uv` installable), or use the **MCPB/DXT** package type (you already ship a `.dxt`). Either satisfies the artifact requirement.
   - `mcpName` must start with `io.github.sassyconsultingllc/` for GitHub-based ownership.
 - **Docs:** https://modelcontextprotocol.io/registry/quickstart and https://github.com/modelcontextprotocol/registry/blob/main/docs/guides/publishing/publish-server.md
 - **Effort:** medium (needs a published package). Highest payoff — do it.

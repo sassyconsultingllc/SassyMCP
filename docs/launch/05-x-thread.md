@@ -11,11 +11,11 @@ Post launch-day morning. One hook tweet + replies as a thread. Attach the demo G
 ---
 
 **1/ (hook + GIF)**
-> I got tired of running 8 separate MCP servers — each one eating ~25K tokens of context before I typed a word.
+> I got tired of running 8 separate MCP servers, each one eating context before I typed a word.
 >
-> So I built one exe that replaces 75+ of them. 270 tools, smart-loaded down to ~5K tokens.
+> So I built one server that replaces 75+ of them. 278 tools, smart-loaded down to ~5K tokens.
 >
-> SassyMCP. One-time $49, no subscription. 🧵
+> SassyMCP. Free for personal use, nothing held back. (1/8)
 
 **2/**
 > The problem: agentic coding needs MCP servers for files, shell, GitHub, Android, screenshots, memory…
@@ -23,12 +23,12 @@ Post launch-day morning. One hook tweet + replies as a thread. Attach the demo G
 > You end up with 6–10 of them. Separate configs in Claude Desktop, Cursor, Windsurf. Each with its own bugs and context cost.
 
 **3/**
-> SassyMCP is one Windows exe. Install it and it auto-detects + patches every MCP client on your machine — Claude Desktop, Cursor, Windsurf, VS Code Copilot, Cline, Continue, Zed, Grok Desktop.
+> SassyMCP is one install. It auto-detects and patches every MCP client on your machine: Claude Desktop, Cursor, Windsurf, VS Code Copilot, Cline, Continue, Zed, Grok Desktop.
 >
-> One config. One audit log. One update.
+> One config. One audit log. One update. Windows, macOS, Linux.
 
 **4/ (smart loading)**
-> 270 tools sounds like context poison. It isn't — only the groups you use load.
+> 278 tools sounds like context poison. It isn't, because only the groups you use load.
 >
 > Default footprint: ~5K tokens instead of ~25K. There's a built-in tool that measures exactly what your servers cost you.
 
@@ -37,27 +37,28 @@ Post launch-day morning. One hook tweet + replies as a thread. Attach the demo G
 >
 > Every delete command across every shell gets staged to a review folder instead of running. It even unwraps `cmd /c del`, decodes base64 PowerShell, and catches `robocopy /MIR`.
 >
-> Your agent literally cannot `rm -rf` your repo by accident.
+> Your agent can't `rm -rf` your repo by accident.
 
 **6/ (phone)**
-> It can also drive your Android phone — through the UI accessibility tree, not pixel-guessing.
+> It can also drive your Android phone through the UI accessibility tree, not pixel-guessing.
 >
 > And it reads the screen first: hit a login, payment, or 2FA screen and it refuses to act, handing control back to you.
 
-**7/ (pricing)**
-> Pricing is the part I feel strongest about: buy once, own forever. $49 for Pro. No subscription, no telemetry, runs fully offline.
+**7/ (the model)**
+> The model: free for personal use with every tool included. No crippled tier, no telemetry, runs offline.
 >
-> Free tier is a complete daily driver. Core is MIT on GitHub.
+> Using it for work needs a commercial license; that's what funds it. Source is public to audit, but it's not open source.
 
 **8/ (CTA)**
-> If you live in MCP configs, I'd love your feedback — especially whether "one big server with smart loading" is the right call.
+> If you live in MCP configs, I'd love your feedback, especially on whether "one big server with smart loading" is the right call.
 >
-> Free download + repo: github.com/sassyconsultingllc/SassyMCP
-> Site: sassyconsultingllc.com/pricing.html
+> Download + repo: github.com/sassyconsultingllc/SassyMCP
+> Site: sassyconsultingllc.com/sassymcp
 
 ---
 
 **Notes**
+- No emoji anywhere in the thread. "(1/8)" marks it as a thread.
 - Tweet 1 carries the GIF; keep it under ~15s, loop-friendly.
-- Quote-tweet your own ProductHunt + Show HN links later in the day ("we're live on PH / discussion on HN") — drive to the conversation, not "please upvote."
-- If a tweet in the thread outperforms, that's your headline — reuse it as the PH tagline / Reddit title.
+- Quote-tweet your own ProductHunt + Show HN links later in the day ("we're live on PH / discussion on HN"). Drive to the conversation, not "please upvote."
+- If a tweet in the thread outperforms, that's your headline. Reuse it as the PH tagline / Reddit title.

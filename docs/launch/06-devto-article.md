@@ -3,7 +3,7 @@
    Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
    CodeMark: SCLLC1-Projects-ZB345X46AOIC
 -->
-# Article: "I replaced 75 MCP servers with one exe"
+# Article: "I replaced 75 MCP servers with one"
 
 Evergreen, SEO-compounding. Publish on dev.to (tags: #ai #mcp #devtools #productivity), mirror to
 the Sassy Consulting blog, and ~1 week after launch submit the blog URL to HN as a normal link
@@ -14,7 +14,7 @@ once you have real numbers/links.
 
 ---
 
-# I replaced 75 MCP servers with one exe — here's what I learned
+# I replaced 75 MCP servers with one — here's what I learned
 
 ## The death-by-a-thousand-servers problem
 
@@ -45,12 +45,12 @@ The tools themselves were fine. The problem was that "one server per capability"
 nicely Unix-y — actually means N processes, N configs, N context costs, and N separate places where
 nothing coordinates. There's no shared audit log, no shared safety layer, no cross-tool workflow.
 
-So I built [SassyMCP]: one Windows exe, 270 tools across 35 modules, replacing 75+ individual
+So I built [SassyMCP]: one server, 278 tools across 39 modules, replacing 75+ individual
 servers. Here's the part that makes "one big server" not insane.
 
-## Smart loading: 270 tools, ~5K tokens
+## Smart loading: 278 tools, ~5K tokens
 
-The objection writes itself: *270 tools will obliterate your context window.* It would — if they all
+The objection writes itself: *278 tools will obliterate your context window.* It would — if they all
 loaded. They don't.
 
 Tools are grouped (core, github_full, android, vision, system, …), and only the groups you use load.
@@ -127,23 +127,29 @@ tools and a drop-in replacement that, for my workflows, just works.
 - **"One big server is the wrong abstraction."** Maybe. The composability lives in the loadable
   groups rather than in separate processes. The wins — one config, one audit log, one safety layer,
   cross-module combos — felt worth it to me, but I'd genuinely debate it.
-- **"Windows-only."** True today. The Windows-specific surface (registry, Defender, event logs,
-  autoruns) is native; the portable core (files, shell, GitHub, memory) runs from source via `uv`
-  anywhere. A first-class mac/Linux build is roadmap-if-there's-demand.
+- **"It's not open source."** Correct, and I'd rather say so up front than have you find it. The
+  source is public so you can audit what runs on your machine, but the license is proprietary.
 
-## On pricing: I made it a one-time purchase
+It runs on Windows (standalone exe), macOS (universal2 binary), and Linux (`pip install sassymcp`).
+It's the same source on all three. A few things are Windows-native by nature (raw Registry,
+Defender), and those report a clear message elsewhere.
 
-I'm as tired of subscriptions as you are, so SassyMCP is buy-once-own-forever. The free tier is a
-complete daily driver — not a crippled demo — and Pro is a single $49 payment that unlocks the heavy
-automation groups. It runs fully offline after activation, with no telemetry. The core is MIT on
-GitHub if you want to read it.
+## On the model: free for people, paid for work
+
+SassyMCP is free for personal use, with every tool included. There's no crippled tier and no
+feature unlock, so the build you download is the whole product. It runs offline with no telemetry.
+
+If you use it for work, whether at your job, on client projects, or across a team, there's a
+commercial license, with a 30-day free evaluation first. That's what funds development. The
+plain-English terms, including what counts as commercial, are in [LICENSING.md][licensing].
 
 ## Try it / tear it apart
 
-Free download and source: [github.com/sassyconsultingllc/SassyMCP][repo]. I'd love feedback on the
+Download and source: [github.com/sassyconsultingllc/SassyMCP][repo]. I'd love feedback on the
 architecture and the safety model specifically — including whether the whole "one server" premise is
 a mistake.
 
-[SassyMCP]: https://sassyconsultingllc.com/pricing.html
+[SassyMCP]: https://sassyconsultingllc.com/sassymcp
+[licensing]: https://github.com/sassyconsultingllc/SassyMCP/blob/main/LICENSING.md
 [repo]: https://github.com/sassyconsultingllc/SassyMCP
 [gh-bug]: https://github.com/github/github-mcp-server/issues/2133

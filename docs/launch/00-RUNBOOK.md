@@ -5,95 +5,57 @@
 -->
 # SassyMCP Launch + Sales Runbook
 
-> **⚠️ SUPERSEDED IN PART — 2026-07-15 (v1.13.0): tier gating removed.**
-> The product is now all-or-nothing: every tool group ships unlocked for
-> everyone; a license is a **supporter purchase** (seat + tier label), not a
-> feature unlock. Every claim below of the form "Pro unlocks X" / "Forensics
-> add-on unlocks Y" is **no longer true** and must be rewritten before any
-> copy in 01–08 is published. Pricing/AOV math assumed feature gating and
-> needs a fresh decision (supporter model, or re-gate only after the
-> LemonSqueezy buy→own loop actually works end-to-end).
-
+**Updated:** 2026-11-08, rewritten for the license change (LICENSE v2.0).
 **Goal:** drive SassyMCP toward **$3,000/month**.
-**Model:** one-time perpetual license. Pro **$49**, Forensics add-on **+$29**, Team site license **$199**. *(see supersession note above)*
+**Model:** **free for personal use, commercial license for work use.** Every tool ships unlocked for
+everyone; a license changes the *right to use it for work*, never the features. Terms: `LICENSING.md`.
 **Author:** SaS + Claude · **Created:** 2026-06-05
+
+> **History:** the June plan sold feature-gated Pro ($49) / Forensics ($29) / Team ($199). Gating was
+> removed in v1.13.0 (2026-07-15) and the product went all-free with an optional $25 supporter tip,
+> which made $0. The license change on 2026-11-08 restores a revenue line *without* taking any tool
+> away from individuals, so nothing is ever clawed back after the launch.
 
 ---
 
-## The honest math
+## Revenue model
 
-One-time revenue **resets every month** — there's no recurring base to coast on. So the
-target is a *run rate*, fed by an always-on discovery engine plus periodic spikes.
+| Line | Who | What they get | Role |
+|---|---|---|---|
+| Personal use | Individuals, students | Every tool, free forever | **Adoption engine.** Stars, directory rank, word of mouth. |
+| Commercial license | Anyone using it for work; teams | The right to use it at work, per seat | **The revenue.** |
+| Supporter license | Individuals who want to chip in | A badge (unlocks nothing; no commercial rights) | Tips. Don't plan around it. |
 
-| Scenario | Orders/month for $3k | Per day |
-|---|---|---|
-| Pure Pro ($49) | 61 | ~2.0 |
-| Realistic mix (AOV ≈ $62*) | ~48 | ~1.6 |
+## The honest math (commercial price is decided in Move 1)
 
-\* Blended AOV assumes 50% Pro-only ($49), 30% Pro+Forensics ($78), 15% Forensics-on-free ($29), 5% Team ($199).
+| Commercial price per seat | Seats/month for $3k |
+|---|---|
+| $49 | ~61 |
+| $99 | ~31 |
+| $199 | ~16 |
 
-**Implication:** a one-day ProductHunt spike does **not** get you to $3k/mo on its own.
-The durable number comes from **directories (always-on discovery) + content/SEO (always-on) +
-a launch spike to seed them**. Treat the launch as ignition, the engine as the directories.
+**Implication:** commercial seats come from *people who already use it personally and bring it to work*,
+and from team leads deploying it. That means adoption first: the free install base is the funnel. A
+one-day spike won't get there alone; durable numbers come from **directories (always-on discovery)
++ content (always-on) + a launch spike to seed them.**
 
 ---
 
 ## Critical path (in order)
 
-1. **[DONE — by Claude] Fix the funnel.** Site no longer contradicts the product. See "Funnel fixes shipped" below.
-2. **[YOU — LemonSqueezy setup] Wire the one-time products.** Nothing sells until this is done. See "LemonSqueezy handoff" below.
-3. **[YOU — verify repo is public]** Glama, the official registry, and the awesome-list index from GitHub. If `github.com/sassyconsultingllc/SassyMCP` is private, directory discovery is dead on arrival. Make it (or a free-tier mirror) public.
-4. **[Capture assets]** 1 demo GIF + 4–6 screenshots. See `08-assets-to-capture.md`. Everything below converts 2–3× better with a real demo GIF.
-5. **[Seed directories]** Submit to all of them — `07-directories.md`. This is the engine; do it first, before the social spike.
+1. **[DONE 2026-11-08] License changed.** `LICENSE` v2.0 + `LICENSING.md` + README; free personal / paid commercial.
+2. **[DONE 2026-11-08] Dead links fixed and deployed.** `/sassymcp` and `/pricing.html` now 302 to `/store#sassymcp` (sassyconsultingllc-cloudflare PR #8, live).
+3. **[Move 1 — BLOCKS LAUNCH] Make the commercial license buyable.**
+   - Pick the price (see the table above) and seat terms.
+   - Create the **SassyMCP Commercial** product in the LS dashboard (license keys ON, activation limit = seats).
+   - Wire it in the worker (`PRODUCTS` + `LS_VARIANT_*`), add a store card next to the supporter SKU, and map the variant in `sassymcp/_lemonsqueezy.py` `DEFAULT_VARIANT_MAP` so the activated tier displays.
+   - Interim fallback until then: `info@sassyconsultingllc.com` invoices directly (`LICENSING.md` already says so).
+   - **Do not launch while "commercial use needs a license" has no buy button.** You'd be telling every work user to pay with no way to do it.
+4. **[Capture assets]** 1 demo GIF + 4–6 screenshots. See `08-assets-to-capture.md`. Every channel converts 2–3× better with a real demo GIF.
+5. **[Seed directories]** Submit to the rest. Status and steps are in `07-directories.md`. This is the engine; do it before the social spike.
 6. **[Launch spike]** ProductHunt + Show HN + Reddit + X, same week. `02`–`05`.
 7. **[Content engine]** Publish the dev.to/blog article, then keep publishing. `06`.
-8. **[Measure + iterate]** Watch LS orders, directory referrers, and which channel converts.
-
----
-
-## LemonSqueezy handoff (YOU — blocks all sales)
-
-The worker resolves a product to an LS variant via env vars; **pricing lives in the LS dashboard.**
-The site now sends one-time products (`mcp-pro`, `mcp-forensics`, `mcp-team`). Make the LS side match:
-
-1. In LemonSqueezy, create **three one-time (single-payment) products/variants**:
-   - **SassyMCP Pro** — $49, license keys enabled, **activation limit = 2**.
-   - **SassyMCP Forensics** — $29, license keys enabled, **activation limit = 1** (or 2 to match Pro).
-   - **SassyMCP Team** — $199, license keys enabled, **activation limit = 10**.
-   (Make sure each is *single payment*, not subscription. License keys: enable in the variant's "License keys" section.)
-2. Copy each **variant ID** from the LS dashboard.
-3. Set the worker env vars (variant IDs are not secret — plain `[vars]` in `wrangler.toml` is fine, or dashboard):
-   ```
-   LS_VARIANT_MCP_PRO        = <pro variant id>
-   LS_VARIANT_MCP_FORENSICS  = <forensics variant id>
-   LS_VARIANT_MCP_TEAM       = <team variant id>
-   ```
-   Confirm `LEMONSQUEEZY_API_KEY` and `LEMONSQUEEZY_STORE_ID` are already set (they are, for the other products).
-4. Deploy the worker: `npx wrangler deploy` from `V:\Projects\sassyconsultingllc-cloudflare`.
-5. **End-to-end test:** open `/pricing.html` → Buy Pro → complete a real $49 checkout (refund yourself after) → confirm the license-key email arrives and `sassy_setup_license action=activate key=...` unlocks the Pro groups.
-6. Confirm the `forensics` entitlement maps correctly. The product code expects an `addons: ["forensics"]` field; verify the variant→entitlement mapping in `sassymcp/_lemonsqueezy.py` (`SASSYMCP_LS_VARIANT_MAP`) lines up with the new variant IDs, so a Forensics purchase actually unlocks `security_audit` + `registry`.
-
-**Until step 5 passes, do not drive launch traffic — you'd be sending buyers to a broken checkout.**
-
----
-
-## Funnel fixes shipped (by Claude, 2026-06-05)
-
-In `V:\Projects\sassyconsultingllc-cloudflare` — review the diff, then deploy.
-
-| File | Change |
-|---|---|
-| `public/pricing.html` | Full rewrite to perpetual. Removed expired "75% off until June 1" banner, removed fake call-quota metering, removed monthly/annual toggle. Added "replaces 75+ servers" hook strip, Forensics add-on tier (was invisible), honest Team site license (replaced phantom Team/Enterprise subscription tiers), trust row, real FAQ. Free CTA now points to GitHub releases (direct download) instead of `/contact`. |
-| `public/checkout/pro.html` | One-time $49, "buy once / own forever", removed subscription + metering language. Sends `{product:'mcp-pro'}` (no `billing`). |
-| `public/checkout/forensics.html` | **New** — $29 one-time add-on checkout. |
-| `public/checkout/team.html` | Converted from $99/mo subscription to $199 one-time site license (10 machines, forensics included, priority support). |
-| `src/worker.js` | `PRODUCTS`: `mcp-pro` and `mcp-team` flipped `subscription`→`payment`; added `mcp-forensics`. |
-| `public/index.html` | Schema.org offer price 29→49; nav button, hero CTA, product badge, and product card price all de-subscriptioned and de-expired ("$49 · buy once, own forever"). |
-
-**Still TODO on the funnel (you or me):**
-- Add the demo GIF + screenshots to `pricing.html` and `index.html` (placeholders noted in `08-assets-to-capture.md`).
-- Add social proof once you have it (GitHub stars, a quote, "used by N developers").
-- Optional: a dedicated `/sassymcp` landing page (currently `/pricing.html` doubles as it).
+8. **[Measure + iterate]** Watch LS orders (commercial vs supporter), directory referrers, and which channel converts.
 
 ---
 
@@ -112,24 +74,25 @@ In `V:\Projects\sassyconsultingllc-cloudflare` — review the diff, then deploy.
 
 ## Launch week sequence
 
-**Pre-launch (this week):** finish LS setup, verify repo public, capture assets, seed ALL directories, line up the ProductHunt listing (draft, don't publish), pre-write every post from the docs here.
+**Pre-launch:** commercial SKU live (step 3), capture assets, seed ALL directories, line up the ProductHunt listing (draft, don't publish), pre-write every post from the docs here.
 
 **Launch day (a Tuesday–Thursday):**
 1. 00:01 PT — ProductHunt goes live (schedule it).
-2. Morning — Show HN post. Then sit in the thread answering for hours; HN rewards founder presence.
+2. Morning — Show HN post. Then sit in the thread answering for hours; HN rewards founder presence. Expect the license thread first; the answers are pre-written in `03`.
 3. Same morning — Reddit posts (stagger by ~1–2h across subreddits, tailor each per `04`).
 4. Throughout — X thread, reply to everyone.
 5. Update the ProductHunt first comment + reply to every commenter.
 
 **Week after:** publish the dev.to article, post it to the smaller subreddits and Hacker News (as a blog, not Show HN), follow up on directory listings that need claiming.
 
-**Ongoing engine (monthly):** one new piece of content, refresh directory listings, re-post to relevant new threads ("what MCP servers do you use?" posts appear constantly — answer them honestly with SassyMCP as one option).
+**Ongoing engine (monthly):** one new piece of content, refresh directory listings, re-post to relevant new threads ("what MCP servers do you use?" posts appear constantly; answer them honestly with SassyMCP as one option).
 
 ---
 
-## Sales-truth guardrails (don't undo the funnel fix)
+## Sales-truth guardrails
 
-- **No metering claims.** It's a local exe. Never advertise "N calls/month."
+- **The license line is non-negotiable in every post:** free for personal use, commercial use needs a license, source-available (not open source). Never say "MIT" or "open source."
+- **Never gate an existing tool behind payment.** Individuals keep everything forever. New paid things (team features, hosted) get added as *new*, never as removals.
+- **No metering claims.** It's a local server. Never advertise "N calls/month."
 - **No expired promos.** If you run a sale, use a real future date and remove it when it ends.
-- **One model.** Perpetual everywhere. If you ever add recurring revenue, make it an *optional* support/hosted add-on, not a re-pricing of the software.
-- **The free tier is the wedge.** It must be genuinely useful and one-click to install — it's what gets you into every directory and what converts to Pro in-product.
+- **Quote only facts in `01-positioning.md`.** 278 tools, 39 modules, Windows/macOS/Linux. If the README changes, update `01` first.
