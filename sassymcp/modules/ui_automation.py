@@ -30,7 +30,8 @@ def _get_monitors():
         return _win_monitors()
     if _platform.IS_MACOS:
         return _mac_monitors()
-    return None
+    from sassymcp import _linuxwm
+    return _linuxwm.monitors()
 
 
 def _mac_monitors():
@@ -186,8 +187,14 @@ def register(server):
         if _platform.IS_MACOS:
             return await _mac_desktop_state()
         if not _platform.IS_WINDOWS:
-            return json.dumps({"error": _platform.unsupported(
-                "desktop window enumeration on Linux (needs wmctrl)")})
+            from sassymcp import _linuxwm
+            wins = await asyncio.to_thread(_linuxwm.list_windows)
+            if isinstance(wins, str):
+                return json.dumps({"error": _platform.unsupported(
+                    f"desktop window enumeration: {wins}")})
+            return json.dumps([{"title": w["title"], "left": w["left"], "top": w["top"],
+                                "width": w["width"], "height": w["height"]} for w in wins],
+                              indent=2)
         try:
             from pywinauto import Desktop
         except ImportError:

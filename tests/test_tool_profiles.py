@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
 # Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
-# CodeMark: SCLLC1-SassyMCP-KRQ5JGPQFHRA
+# CodeMark: SCLLC1-SassyMCP-8JI7Q5Z2WRGV
 """Tests for per-session tool profiles.
 
 Covers sassymcp.modules.tool_profiles (profile definitions, activation,
@@ -123,7 +123,7 @@ def test_metadata_coverage_unchanged():
 
 def test_readonly_membership_matches_annotations():
     ros = tp._read_only_tools()
-    assert len(ros) == 154  # pinned to the curated 1.16.0 count
+    assert len(ros) == 157  # pinned to the curated 1.16.0 count (post spec-gap review)
     assert all(ta.TOOL_ANNOTATIONS[n].get("readOnlyHint") for n in ros)
     # destructive / mutating tools must not be in the safe set
     assert "sassy_shell" not in ros
@@ -197,6 +197,44 @@ def test_narrowing_needs_no_confirm(tm):
     tp.install(tm)
     tp.activate_profile("devices", tm)  # full -> devices hides tools only
     assert tp.get_active() == "devices"
+
+
+def test_profile_switch_fires_notify_on_change(tm):
+    """Spec: the visible set changed -> list_changed notifier fires.
+
+    Regression for the tools/list_changed gap (fixed 2026-09-23): profile
+    swaps used to rebind the registry with no notification while the
+    server advertised listChanged: false.
+    """
+    calls = []
+
+    async def notify():
+        calls.append(1)
+
+    async def main():
+        tp.install(tm, notify=notify)
+        tp.activate_profile("devices", tm)  # hides tools -> set changes
+        await asyncio.sleep(0)  # let the fire-and-forget task run
+        await asyncio.sleep(0)
+
+    asyncio.run(main())
+    assert calls == [1], "expected exactly one list_changed notify"
+
+
+def test_profile_switch_no_notify_when_set_unchanged(tm):
+    calls = []
+
+    async def notify():
+        calls.append(1)
+
+    async def main():
+        tp.install(tm, notify=notify)
+        tp.activate_profile("full", tm)  # already full -> no change
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+    asyncio.run(main())
+    assert calls == [], "no-op re-apply must not notify"
 
 
 def test_escalation_needs_confirm(tm):

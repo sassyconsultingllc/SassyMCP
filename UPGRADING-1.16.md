@@ -1,7 +1,7 @@
 <!--
    Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
    Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
-   CodeMark: SCLLC1-SassyMCP-ZDDE3OPVRGHM
+   CodeMark: SCLLC1-SassyMCP-1EU3VHT3OBCF
 -->
 # Upgrading to SassyMCP 1.16.0
 

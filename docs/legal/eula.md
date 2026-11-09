@@ -1,7 +1,7 @@
 <!--
    Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
    Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
-   CodeMark: SCLLC1-SassyMCP-NYNZCT5HQJB6
+   CodeMark: SCLLC1-SassyMCP-XTP7HD6GWAC4
 -->
 
 # SassyMCP — End User License Agreement (EULA)
@@ -11,9 +11,9 @@
 > attorney** in each relevant jurisdiction before use or publication. Do not
 > ship, bundle, or rely on it as-is.
 
-**Effective date / version:** [TODO: OWNER]
-**Licensor:** [TODO: OWNER — company legal name and address]
-**Contact:** [TODO: OWNER — contact email]
+**Effective date / version:** 2026-09-24 / 1.16.0
+**Licensor:** Sassy Consulting LLC
+**Contact:** support@sassyconsultingllc.com
 
 By installing, copying, or using SassyMCP ("the Software"), you agree to this
 Agreement. If you do not agree, do not install or use it, and delete any
@@ -71,7 +71,7 @@ To keep the Software secure, it may:
 
 ## 5. Ownership
 
-The Software is licensed, not sold. [TODO: OWNER] retains all right, title,
+The Software is licensed, not sold. Sassy Consulting LLC retains all right, title,
 and interest, including intellectual property rights. No rights are granted
 except as expressly stated here.
 
@@ -85,7 +85,7 @@ uses, for which it is not intended.
 
 ## 7. Limitation of liability
 
-TO THE MAXIMUM EXTENT PERMITTED BY LAW, [TODO: OWNER]'S TOTAL LIABILITY
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, SASSY CONSULTING LLC'S TOTAL LIABILITY
 UNDER THIS AGREEMENT IS LIMITED TO **[TODO: OWNER — e.g., the amount you
 paid for the Software, or $50 if none]**. IN NO EVENT ARE WE LIABLE FOR
 INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES,
@@ -101,7 +101,7 @@ system described in the Privacy Policy.
 
 ## 9. Governing law
 
-[TODO: OWNER — governing law and venue]. Disputes: contact [TODO: OWNER]
+[TODO: OWNER — governing law and venue]. Disputes: contact support@sassyconsultingllc.com
 first and allow 30 days for informal resolution.
 
 ---

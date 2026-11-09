@@ -33,7 +33,11 @@ def register(server):
                      "| Select FriendlyName,DeviceID,Status | FT -Auto")],
             macos=(["blueutil", "--paired"] if _platform.which("blueutil")
                    else ["system_profiler", "SPBluetoothDataType"]),
-            linux=["bluetoothctl", "paired-devices"],
+            # BlueZ >= 5.65 replaced `paired-devices` with `devices Paired`.
+            linux=["/bin/sh", "-c",
+                   ('out=$(bluetoothctl devices Paired 2>&1); '
+                    'case "$out" in *Invalid*|*"Too many"*) bluetoothctl paired-devices ;; '
+                    '*) printf "%s\\n" "${out:-No paired devices}" ;; esac')],
             feature="paired Bluetooth devices",
         )
         return await _run(argv)

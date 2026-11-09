@@ -109,3 +109,4 @@ personal/*
 !personal/.gitkeep
 !personal/README.md
 sassymcp.exe.new  
+deploy-posix/

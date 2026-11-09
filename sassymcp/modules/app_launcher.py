@@ -20,7 +20,9 @@ in); wmctrl/xdotool (Linux, optional).
 
 import asyncio
 import json
+import re
 import shlex
+import shutil
 import subprocess
 import time
 from typing import Any
@@ -229,8 +231,48 @@ async def _linux_exec(*argv, timeout: int = 10) -> tuple[int, str]:
 
 
 def _linux_unsupported(action: str) -> str:
+    from sassymcp import _linuxwm
     return json.dumps({"error": _platform.unsupported(
-        f"{action} on Linux requires wmctrl (apt install wmctrl) or xdotool")})
+        f"{action}: {_linuxwm.missing_hint()}")})
+
+
+async def _linux_wm(fn_name: str, *args) -> str:
+    """Run a _linuxwm action off-loop; JSON result or a clean unsupported."""
+    from sassymcp import _linuxwm
+    if not _linuxwm.available():
+        return _linux_unsupported(fn_name.replace("_", " "))
+    res = await asyncio.to_thread(getattr(_linuxwm, fn_name), *args)
+    return json.dumps(res)
+
+
+_LINUX_APP_NAME_RE = re.compile(r"^[A-Za-z0-9._+-]+$")
+
+
+def _linux_launch_argv(name: str) -> tuple[list[str] | None, str | None]:
+    """Resolve `name` to an argv list. Never builds a shell string.
+
+    `sassy_launch_app` previously interpolated `name` into `/bin/sh -c
+    "nohup {name} ..."`, which is command injection (`name=x; curl|sh`).
+    PATH lookup only; no arguments, no path separators, no metacharacters.
+    """
+    try:
+        parts = shlex.split(name, posix=True)
+    except ValueError as e:
+        return None, f"invalid name: {e}"
+    if len(parts) != 1:
+        return None, (
+            "name must be a single PATH command with no arguments or "
+            "shell metacharacters"
+        )
+    exe = parts[0]
+    if (not exe) or ("/" in exe) or ("\\" in exe) or exe in (".", ".."):
+        return None, "name must be a PATH command, not a filesystem path"
+    if not _LINUX_APP_NAME_RE.fullmatch(exe):
+        return None, "name contains characters that are not a PATH command"
+    resolved = shutil.which(exe)
+    if not resolved:
+        return None, f"not found on PATH: {exe}"
+    return [resolved], None
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -453,13 +495,20 @@ def register(server):
             return await asyncio.to_thread(_win_launch_app, name, wait_seconds)
         if _platform.IS_MACOS:
             return await _mac_launch_app(name, wait_seconds)
-        # shlex.quote so `name` cannot break out of the shell string. The shell
-        # stays because `&` (background) and the redirect are what let a launch
-        # return immediately — _linux_exec waits on communicate(), so dropping
-        # the shell would block every launch until the 10s timeout.
-        rc, out = await _linux_exec(
-            "/bin/sh", "-c", f"nohup {shlex.quote(name)} >/dev/null 2>&1 &")
-        return json.dumps({"launched": name} if rc == 0 else {"error": out})
+        argv, err = _linux_launch_argv(name)
+        if err:
+            return json.dumps({"error": err})
+        try:
+            proc = subprocess.Popen(
+                argv,
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError as e:
+            return json.dumps({"error": str(e)})
+        await asyncio.sleep(max(0.0, float(wait_seconds)))
+        return json.dumps({"launched": name, "pid": proc.pid, "path": argv[0]})
 
     @server.tool()
     def sassy_launch_exe(path: str, args: str = "") -> dict[str, Any]:
@@ -513,10 +562,7 @@ def register(server):
             return await asyncio.to_thread(_win_focus, title)
         if _platform.IS_MACOS:
             return await _mac_focus(title)
-        if _platform.which("wmctrl"):
-            rc, out = await _linux_exec("wmctrl", "-a", title)
-            return json.dumps({"focused": title} if rc == 0 else {"error": out or f"Window not found: {title}"})
-        return _linux_unsupported("window focus")
+        return await _linux_wm("focus", title)
 
     @server.tool()
     async def sassy_close_window(title: str, force: bool = False) -> str:
@@ -525,10 +571,7 @@ def register(server):
             return await asyncio.to_thread(_win_close, title, force)
         if _platform.IS_MACOS:
             return await _mac_close(title, force)
-        if _platform.which("wmctrl"):
-            rc, out = await _linux_exec("wmctrl", "-c", title)
-            return json.dumps({"closed": title} if rc == 0 else {"error": out or f"Window not found: {title}"})
-        return _linux_unsupported("window close")
+        return await _linux_wm("close", title, force)
 
     @server.tool()
     async def sassy_resize_window(
@@ -548,14 +591,10 @@ def register(server):
             return await asyncio.to_thread(_win_resize, title, x, y, width, height, maximize, minimize, restore)
         if _platform.IS_MACOS:
             return await _mac_resize(title, x, y, width, height, maximize, minimize, restore)
-        if _platform.which("wmctrl"):
-            if minimize:
-                rc, out = await _linux_exec("xdotool", "search", "--name", title, "windowminimize")
-            else:
-                g = f"0,{max(x,0)},{max(y,0)},{max(width,-1)},{max(height,-1)}"
-                rc, out = await _linux_exec("wmctrl", "-r", title, "-e", g)
-            return json.dumps({"resized": title} if rc == 0 else {"error": out})
-        return _linux_unsupported("window resize")
+        if minimize or maximize or restore:
+            state = "minimize" if minimize else "maximize" if maximize else "restore"
+            return await _linux_wm("set_state", title, state)
+        return await _linux_wm("move_resize", title, x, y, width, height)
 
     @server.tool()
     async def sassy_snap_window(title: str, position: str = "left", monitor: int = 0) -> str:
@@ -568,4 +607,4 @@ def register(server):
             return await asyncio.to_thread(_win_snap, title, position, monitor)
         if _platform.IS_MACOS:
             return await _mac_snap(title, position)
-        return _linux_unsupported("window snap")
+        return await _linux_wm("snap", title, position, monitor)

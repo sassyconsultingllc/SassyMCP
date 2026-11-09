@@ -43,6 +43,7 @@ logging.basicConfig(
 logger = logging.getLogger("sassymcp")
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 
 from sassymcp.license import (
@@ -574,7 +575,9 @@ def audit_tool(fn):
             if refusal is not None:
                 _audit_refusal(log_tool_call, tool_name,
                                f"offline gate: {refusal.get('error', 'offline')}")
-                return json.dumps(refusal, indent=2)
+                # Raised (not returned): refusals must reach the client
+                # with isError=true, never as successful results.
+                raise ToolError(json.dumps(refusal, indent=2))
         except Exception:
             pass
 
@@ -585,12 +588,12 @@ def audit_tool(fn):
                 if not acquired:
                     _audit_refusal(log_tool_call, tool_name,
                                    f"rate limit hit (group: {group})")
-                    return json.dumps({
+                    raise ToolError(json.dumps({
                         "error": f"Rate limited (group: {group})",
                         "retryable": True,
                         "retry_after_seconds": 5,
                         "retry_hint": f"Group '{group}' is at capacity. Wait a moment.",
-                    })
+                    }))
             except Exception as e:
                 if _strict_rate_limit():
                     # Strict mode (opt-in): fail CLOSED. A limiter that
@@ -600,14 +603,14 @@ def audit_tool(fn):
                     _audit_refusal(log_tool_call, tool_name,
                                    f"rate limiter errored in strict mode "
                                    f"(group: {group}): {e}")
-                    return json.dumps({
+                    raise ToolError(json.dumps({
                         "error": f"Rate limited (group: {group})",
                         "retryable": True,
                         "retry_after_seconds": 5,
                         "retry_hint": "Rate limiter errored and "
                                       "SASSYMCP_STRICT_RATE_LIMIT=1 fails "
                                       "closed. Wait a moment and retry.",
-                    })
+                    }))
                 acquired = False  # limiter failure = allow through
         elif _rate_limiter:
             # Limiter is up but this tool has no group mapping — it would
@@ -660,8 +663,9 @@ def audit_tool(fn):
                         payload["hint"] = "Call sassy_offline_status if the link is down."
             except Exception:
                 pass
-            # Structured error recovery
-            return json.dumps(payload)
+            # Structured error recovery: the envelope is raised, not
+            # returned, so the MCP layer serves it with isError=true.
+            raise ToolError(json.dumps(payload))
         finally:
             elapsed_ms = int((time.monotonic() - start) * 1000)
             # Auto-record the calling client as a live peer (throttled to one
@@ -723,6 +727,76 @@ def _wrap_all_tools():
         logger.warning(f"Audit middleware wiring failed (non-fatal): {e}")
 
 
+def _wrap_remote_policy():
+    """Apply the remote-policy gate (split-architecture vendor half).
+
+    Opt-in and default-off: no-op unless ``remote_policy.enabled`` is set
+    with an endpoint and a LemonSqueezy license key present. Non-fatal —
+    wiring failures must never prevent the server from starting.
+    Runs outside the audit wrap so allowed calls flow through normal audit
+    logging while denials are audit-logged by the gate itself.
+    """
+    try:
+        from sassymcp import remote_policy
+        result = remote_policy.wrap_all_tools(
+            mcp._tool_manager, audit_log=_get_audit_logger())
+        if result.get("enabled"):
+            logger.info(
+                f"Remote policy gate active: {result['wrapped']} tools gated")
+    except Exception as e:
+        logger.warning(f"Remote policy wiring failed (non-fatal): {e}")
+
+
+def _advertise_tools_list_changed():
+    """Advertise tools.listChanged on the lowlevel MCP server.
+
+    SDK 1.30.0's FastMCP has no notification_options passthrough, so patch
+    the bound create_initialization_options: every transport path (stdio,
+    SSE, streamable HTTP) calls it with no arguments. Spec: a server that
+    changes its tool list at runtime MUST declare tools.listChanged and
+    MUST send notifications/tools/list_changed when it does (see
+    tool_profiles.activate_profile).
+    """
+    try:
+        from mcp.server.lowlevel.server import NotificationOptions
+        low = mcp._mcp_server
+        _orig = low.create_initialization_options
+        _opts = NotificationOptions(tools_changed=True)
+
+        def _patched(notification_options=None, experimental_capabilities=None):
+            return _orig(notification_options or _opts,
+                         experimental_capabilities)
+
+        low.create_initialization_options = _patched
+        logger.info("Advertised tools.listChanged capability")
+    except Exception as e:
+        logger.warning(f"Could not advertise tools.listChanged (non-fatal): {e}")
+
+
+async def _notify_tools_list_changed() -> None:
+    """Best-effort push of notifications/tools/list_changed.
+
+    Works when the profile switch happens inside an MCP request (the
+    lowlevel request context carries the session). Dashboard-initiated
+    switches run outside any MCP request — SDK 1.30.0 exposes no public
+    broadcast API, so those are logged; the advertised capability still
+    tells clients to expect the notification and re-list accordingly.
+    """
+    try:
+        from mcp.server.lowlevel.server import request_ctx
+        ctx = request_ctx.get(None)
+        session = getattr(ctx, "session", None) if ctx is not None else None
+        send = getattr(session, "send_tool_list_changed", None)
+        if send is None:
+            logger.info("Profile changed: no MCP session in context; "
+                        "list_changed not pushed (clients should re-list)")
+            return
+        await send()
+        logger.info("Sent notifications/tools/list_changed")
+    except Exception as e:
+        logger.warning(f"list_changed send failed (non-fatal): {e}")
+
+
 def _apply_tool_metadata():
     """Apply curated descriptions and MCP annotations to registered tools.
 
@@ -754,15 +828,22 @@ def _apply_tool_metadata():
             ann = _ta_mod.TOOL_ANNOTATIONS.get(name)
             if ann and _ToolAnnotations is not None:
                 try:
+                    # destructiveHint defaults True when missing: the spec's
+                    # cautious default (a tool of unknown risk is assumed
+                    # destructive). All curated entries set all four
+                    # explicitly; this only guards a partial future entry.
                     tool.annotations = _ToolAnnotations(
                         readOnlyHint=bool(ann.get("readOnlyHint", False)),
-                        destructiveHint=bool(ann.get("destructiveHint", False)),
+                        destructiveHint=bool(ann.get("destructiveHint", True)),
                         idempotentHint=bool(ann.get("idempotentHint", False)),
                         openWorldHint=bool(ann.get("openWorldHint", False)),
                     )
                     applied_ann += 1
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(
+                        f"Annotation application failed for {name} "
+                        f"(non-fatal): {e}"
+                    )
         logger.info(
             f"Tool metadata applied: {applied_desc} descriptions, "
             f"{applied_ann} annotations"
@@ -1049,6 +1130,13 @@ def _load_modules():
     # Wire audit middleware after all tools are registered
     _wrap_all_tools()
 
+    # Remote policy gate (split architecture). Default-off; no-op unless
+    # remote_policy.enabled + endpoint + license key are configured.
+    _wrap_remote_policy()
+
+    # Spec: runtime tool-list changes require tools.listChanged declared.
+    _advertise_tools_list_changed()
+
     # Apply curated tool descriptions + MCP annotations (generated modules).
     # Runs before the schema-version computation so the version hash covers
     # the final served metadata.
@@ -1061,7 +1149,8 @@ def _load_modules():
     # schema-version computation so the hash covers the full tool set.
     try:
         from sassymcp.modules import tool_profiles
-        tool_profiles.install(mcp._tool_manager)
+        tool_profiles.install(mcp._tool_manager,
+                              notify=_notify_tools_list_changed)
     except Exception as e:
         logger.warning(f"tool profile init failed (non-fatal): {e}")
 
@@ -1578,7 +1667,9 @@ def main():
     parser.add_argument("--port", type=int, default=_BIND.port,
                         help="Bind port (default: SASSYMCP_PORT / config http.port / 21001)")
     parser.add_argument("--sse", action="store_true",
-                        help="Use legacy SSE transport instead of streamable-http")
+                        help="DEPRECATED: use legacy SSE transport instead of "
+                             "streamable-http. SSE is not part of MCP 2025-11-25; "
+                             "this flag will be removed in a future release.")
     parser.add_argument("--setup", action="store_true",
                         help="Force first-run setup wizard (regenerate persona.md)")
     parser.add_argument("--ssl", action="store_true", default=_BIND.ssl,
@@ -1752,6 +1843,11 @@ def main():
         _OAUTH_PROVIDER = _maybe_enable_oauth_server(args)
 
         if args.sse:
+            logger.warning(
+                "--sse is deprecated: the legacy SSE transport is not part of "
+                "MCP 2025-11-25 and will be removed in a future release. "
+                "Use streamable-http (the default) instead."
+            )
             logger.info(f"Starting SassyMCP (SSE) on {args.host}:{args.port}")
             app = mcp.sse_app()
         else:

@@ -90,6 +90,25 @@ def _linux_journal_argv(count: int, level: str, source: str, keyword: str = "") 
     return argv
 
 
+def _syslog_argv(count: int, source: str = "", keyword: str = "") -> list[str]:
+    """Plain-text syslog fallback for hosts without journald (Alpine, Void,
+    Gentoo/OpenRC, Devuan, Slackware, the BSDs). Inputs are _sanitize()d, and
+    are passed as positional args ($1..$3) so nothing is interpolated."""
+    script = (
+        'for f in /var/log/syslog /var/log/messages /var/log/system.log; do '
+        '[ -r "$f" ] && { log="$f"; break; }; done; '
+        '[ -z "$log" ] && { echo "No readable syslog file (try running as root, or install journald/rsyslog)"; exit 0; }; '
+        'tail -n 5000 "$log" | grep -i -- "$2" | grep -i -- "$3" | tail -n "$1"'
+    )
+    return ["/bin/sh", "-c", script, "sassymcp-syslog", str(count), source or "", keyword or ""]
+
+
+def _posix_log_argv(count: int, level: str, source: str, keyword: str = "") -> list[str]:
+    if _platform.which("journalctl"):
+        return _linux_journal_argv(count, level, source, keyword)
+    return _syslog_argv(count, source, keyword)
+
+
 async def _run(argv: list[str], timeout: int = 30) -> str:
     proc = await asyncio.create_subprocess_exec(
         *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
@@ -112,7 +131,7 @@ def register(server):
     async def sassy_eventlog(log_name: str = "System", count: int = 20, level: str = "", source: str = "") -> str:
         """Read the system log. Windows: log_name = System/Application/Security
         (Get-WinEvent). macOS: unified log (`log show`). Linux: journald
-        (`journalctl`). level: error/warning/information. source: provider /
+        (`journalctl`), or /var/log/syslog|messages without journald. level: error/warning/information. source: provider /
         process / subsystem name. log_name is Windows-only; ignored elsewhere."""
         log_name = _sanitize(log_name, "log_name")
         count = max(1, min(count, 1000))
@@ -121,7 +140,7 @@ def register(server):
         argv = _platform.pick(
             windows=_win_read_argv(log_name, count, level, source),
             macos=_macos_log_argv(count, level, source),
-            linux=_linux_journal_argv(count, level, source),
+            posix=_posix_log_argv(count, level, source),
             feature="system event log",
         )
         return await _run(argv)
@@ -136,7 +155,7 @@ def register(server):
         argv = _platform.pick(
             windows=_win_search_argv(log_name, keyword, count),
             macos=_macos_log_argv(count, "", "", keyword=keyword),
-            linux=_linux_journal_argv(count, "", "", keyword=keyword),
+            posix=_posix_log_argv(count, "", "", keyword=keyword),
             feature="system event log search",
         )
         return await _run(argv)

@@ -59,6 +59,12 @@ BLOCKED = [
     "ssh -o`echo ProxyCommand=id` u@h",
     'ssh -o"$(echo ProxyCommand=id)" u@h',
     "scp -o $(echo ProxyCommand=id) a b",
+    # PuTTY family (Windows first-class SSH client). -proxycmd is the
+    # local-exec sibling of OpenSSH ProxyCommand.
+    'plink -proxycmd calc.exe user@host',
+    'plink.exe -proxycmd "cmd /c calc" u@h',
+    "plink -ProxyCmd whoami u@h",
+    "pscp -proxycmd calc a b",
 ]
 
 # Must keep working — the guard is not allowed to break ordinary ssh use.
@@ -78,6 +84,10 @@ ALLOWED = [
     # to `-o` followed by backtick/$( only.
     'ssh user@host "echo $(hostname)"',
     "ssh user@host 'uptime; echo $(date)'",
+    # Legitimate PuTTY use: no local-exec option.
+    "plink user@host uptime",
+    "plink -load mysession",
+    "plink -ssh -batch user@host uptime",
 ]
 
 
@@ -119,6 +129,8 @@ def test_labels_identify_the_offending_option():
     assert label == "ssh-exec-option:substitution"
     _hit, label, _d = detect_ssh_exec_option("ssh -o `echo ProxyCommand=id` u@h")
     assert label == "ssh-exec-option:substitution"
+    _hit, label, _d = detect_ssh_exec_option('plink -proxycmd calc.exe u@h')
+    assert label == "ssh-exec-option:proxycmd"
 
 
 def test_untiered_validate_command_also_refuses():

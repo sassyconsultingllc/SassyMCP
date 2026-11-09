@@ -96,6 +96,20 @@ except Exception:
     pass
 
 
+# Probe every common Linux firewall front-end; distros differ (Kali/Ubuntu:
+# ufw or raw nftables; Fedora/RHEL: firewalld; Arch: nftables/iptables).
+# Read-only queries; non-root runs fall back to whatever is readable.
+_LINUX_FW = (
+    'found=0; '
+    'if command -v ufw >/dev/null 2>&1; then echo "== ufw =="; ufw status verbose 2>&1; found=1; fi; '
+    'if command -v firewall-cmd >/dev/null 2>&1; then echo "== firewalld =="; '
+    'firewall-cmd --state 2>&1 && firewall-cmd --list-all 2>&1; found=1; fi; '
+    'if command -v nft >/dev/null 2>&1; then echo "== nftables =="; nft list ruleset 2>&1 | head -150; found=1; '
+    'elif command -v iptables >/dev/null 2>&1; then echo "== iptables =="; iptables -L -n 2>&1; found=1; fi; '
+    '[ $found = 0 ] && echo "No firewall front-end found (ufw/firewalld/nft/iptables)"; true'
+)
+
+
 def register(server):
     @server.tool()
     def sassy_hash_file(path: str, algorithm: str = "sha256") -> str:
@@ -207,14 +221,16 @@ def register(server):
     @server.tool()
     async def sassy_firewall_status() -> str:
         """Check the host firewall. Windows: netsh advfirewall. macOS:
-        Application Firewall (socketfilterfw). Linux: ufw, or iptables."""
+        Application Firewall (socketfilterfw) + pf. Linux: ufw, firewalld,
+        nftables, or iptables (whichever is present). BSD: pf / ipfw."""
         argv = _platform.pick(
             windows=["netsh", "advfirewall", "show", "allprofiles"],
             macos=["/usr/libexec/ApplicationFirewall/socketfilterfw",
                    "--getglobalstate", "--getstealthmode",
                    "--getblockall", "--getloggingmode"],
-            linux=(["ufw", "status", "verbose"] if _platform.which("ufw")
-                   else ["iptables", "-L", "-n"]),
+            linux=["/bin/sh", "-c", _LINUX_FW],
+            posix=["/bin/sh", "-c",
+                   "pfctl -s info 2>&1 || ipfw list 2>&1 || echo 'no pf/ipfw found'"],
             feature="firewall status",
         )
         proc = await asyncio.create_subprocess_exec(
@@ -225,9 +241,21 @@ def register(server):
 
     @server.tool()
     async def sassy_open_ports() -> str:
-        """List all listening ports (netstat on every OS; LISTEN/LISTENING)."""
+        """List all listening ports (netstat; `ss` on Linux without net-tools)."""
+        argv = _platform.pick(
+            windows=["netstat", "-an"],
+            macos=["netstat", "-an"],
+            linux=_platform.first_available(["ss", "-tuln"], ["netstat", "-an"]),
+            posix=_platform.first_available(["netstat", "-an"], ["sockstat", "-l"]),
+        )
+        if argv[:2] == ["ss", "-tuln"]:
+            # ss marks UDP listeners UNCONN; keep both so UDP services show.
+            proc = await asyncio.create_subprocess_exec(
+                *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+            return stdout.decode("utf-8", errors="replace").strip()
         proc = await asyncio.create_subprocess_exec(
-            "netstat", "-an",
+            *argv,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
         # Windows prints state "LISTENING"; macOS/Linux print "LISTEN".
@@ -261,13 +289,20 @@ def register(server):
         )
         linux_sh = (
             'if command -v clamscan >/dev/null 2>&1; then clamscan --version; '
-            'systemctl is-active clamav-daemon 2>/dev/null; '
-            'else echo "No on-access AV (ClamAV) detected. Check distro security tooling."; fi'
+            # Debian/Kali: clamav-daemon; Fedora/RHEL: clamd@scan; Arch/SUSE: clamd
+            'for u in clamav-daemon clamd@scan clamd; do '
+            's=$(systemctl is-active "$u" 2>/dev/null) && echo "$u: $s"; done; '
+            'else echo "No on-access AV (ClamAV) detected."; fi; '
+            'echo "== MAC =="; '
+            '(command -v getenforce >/dev/null 2>&1 && echo "SELinux: $(getenforce)") ; '
+            '(command -v aa-enabled >/dev/null 2>&1 && echo "AppArmor: $(aa-enabled 2>&1)") ; '
+            'true'
         )
         argv = _platform.pick(
             windows=["powershell.exe", "-NoProfile", "-Command", win_ps],
             macos=["/bin/sh", "-c", mac_sh],
             linux=["/bin/sh", "-c", linux_sh],
+            posix=["/bin/sh", "-c", "freebsd-version 2>/dev/null; securelevel=$(sysctl -n kern.securelevel 2>/dev/null) && echo kern.securelevel=$securelevel; command -v clamscan >/dev/null && clamscan --version || echo 'No ClamAV detected.'"],
             feature="endpoint protection status",
         )
         proc = await asyncio.create_subprocess_exec(

@@ -1,7 +1,7 @@
 <!--
    Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
    Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
-   CodeMark: SCLLC1-SassyMCP-JUUQMNERUEUT
+   CodeMark: SCLLC1-SassyMCP-LRK2E80OB5U7
 -->
 
 # SassyMCP — Terms of Use
@@ -12,14 +12,14 @@
 > post, ship, or rely on it as-is.
 
 **Assumption (kept consistent throughout):** these Terms govern the SassyMCP
-**website and download portal** at [TODO: OWNER — domain] — browsing,
+**website and download portal** at https://sassyconsultingllc.com — browsing,
 downloading, purchasing, and support contact. The **software itself** is
 governed separately by the End User License Agreement (EULA) bundled with the
 installer and shown at first run. If you install SassyMCP, the EULA controls.
 
-**Effective date:** [TODO: OWNER]
-**Operator:** [TODO: OWNER — company legal name and address]
-**Contact:** [TODO: OWNER — contact email]
+**Effective date:** 2026-09-24
+**Operator:** Sassy Consulting LLC
+**Contact:** support@sassyconsultingllc.com
 
 ## 1. What this covers
 
@@ -83,7 +83,7 @@ limits; the addenda below adjust them where required.
 
 [TODO: OWNER — governing law and venue, e.g., "the laws of the State of
 ______, exclusive venue in ______ County"]. Informal resolution first:
-contact [TODO: OWNER] and allow 30 days before filing.
+contact support@sassyconsultingllc.com and allow 30 days before filing.
 
 ## 10. Changes
 

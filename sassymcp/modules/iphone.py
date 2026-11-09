@@ -1,8 +1,5 @@
 # Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
 # Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
-# CodeMark: SCLLC1-SassyMCP-NVCVTM2H6LOR
-# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
-# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
 """iPhone (iOS) integration via libimobiledevice -- EXPERIMENTAL.
 
 Tools talk to a USB-paired iPhone using the libimobiledevice CLI suite
@@ -39,9 +36,9 @@ def _install_hint() -> str:
     return _platform.pick(
         macos="Install it with: brew install libimobiledevice",
         linux="Install it with: sudo apt install libimobiledevice-utils",
-        windows="libimobiledevice is primarily a macOS/Linux tool and has limited "
-                "Windows support -- use WSL2 or a macOS/Linux host with the "
-                "iPhone plugged in there.",
+        windows="libimobiledevice has limited native Windows support. "
+                "On this host use WSL2 (`wsl sudo apt install libimobiledevice-utils`) "
+                "or a macOS/Linux machine (`brew install libimobiledevice`).",
         default="Install the libimobiledevice suite for this platform.",
     )
 

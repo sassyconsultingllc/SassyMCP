@@ -419,7 +419,7 @@ Install the VS Code extension from the `.vsix` attached to the [latest release](
 
 ### Manual auto-config CLI
 
-If you have `sassymcp.exe` already (from the portable zip or pip install) and want to register it with every MCP client without per-client JSON editing:
+If you have `sassymcp.exe` already (from a GitHub release or pip install) and want to register it with every MCP client without per-client JSON editing:
 
 ```
 sassymcp-install
@@ -439,7 +439,20 @@ If you don't need the bundled `nmap` / `adb` / `cloudflared` (or you have them o
 
 ### Linux (pip only)
 
-CI publishes no Linux binary. On Linux, install the wheel: `pip install sassymcp`. (The standalone executable is Windows-only; macOS ships a universal2 binary — see `sassymcp-macos` on the release page.)
+CI publishes no Linux binary. On Linux/BSD, install the wheel: `pipx install sassymcp` (or `pip install --user sassymcp`). (The standalone executable is Windows-only; macOS ships a universal2 binary — see `sassymcp-macos` on the release page.) `./build.sh` builds a native binary on any of them.
+
+POSIX launchers mirror the `.bat` files and are plain `/bin/sh`, so they run on Debian/Kali/Ubuntu, Fedora/RHEL, Arch, openSUSE, Alpine, the BSDs and macOS:
+
+| Script | Purpose |
+|---|---|
+| `./start-local.sh` | stdio mode (point your MCP client here) |
+| `./start-lan.sh` | HTTP on localhost or LAN; prompts, or set `BIND_ADDR` / `PORT` / `SASSYMCP_AUTH_TOKEN` |
+| `./start-supervised.sh` | HTTP under `sassymcp supervise` (auto-restart) |
+| `./start-tunnel.sh [NAME]` | HTTP bridge + `cloudflared tunnel run` |
+| `./autostart-bridge.sh install` | start at login: systemd user unit (Linux), LaunchAgent (macOS), or an `@reboot` crontab line elsewhere |
+| `./deploy.sh` | package `dist/sassymcp` + launchers into `deploy-posix/` |
+
+Each launcher finds SassyMCP in this order: `./sassymcp`, `dist/sassymcp`, `.venv/bin/python -m sassymcp.server`, `sassymcp` on PATH, then `python3 -m sassymcp.server`.
 
 ### MSI installer (manual builds only)
 
@@ -479,7 +492,7 @@ playwright install chromium
 
 ### Cloudflare Tunnel (remote access)
 
-Want to drive SassyMCP from a remote MCP client (Claude Web, another machine)? The portable bundle ships a turnkey launcher. Full step-by-step is in [**docs/TUNNEL.md**](docs/TUNNEL.md); the short version:
+Want to drive SassyMCP from a remote MCP client (Claude Web, another machine)? Install `cloudflared`, then use the `start-tunnel.bat` launcher from this repo (`deploy/start-tunnel.bat` or the copy next to a standalone `sassymcp.exe`). Full step-by-step is in [**docs/TUNNEL.md**](docs/TUNNEL.md); the short version:
 
 ```powershell
 winget install Cloudflare.cloudflared          # one-time
@@ -503,7 +516,7 @@ For hosted-Claude clients that require OAuth 2.1 DCR/PKCE instead of a static be
 
 ## MCP Client Config
 
-SassyMCP speaks standard MCP. Anything that connects works — **no client-side modifications required**. The portable bundle ships ready-to-edit templates under `deploy/*_config.template.json`. Pick the row for your client, copy the template, replace `REPLACE_WITH_PATH` with the absolute path to `sassymcp.exe`, and save it where the client expects.
+SassyMCP speaks standard MCP. Anything that connects works — **no client-side modifications required**. Ready-to-edit templates live under `deploy/*_config.template.json` in this repo. Pick the row for your client, copy the template, replace `REPLACE_WITH_PATH` with the absolute path to `sassymcp.exe`, and save it where the client expects.
 
 | Client | Transport | Config file location | Template |
 |--------|-----------|----------------------|----------|
@@ -706,9 +719,24 @@ The same SassyMCP source runs on Windows, macOS, and Linux. The host OS is
 resolved once at import; every tool then routes to the host-appropriate
 command — shells (PowerShell / zsh|bash), clipboard (Get-Clipboard / pbpaste),
 event log (Get-WinEvent / `log show` / journald), firewall (netsh /
-socketfilterfw / ufw), Wi-Fi, Bluetooth, window control (pywinauto /
-AppleScript System Events / wmctrl), SSH (plink / native ssh), package
-installs (winget / brew / apt), and more.
+socketfilterfw / ufw, firewalld, nftables, iptables, pf), Wi-Fi, Bluetooth,
+window control (pywinauto / AppleScript System Events / wmctrl or xdotool),
+SSH (plink / native ssh), package installs, and more.
+
+On Linux and BSD, SassyMCP finds the native package manager (apt, dnf, yum,
+pacman, zypper, apk, xbps, emerge, pkg, pkg_add, pkgin, or Homebrew) and uses
+that distro's package names. When it isn't running as root it calls
+`sudo -n`, so a password prompt fails at once with a hint instead of
+hanging. When a tool is missing on a minimal install, SassyMCP uses
+another one: `ss` or `ip neigh` for net-tools, `dig`/`host`/`getent` for
+`nslookup`, `tracepath` for `traceroute`, and syslog files when there is no
+journald. The clipboard uses wl-clipboard on Wayland and xclip/xsel on X11.
+If `pwsh` is installed, `shell="powershell"` runs PowerShell 7 on Linux and macOS.
+
+- **Linux window control** works on X11 and on apps running under XWayland
+  (install `wmctrl` or `xdotool`, plus `xrandr`). Native Wayland compositors
+  don't let one app control another app's windows, so those tools give a
+  clear error there.
 
 - **Build:** `build.bat` (Windows) or `build.sh` (macOS/Linux). Build each
   binary on its own OS.

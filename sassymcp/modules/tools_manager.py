@@ -57,7 +57,7 @@ _TOOL_DEFS = {
     "idevice": {
         # Representative binary; the suite ships idevice_id, ideviceinfo,
         # idevicescreenshot, idevicesyslog, ideviceinstaller, idevicepair.
-        "binary": "idevice_id", "subdir": "libimobiledevice",
+        "binary": "idevice_id", "subdir": "libimobiledevice", "logical": "idevice",
         # No reliable winget id on Windows -- install happens in WSL2 or on
         # a macOS/Linux host instead.
         "pkg": {"windows": None, "macos": "libimobiledevice", "linux": "libimobiledevice-utils"},
@@ -78,7 +78,7 @@ _TOOL_DEFS = {
     },
     "plink": {
         # POSIX hosts have native ssh; plink is the Windows/PuTTY stand-in.
-        "binary": _platform.pick(windows="plink", default="ssh"), "subdir": "putty",
+        "binary": _platform.pick(windows="plink", default="ssh"), "subdir": "putty", "logical": "ssh",
         "pkg": {"windows": "PuTTY.PuTTY", "macos": "putty", "linux": "putty-tools"},
         "extra_paths": _platform.pick(
             windows=[r"C:\Program Files\PuTTY\plink.exe", r"C:\Program Files (x86)\PuTTY\plink.exe", r"C:\ProgramData\chocolatey\bin\plink.exe"],
@@ -98,13 +98,21 @@ _TOOL_DEFS = {
 
 
 def _pkg_id(info: dict) -> str | None:
-    """Host package-manager id for a tool def, or None if not packaged here."""
-    return (info.get("pkg") or {}).get(_platform.OS)
+    """Host package-manager id for a tool def, or None if not packaged here.
+
+    Windows/macOS use the static `pkg` table; Linux/BSD resolve through the
+    distro-aware table in _platform (apt/dnf/pacman/zypper/apk/pkg/...), so
+    Kali, Fedora, Arch, openSUSE, Alpine and FreeBSD all get correct names.
+    """
+    if _platform.IS_WINDOWS or _platform.IS_MACOS:
+        return (info.get("pkg") or {}).get(_platform.OS)
+    logical = info.get("logical") or info["binary"]
+    return _platform.pkg_name(logical)
 
 
 def _pkg_manager() -> str:
     """Name of the host package manager used by _pkg_install."""
-    return _platform.pick(windows="winget", macos="brew", linux="apt-get", default="(none)")
+    return _platform.pkg_manager() or "(none)"
 
 
 def _get_exe_dir() -> Path | None:
@@ -163,18 +171,15 @@ _spawn = getattr(__import__("asyncio"), "create_subprocess_" + "exec")
 
 def _install_argv(pkg_id: str) -> list[str]:
     """argv for installing `pkg_id` via the host package manager."""
-    return _platform.pick(
-        windows=["winget", "install", "--id", pkg_id, "--silent",
-                 "--accept-source-agreements", "--accept-package-agreements"],
-        macos=["brew", "install", pkg_id],
-        linux=["sudo", "apt-get", "install", "-y", pkg_id],
-        default=["true"],
-    )
+    return _platform.install_argv(pkg_id) or ["false"]
 
 
 async def _pkg_install(pkg_id: str, timeout: int = 180) -> dict:
-    """Install a package via the host manager (winget / brew / apt-get)."""
+    """Install a package via the host manager (winget / brew / apt / dnf / pacman / ...)."""
     mgr = _pkg_manager()
+    if mgr == "(none)":
+        return {"error": f"no supported package manager found on {_platform.OS_LABEL}",
+                "success": False}
     if not pkg_id:
         return {"error": f"no {mgr} package id for this tool on {_platform.OS_LABEL}", "success": False}
     try:
@@ -185,15 +190,19 @@ async def _pkg_install(pkg_id: str, timeout: int = 180) -> dict:
         out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         o = out.decode("utf-8", errors="replace").strip()
         e = err.decode("utf-8", errors="replace").strip()
-        return {"manager": mgr, "exit_code": proc.returncode, "success": proc.returncode == 0,
-                "stdout": o[-500:], "stderr": e[-300:]}
+        res = {"manager": mgr, "exit_code": proc.returncode, "success": proc.returncode == 0,
+               "stdout": o[-500:], "stderr": e[-300:]}
+        if proc.returncode != 0 and "password is required" in e:
+            res["hint"] = ("sudo needs a password and this server has no TTY. Run it yourself: "
+                           + " ".join(a for a in _install_argv(pkg_id) if a != "-n"))
+        return res
     except TimeoutError:
         return {"error": f"{mgr} timed out after {timeout}s", "success": False}
     except FileNotFoundError:
         hint = _platform.pick(
             windows="Install App Installer (winget) from Microsoft Store.",
             macos="Install Homebrew from https://brew.sh.",
-            linux="apt-get not found; use your distro package manager.",
+            linux="No supported package manager found (apt/dnf/pacman/zypper/apk/pkg).",
             default="No package manager available.",
         )
         return {"error": f"{mgr} not found", "hint": hint, "success": False}
@@ -210,8 +219,8 @@ def register(server):
         tool_name: which tool to install (only for action=install)
 
         check            -- report all tools: found, path, required flag
-        install          -- winget-install a specific tool by name
-        install_required -- winget-install any missing required tools (always: tesseract)
+        install          -- install a specific tool via the host package manager
+        install_required -- install any missing required tools (always: tesseract)
         add_to_path      -- re-run PATH bootstrap (after placing tools in tools/ dir)
 
         tesseract is always required -- OCR/vision tools need it unconditionally.

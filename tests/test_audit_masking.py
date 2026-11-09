@@ -1,8 +1,5 @@
 # Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
 # Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
-# CodeMark: SCLLC1-SassyMCP-AWDBUXO5EFNQ
-# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
-# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
 """Value-level secret masking tests for sassymcp.modules.audit (2026-09-21).
 
 Covers the conservative extension of _VALUE_SECRET_PATTERNS (xoxp-,

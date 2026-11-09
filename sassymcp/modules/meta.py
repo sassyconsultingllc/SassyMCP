@@ -262,11 +262,13 @@ def register(server):
 
     @server.tool()
     async def sassy_tool_group_toggle(group: str, enable: bool = True) -> dict[str, Any]:
-        """Enable or disable a tool group. Emits tools/list_changed notification.
+        """Enable or disable a tool group for the NEXT server start (restart semantics).
 
-        NOTE: clients vary. MCP clients that handle tools/list_changed
-        (Claude Code, Cursor, etc.) refresh automatically; clients that
-        don't (Claude Desktop today) require a manual server restart.
+        Module loading is resolved once at startup from each group's
+        always_load flag, so toggling here cannot add or remove tools from a
+        running session — restart the server process for the change to take
+        effect. There is no live tools/list_changed fan-out (FastMCP 1.30
+        exposes no per-session broadcast API from inside a tool call).
 
         group: core, android, system, github_quick, github_full, v020, persona
         enable: True to load, False to unload
@@ -280,21 +282,12 @@ def register(server):
         TOOL_GROUPS[group]["always_load"] = enable
         action = "enabled" if enable else "disabled"
 
-        notified = False
-        try:
-            if hasattr(server, '_session') and server._session:
-                await server._session.send_notification(
-                    "notifications/tools/list_changed", {}
-                )
-                notified = True
-        except Exception:
-            pass
-
         return {
             "status": f"Group '{group}' {action}",
             "modules": TOOL_GROUPS[group]["modules"],
-            "notification_sent": notified,
-            "note": "Restart the server if your MCP client doesn't handle tools/list_changed (e.g. Claude Desktop today)" if not notified else "Client should re-fetch tool list",
+            "takes_effect": "next server restart",
+            "note": "Module loading is resolved at startup; restart the server "
+                    "process for this change to take effect.",
         }
 
     @server.tool()
