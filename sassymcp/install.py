@@ -71,7 +71,7 @@ def _claude_desktop_config() -> Path:
         return _appdata() / "Claude" / "claude_desktop_config.json"
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
-    return Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
+    return _appdata() / "Claude" / "claude_desktop_config.json"
 
 
 def _vscode_user_mcp() -> Path:
@@ -79,7 +79,7 @@ def _vscode_user_mcp() -> Path:
         return _appdata() / "Code" / "User" / "mcp.json"
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Application Support" / "Code" / "User" / "mcp.json"
-    return Path.home() / ".config" / "Code" / "User" / "mcp.json"
+    return _appdata() / "Code" / "User" / "mcp.json"
 
 
 def _cursor_mcp() -> Path:
@@ -99,17 +99,17 @@ def _cline_mcp() -> Path:
         return _appdata() / "Code" / "User" / "globalStorage" / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json"
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Application Support" / "Code" / "User" / "globalStorage" / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json"
-    return Path.home() / ".config" / "Code" / "User" / "globalStorage" / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json"
+    return _appdata() / "Code" / "User" / "globalStorage" / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json"
 
 
 def _zed_settings() -> Path:
-    return Path.home() / ".config" / "zed" / "settings.json"
+    return _appdata() / "zed" / "settings.json" if os.name != "nt" and sys.platform != "darwin" else Path.home() / ".config" / "zed" / "settings.json"
 
 
 def _grok_desktop_config() -> Path:
     if os.name == "nt":
         return _appdata() / "GrokDesktop" / "config.json"
-    return Path.home() / ".config" / "GrokDesktop" / "config.json"
+    return _appdata() / "GrokDesktop" / "config.json" if sys.platform != "darwin" else Path.home() / ".config" / "GrokDesktop" / "config.json"
 
 
 # Registry of all known clients. Order = display order in CLI output.

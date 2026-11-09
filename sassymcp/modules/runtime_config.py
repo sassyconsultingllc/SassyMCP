@@ -16,7 +16,7 @@ import sys
 import time
 from typing import Any
 
-from sassymcp import __version__
+from sassymcp import __version__, _platform
 from sassymcp._atomic import atomic_write_json
 from sassymcp._paths import CONFIG_FILE
 from sassymcp._paths import HOME as CONFIG_DIR
@@ -24,7 +24,9 @@ from sassymcp._paths import HOME as CONFIG_DIR
 logger = logging.getLogger("sassymcp.config")
 
 _DEFAULTS = {
-    "defaultShell": "powershell",
+    # Host-appropriate: powershell on Windows, the login shell (zsh/bash/sh)
+    # on macOS/Linux/BSD. Resolved once at import via the platform head.
+    "defaultShell": _platform.default_shell(),
     "fileReadLineLimit": 1000,
     "fileWriteLineLimit": 500,
     "allowedDirectories": [],

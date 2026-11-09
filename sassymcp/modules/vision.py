@@ -631,8 +631,12 @@ def register(server):
         if _platform.IS_MACOS:
             return await _mac_list_windows(include_hidden)
         if not _platform.IS_WINDOWS:
-            return json.dumps({"error": _platform.unsupported(
-                "window enumeration on Linux (needs wmctrl)")})
+            from sassymcp import _linuxwm
+            wins = await asyncio.to_thread(_linuxwm.list_windows)
+            if isinstance(wins, str):
+                return json.dumps({"error": _platform.unsupported(
+                    f"window enumeration: {wins}")})
+            return json.dumps(wins, indent=2)
         try:
             import psutil
             from pywinauto import Desktop

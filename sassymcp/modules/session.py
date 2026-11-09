@@ -101,8 +101,14 @@ else:
         "bash": ["bash"],
         "zsh": ["zsh"],
         "sh": ["sh"],
-        "wsl": ["bash"],
+        "wsl": ["bash"] if _platform.which("bash") else ["sh"],
     }
+    for _extra in ("ksh", "dash"):
+        if _platform.which(_extra):
+            _SHELL_MAP_SESSION[_extra] = [_extra]
+    if _platform.which("pwsh"):
+        _SHELL_MAP_SESSION["powershell"] = ["pwsh", "-NoProfile", "-NoExit", "-Command", "-"]
+        _SHELL_MAP_SESSION["pwsh"] = _SHELL_MAP_SESSION["powershell"]
 
 # Alias for asyncio's argv-list subprocess spawner. Argv-list form (no shell=True)
 # is the safe-by-default option — no shell interpretation, no injection surface.

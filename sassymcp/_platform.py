@@ -58,10 +58,16 @@ __all__ = [
     "clipboard_get_argv",
     "clipboard_set_argv",
     "default_shell",
+    "first_available",
     "first_existing",
+    "install_argv",
+    "install_hint",
+    "is_root",
     "open_app_argv",
     "open_path_argv",
     "pick",
+    "pkg_manager",
+    "pkg_name",
     "resolve_adb",
     "shell_argv",
     "unsupported",
@@ -133,7 +139,9 @@ def pick(
     elif IS_LINUX:
         candidates = (linux, posix, default)
     else:
-        candidates = (posix, default)
+        # BSD / illumos / other POSIX: prefer a generic POSIX arm, then the
+        # Linux arm (most userland tools overlap), then the default.
+        candidates = (posix, linux, default)
 
     for c in candidates:
         if c is not _UNSET:
@@ -163,6 +171,23 @@ def which(*names: str) -> str | None:
     return None
 
 
+def first_available(*argvs: list[str], default: list[str] | None = None) -> list[str]:
+    """First argv whose program (argv[0]) is on PATH or is an existing file.
+
+    Lets one call site express "use ss, else netstat" or "nmcli, else iw"
+    without nested ternaries, so minimal installs (Fedora/Kali/Alpine/BSD
+    images often lack net-tools, bind-utils, etc.) degrade gracefully.
+    Falls back to `default`, else the last candidate (so the downstream
+    error names a real tool rather than an empty argv).
+    """
+    for argv in argvs:
+        if argv and (shutil.which(argv[0]) or os.path.isfile(argv[0])):
+            return list(argv)
+    if default is not None:
+        return list(default)
+    return list(argvs[-1]) if argvs else []
+
+
 def first_existing(*paths: str) -> str | None:
     """First of `paths` (expanded for ~ and env vars) that exists on disk."""
     for p in paths:
@@ -185,9 +210,14 @@ def default_shell() -> str:
     if IS_WINDOWS:
         return "powershell"
     login = os.path.basename(os.environ.get("SHELL", "")).strip()
-    if login in ("zsh", "bash", "sh"):
+    if login in ("zsh", "bash", "sh", "ksh", "dash") and which(login):
         return login
-    return "zsh" if IS_MACOS else "bash"
+    # Login shell is fish/csh/tcsh/unset: pick a POSIX-compatible one that is
+    # actually installed (Alpine/BSD/minimal containers often lack bash).
+    for cand in (("zsh", "bash") if IS_MACOS else ("bash", "zsh")):
+        if which(cand):
+            return cand
+    return "sh"
 
 
 def _posix_shell_map() -> dict[str, list[str]]:
@@ -196,9 +226,17 @@ def _posix_shell_map() -> dict[str, list[str]]:
         "zsh": ["zsh", "-lc"],
         "sh": ["sh", "-c"],
     }
-    # `wsl` only makes sense on Windows; on POSIX, allow it to alias bash so a
-    # cross-platform caller asking for "wsl" still runs under a POSIX shell.
-    m["wsl"] = m["bash"]
+    for extra in ("ksh", "dash"):
+        if which(extra):
+            m[extra] = [extra, "-c"]
+    # `wsl` only makes sense on Windows; on POSIX, alias it to bash (or sh when
+    # bash is absent) so a cross-platform caller asking for "wsl" still runs.
+    m["wsl"] = m["bash"] if which("bash") else m["sh"]
+    # PowerShell 7 runs on Linux/macOS/BSD as `pwsh`; expose it under the
+    # Windows name so scripts that request shell="powershell" keep working.
+    if which("pwsh"):
+        m["powershell"] = ["pwsh", "-NoProfile", "-Command"]
+        m["pwsh"] = m["powershell"]
     return m
 
 
@@ -222,15 +260,33 @@ def shell_argv(shell: str) -> list[str] | None:
 
 
 # ── Clipboard routing ─────────────────────────────────────────────────────
+def _linux_clip(*, wayland: list[str], xclip: list[str], xsel: list[str]) -> list[str]:
+    """Wayland (wl-clipboard) when in a Wayland session, else xclip/xsel.
+
+    Fedora/Ubuntu default to Wayland; Kali/XFCE and most BSD desktops are
+    X11. Under Wayland, xclip only sees XWayland's clipboard, so wl-clipboard
+    is preferred when present.
+    """
+    if os.environ.get("WAYLAND_DISPLAY") and which(wayland[0]):
+        return wayland
+    if which("xclip"):
+        return xclip
+    if which("xsel"):
+        return xsel
+    if which(wayland[0]):
+        return wayland
+    return xclip  # surfaces a clean "xclip not found" downstream
+
+
 def clipboard_get_argv() -> list[str]:
     """argv that prints the clipboard's text contents to stdout."""
     return pick(
         windows=["powershell.exe", "-NoProfile", "-Command", "Get-Clipboard"],
         macos=["pbpaste"],
-        linux=(
-            ["xclip", "-selection", "clipboard", "-o"]
-            if which("xclip")
-            else ["xsel", "--clipboard", "--output"]
+        linux=_linux_clip(
+            wayland=["wl-paste", "--no-newline"],
+            xclip=["xclip", "-selection", "clipboard", "-o"],
+            xsel=["xsel", "--clipboard", "--output"],
         ),
         feature="clipboard read",
     )
@@ -245,10 +301,10 @@ def clipboard_set_argv() -> list[str]:
     return pick(
         windows=["powershell.exe", "-NoProfile", "-Command", "$input | Set-Clipboard"],
         macos=["pbcopy"],
-        linux=(
-            ["xclip", "-selection", "clipboard"]
-            if which("xclip")
-            else ["xsel", "--clipboard", "--input"]
+        linux=_linux_clip(
+            wayland=["wl-copy"],
+            xclip=["xclip", "-selection", "clipboard"],
+            xsel=["xsel", "--clipboard", "--input"],
         ),
         feature="clipboard write",
     )
@@ -260,7 +316,8 @@ def open_path_argv(path: str) -> list[str]:
     return pick(
         windows=["cmd.exe", "/c", "start", "", path],
         macos=["open", path],
-        linux=["xdg-open", path],
+        linux=first_available(["xdg-open", path], ["gio", "open", path],
+                              ["kde-open", path], ["gnome-open", path]),
         feature="open path",
     )
 
@@ -351,3 +408,127 @@ def adb_semaphore():
 
         _adb_semaphore = asyncio.Semaphore(4)
     return _adb_semaphore
+
+
+# ── Package manager routing (distro-aware) ────────────────────────────────
+# Order matters: on hosts with several managers (e.g. Homebrew on Linux, or
+# apt on a Fedora box with alien), the native system manager wins.
+_PKG_MANAGERS: tuple[tuple[str, list[str]], ...] = (
+    ("apt-get", ["apt-get", "install", "-y"]),          # Debian/Ubuntu/Kali/Mint/Pop
+    ("dnf", ["dnf", "install", "-y"]),                  # Fedora/RHEL 8+/Rocky/Alma
+    ("yum", ["yum", "install", "-y"]),                  # RHEL/CentOS 7
+    ("pacman", ["pacman", "-S", "--noconfirm", "--needed"]),  # Arch/Manjaro/Endeavour
+    ("zypper", ["zypper", "--non-interactive", "install"]),   # openSUSE/SLES
+    ("apk", ["apk", "add"]),                            # Alpine
+    ("xbps-install", ["xbps-install", "-y"]),           # Void
+    ("emerge", ["emerge", "--noreplace"]),              # Gentoo
+    ("pkg", ["pkg", "install", "-y"]),                  # FreeBSD
+    ("pkg_add", ["pkg_add"]),                           # OpenBSD
+    ("pkgin", ["pkgin", "-y", "install"]),              # NetBSD
+    ("brew", ["brew", "install"]),                      # Homebrew (macOS/Linux)
+)
+
+# Logical tool -> package name per manager. Missing key = same as the tool
+# name. None = not packaged there (install hint points elsewhere).
+_PKG_NAMES: dict[str, dict[str, str | None]] = {
+    "tesseract": {"apt-get": "tesseract-ocr", "zypper": "tesseract-ocr",
+                  "apk": "tesseract-ocr", "winget": "UB-Mannheim.TesseractOCR"},
+    "adb": {"apt-get": "adb", "dnf": "android-tools", "yum": "android-tools",
+            "pacman": "android-tools", "zypper": "android-tools", "apk": "android-tools",
+            "xbps-install": "android-tools", "emerge": "dev-util/android-tools",
+            "pkg": "android-tools", "brew": "android-platform-tools",
+            "winget": "Google.PlatformTools"},
+    "scrcpy": {"winget": "Genymobile.scrcpy", "emerge": "media-video/scrcpy"},
+    "idevice": {"apt-get": "libimobiledevice-utils", "dnf": "libimobiledevice-utils",
+                "yum": "libimobiledevice-utils", "pacman": "libimobiledevice",
+                "zypper": "imobiledevice-tools", "apk": "libimobiledevice-progs",
+                "xbps-install": "libimobiledevice", "emerge": "app-pda/libimobiledevice",
+                "pkg": "libimobiledevice", "brew": "libimobiledevice", "winget": None},
+    "nmap": {"winget": "Insecure.Nmap", "emerge": "net-analyzer/nmap"},
+    "ssh": {"apt-get": "openssh-client", "dnf": "openssh-clients", "yum": "openssh-clients",
+            "pacman": "openssh", "zypper": "openssh-clients", "apk": "openssh-client",
+            "xbps-install": "openssh", "emerge": "net-misc/openssh", "pkg": None,
+            "brew": None, "winget": "PuTTY.PuTTY"},
+    "cloudflared": {"apt-get": None, "dnf": None, "yum": None, "zypper": None,
+                    "winget": "Cloudflare.cloudflared"},
+    "wmctrl": {"winget": None, "brew": None},
+    "xdotool": {"winget": None, "brew": None},
+    "xclip": {"winget": None, "brew": None},
+    "wl-clipboard": {"winget": None, "brew": None},
+    "notify-send": {"apt-get": "libnotify-bin", "dnf": "libnotify", "yum": "libnotify",
+                    "pacman": "libnotify", "zypper": "libnotify-tools", "apk": "libnotify",
+                    "pkg": "libnotify", "winget": None, "brew": None},
+    "bluetoothctl": {"apt-get": "bluez", "dnf": "bluez", "yum": "bluez", "pacman": "bluez-utils",
+                     "zypper": "bluez", "apk": "bluez", "winget": None, "brew": "blueutil"},
+    "traceroute": {"winget": None, "brew": None},
+    "dig": {"apt-get": "dnsutils", "dnf": "bind-utils", "yum": "bind-utils",
+            "pacman": "bind", "zypper": "bind-utils", "apk": "bind-tools",
+            "pkg": "bind-tools", "winget": None, "brew": "bind"},
+}
+
+
+def is_root() -> bool:
+    """True when running with euid 0 (POSIX). Always False on Windows."""
+    geteuid = getattr(os, "geteuid", None)
+    return bool(geteuid and geteuid() == 0)
+
+
+def pkg_manager() -> str | None:
+    """Name of the host's native package manager, or None."""
+    if IS_WINDOWS:
+        return "winget" if which("winget") else None
+    if IS_MACOS:
+        return "brew" if which("brew") else None
+    for name, _ in _PKG_MANAGERS:
+        if which(name):
+            return name
+    return None
+
+
+def pkg_name(tool: str, manager: str | None = None) -> str | None:
+    """Package that provides `tool` under `manager` (default: host's)."""
+    mgr = manager or pkg_manager()
+    names = _PKG_NAMES.get(tool, {})
+    if mgr in names:
+        return names[mgr]
+    return None if mgr == "winget" else tool
+
+
+def install_argv(pkg: str, manager: str | None = None) -> list[str] | None:
+    """argv that installs `pkg` non-interactively, or None if no manager.
+
+    System managers get `sudo -n` when not already root: MCP servers have no
+    TTY, so an interactive sudo prompt would just hang until timeout; `-n`
+    fails fast with "a password is required" instead. Homebrew must never run
+    under sudo.
+    """
+    mgr = manager or pkg_manager()
+    if not mgr:
+        return None
+    if mgr == "winget":
+        return ["winget", "install", "--id", pkg, "--silent",
+                "--accept-source-agreements", "--accept-package-agreements"]
+    base = dict(_PKG_MANAGERS).get(mgr)
+    if base is None:
+        return None
+    argv = [*base, pkg]
+    if mgr != "brew" and not is_root():
+        if which("sudo"):
+            argv = ["sudo", "-n", *argv]
+        elif which("doas"):
+            argv = ["doas", "-n", *argv]
+    return argv
+
+
+def install_hint(tool: str) -> str:
+    """Human-readable install command for `tool` on this host."""
+    mgr = pkg_manager()
+    pkg = pkg_name(tool, mgr)
+    if not mgr:
+        return f"install {tool} with your system package manager"
+    if pkg is None:
+        return f"{tool} is not in the {mgr} repositories; see the project's install docs"
+    argv = install_argv(pkg, mgr) or []
+    if argv[:2] == ["sudo", "-n"] or argv[:2] == ["doas", "-n"]:
+        argv = [argv[0], *argv[2:]]
+    return " ".join(argv)
