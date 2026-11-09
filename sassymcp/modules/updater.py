@@ -24,6 +24,7 @@ import json
 import logging
 import os
 import re
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -36,6 +37,7 @@ from sassymcp import _platform
 logger = logging.getLogger("sassymcp.updater")
 
 GITHUB_API = "https://api.github.com/repos/sassyconsultingllc/SassyMCP/releases"
+PYPI_API = "https://pypi.org/pypi/sassymcp/json"
 CACHE_TTL_SECONDS = 300
 USER_AGENT = f"sassymcp/{__version__} (+https://github.com/sassyconsultingllc/SassyMCP)"
 
@@ -58,6 +60,13 @@ def _normalize(v: str) -> tuple[int, ...]:
     return nums + (pre_rank,)
 
 
+def _in_pipx() -> bool:
+    """Detect whether the running sassymcp was installed via pipx."""
+    # pipx installs into $PIPX_HOME/venvs/<pkg>/ or ~/.local/pipx/venvs/<pkg>/
+    exe = os.path.realpath(sys.executable)
+    return "pipx" in exe.lower() or "/pipx/" in exe
+
+
 class Updater:
     def __init__(self) -> None:
         self._cache: dict[str, Any] = {}
@@ -73,6 +82,89 @@ class Updater:
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
+
+    def _check_pypi(self) -> dict[str, Any]:
+        """Query PyPI for the latest version of sassymcp."""
+        try:
+            data = self._http_json(PYPI_API)
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError,
+                json.JSONDecodeError) as e:
+            return {"error": f"PyPI unreachable: {e}"}
+        info = data.get("info", {})
+        latest = info.get("version", "")
+        return {
+            "source": "pypi",
+            "latest": latest,
+            "current": __version__,
+            "upgradable": _normalize(latest) > _normalize(__version__) if latest else False,
+            "url": f"https://pypi.org/project/sassymcp/{latest}/",
+            "summary": info.get("summary", ""),
+        }
+
+    def check_all_sources(self, force: bool = False) -> dict[str, Any]:
+        """Check GitHub Releases and PyPI for the latest version.
+
+        Returns a combined report showing what is available from each source
+        and the recommended upgrade path.
+        """
+        gh = self.check(force=force)
+        pypi = self._check_pypi()
+
+        sources: list[dict[str, Any]] = []
+
+        # GitHub Releases
+        if "error" not in gh:
+            sources.append({
+                "source": "github",
+                "latest": gh.get("latest"),
+                "upgradable": gh.get("upgradable", False),
+                "url": gh.get("release_url"),
+                "published_at": gh.get("published_at"),
+            })
+        else:
+            sources.append({"source": "github", "error": gh["error"]})
+
+        # PyPI
+        if "error" not in pypi:
+            sources.append({
+                "source": "pypi",
+                "latest": pypi.get("latest"),
+                "upgradable": pypi.get("upgradable", False),
+                "url": pypi.get("url"),
+            })
+        else:
+            sources.append({"source": "pypi", "error": pypi["error"]})
+
+        # Determine the overall newest version across sources
+        newest_ver = __version__
+        newest_source = None
+        for src in sources:
+            ver = src.get("latest")
+            if ver and _normalize(ver) > _normalize(newest_ver):
+                newest_ver = ver
+                newest_source = src["source"]
+
+        any_upgrade = newest_source is not None
+
+        # Suggest the right upgrade command based on install method
+        upgrade_hint = ""
+        if any_upgrade:
+            import shutil
+            if shutil.which("pipx") and _in_pipx():
+                upgrade_hint = f"pipx upgrade sassymcp"
+            elif shutil.which("pip"):
+                upgrade_hint = f"pip install --upgrade sassymcp"
+            else:
+                upgrade_hint = f"pip install sassymcp=={newest_ver}"
+
+        return {
+            "current": __version__,
+            "newest": newest_ver,
+            "newest_source": newest_source,
+            "upgrade_available": any_upgrade,
+            "upgrade_hint": upgrade_hint,
+            "sources": sources,
+        }
 
     def _refresh(self, force: bool = False) -> dict[str, Any]:
         now = time.time()
@@ -106,23 +198,56 @@ class Updater:
         self._cache_ts = now
         return result
 
-    def check(self, force: bool = False) -> dict[str, Any]:
+    def check(self, force: bool = False, include_pypi: bool = True) -> dict[str, Any]:
+        """Check for a newer SassyMCP release across GitHub and PyPI.
+
+        Returns status from both sources and an overall upgradable flag.
+        """
         state = self._refresh(force=force)
         if "error" in state:
             return state
-        msg = (
-            f"{state['current']} → {state['latest']} available"
-            if state["upgradable"]
-            else f"{state['current']} is the latest"
-        )
-        return {
+
+        result: dict[str, Any] = {
             "current": state["current"],
             "latest": state["latest"],
             "upgradable": state["upgradable"],
-            "summary": msg,
             "release_url": state["release_url"],
             "published_at": state["latest_published_at"],
         }
+
+        # Check PyPI alongside GitHub Releases
+        if include_pypi:
+            pypi = self._check_pypi()
+            if "error" not in pypi:
+                result["pypi_latest"] = pypi.get("latest")
+                result["pypi_url"] = pypi.get("url")
+                pypi_upgradable = pypi.get("upgradable", False)
+                if pypi_upgradable:
+                    result["upgradable"] = True
+                    # If PyPI is newer than GitHub's latest, surface that
+                    if not state.get("latest") or _normalize(pypi["latest"]) > _normalize(state["latest"]):
+                        result["latest"] = pypi["latest"]
+            else:
+                result["pypi_error"] = pypi["error"]
+
+        msg = (
+            f"{result['current']} → {result['latest']} available"
+            if result["upgradable"]
+            else f"{result['current']} is the latest"
+        )
+        result["summary"] = msg
+
+        # Add upgrade hint if an upgrade is available
+        if result["upgradable"]:
+            import shutil
+            if shutil.which("pipx") and _in_pipx():
+                result["upgrade_hint"] = "pipx upgrade sassymcp"
+            elif shutil.which("pip"):
+                result["upgrade_hint"] = "pip install --upgrade sassymcp"
+            else:
+                result["upgrade_hint"] = f"pip install sassymcp=={result['latest']}"
+
+        return result
 
     def list_assets(self, tag: str | None = None) -> dict[str, Any]:
         state = self._refresh()
@@ -378,9 +503,11 @@ def register(server) -> None:
 
     @server.tool()
     def sassy_update_check(force: bool = False) -> dict:
-        """Check for a newer SassyMCP release (apt-update equivalent).
+        """Check for a newer SassyMCP release across GitHub Releases and PyPI.
 
         Caches the result for 5 minutes; pass force=True to bypass the cache.
+        Returns the newest version found, source breakdown, and the upgrade
+        command suited to the running install.
         """
         return upd.check(force=force)
 

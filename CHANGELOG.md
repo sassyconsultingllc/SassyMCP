@@ -10,6 +10,26 @@ All notable changes to SassyMCP. Newest first. Versions follow semver:
 for new user-visible features, PATCH for fixes that don't move buyer-
 facing surfaces.
 
+## [1.20.0] — 2026-11-09 — Update checker & setup wizard improvements
+
+### Features
+
+* **Multi-source update checking**: `sassy_update_check` and the CLI wizard
+  now query both GitHub Releases and PyPI concurrently, reporting the
+  newest version found across all sources along with the right upgrade
+  command for the current installation method (`pipx`, `pip`, or binary).
+* **CLI wizard Menu Option 6 ("Check for updates")**: added an explicit
+  menu item in the interactive setup wizard (`sassymcp setup`) to check for
+  available updates across GitHub and PyPI, displaying installed version,
+  remote versions, and tailored upgrade instructions.
+
+### Tests
+
+* **Portable intercept test suite**: `tests/test_intercept.py` dynamically
+  resolves paths against the running host's filesystem and repository root
+  instead of hardcoded Windows drive paths (`V:\...`, `C:\...`), passing all
+  152 checks identically on Linux, macOS, and Windows.
+
 ## [1.19.0] — 2026-11-09 — Linux/BSD/macOS compatibility pass
 
 ### Cross-platform

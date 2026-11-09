@@ -8,11 +8,20 @@ Run with the project's Python interpreter:
 """
 import asyncio
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, r"V:\Projects\SassyMCP")
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
+
+# Real paths on the local filesystem for protected-path testing
+SHELL_PY = REPO_ROOT / "sassymcp" / "modules" / "shell.py"
+SECURITY_PY = REPO_ROOT / "sassymcp" / "modules" / "_security.py"
+CLOBBER_PY = REPO_ROOT / "sassymcp" / "modules" / "clobber.py"
+STAGING_DIR = REPO_ROOT / "_DELETE_"
+OUTSIDE_PATH = Path.home() / "nonexistent_sassy_test_file.txt"
 
 from sassymcp.modules._security import detect_delete_intent, is_protected_path
 from sassymcp.modules.shell import (
@@ -114,35 +123,43 @@ for cmd, expected in cases:
 # ── is_protected_path ────────────────────────────────────────────────
 print("\n[2] is_protected_path")
 protected_cases = [
-    (r"V:\Projects\SassyMCP\sassymcp\modules\shell.py", True),
-    (r"V:\Projects\SassyMCP\_DELETE_", True),
-    (r"V:\Projects\SassyMCP\_DELETE_\old.txt", False),       # inside staging is OK
-    (r"C:\Users\Admin\foo.txt", False),
+    (str(SHELL_PY), True),
+    (str(STAGING_DIR), True),
+    (str(STAGING_DIR / "old.txt"), False),       # inside staging is OK
+    (str(OUTSIDE_PATH), False),
     (str(Path.home() / ".sassymcp" / "audit.log"), True),
 
-    # v1.1.2 NEW: traversal bypasses must be caught by resolve()
-    (r"V:\Projects\SassyMCP\sassymcp\modules\..\modules\shell.py", True),       # R0 dot-traversal inside
-    (r"V:\Projects\SassyMCP\_DELETE_\..\sassymcp\modules\shell.py", True),      # R1 _DELETE_ escape
-    (r"V:\Projects\SassyMCP\..\SassyMCP\sassymcp\modules\shell.py", True),      # R2 sibling traversal
+    # traversal bypasses must be caught by resolve()
+    (str(REPO_ROOT / "sassymcp" / "modules" / ".." / "modules" / "shell.py"), True),       # R0 dot-traversal inside
+    (str(STAGING_DIR / ".." / "sassymcp" / "modules" / "shell.py"), True),                 # R1 _DELETE_ escape
+    (str(REPO_ROOT / ".." / REPO_ROOT.name / "sassymcp" / "modules" / "shell.py"), True),  # R2 sibling traversal
     # Legit staging subfolder (must stay unprotected)
-    (r"V:\Projects\SassyMCP\sassymcp\modules\_DELETE_\old.py", False),          # module-level staging ok
+    (str(REPO_ROOT / "sassymcp" / "modules" / "_DELETE_" / "old.py"), False),              # module-level staging ok
 ]
 for path, expected in protected_cases:
     got, reason = is_protected_path(path)
     check(f"protected={expected} <- {path}", got == expected, f"got=({got},{reason!r})")
 
 
-# ── _parse_delete_targets: Windows path preservation ────────────────
-print("\n[3] _parse_delete_targets — Windows paths & flags")
+# ── _parse_delete_targets: path preservation ─────────────────────────
+print("\n[3] _parse_delete_targets — paths & flags")
 parse_cases = [
-    ("del C:\\Users\\foo\\bar.txt",       ["C:\\Users\\foo\\bar.txt"]),
     ("del foo.txt bar.txt",               ["foo.txt", "bar.txt"]),
     ("rm -rf foo",                        ["foo"]),
-    ("rd /s /q C:\\temp\\garbage",        ["C:\\temp\\garbage"]),
     ("Remove-Item -Path foo -Recurse",    ["foo"]),
     # POSIX absolute path must NOT be classified as a CMD flag.
     ("rm /tmp/foo",                       ["/tmp/foo"]),
 ]
+if os.name == "nt":
+    parse_cases.extend([
+        ("del C:\\Users\\foo\\bar.txt",       ["C:\\Users\\foo\\bar.txt"]),
+        ("rd /s /q C:\\temp\\garbage",        ["C:\\temp\\garbage"]),
+    ])
+else:
+    parse_cases.extend([
+        ("rm /var/log/app.log",               ["/var/log/app.log"]),
+        ("rm -rf /tmp/garbage",               ["/tmp/garbage"]),
+    ])
 for cmd, expected in parse_cases:
     got = _parse_delete_targets(cmd)
     check(f"parse {cmd!r} -> {expected}", got == expected, f"got={got}")
@@ -172,7 +189,7 @@ async def test_staging():
         check("sandbox: collision -> victim_1.txt", collided.exists())
 
         # (c) protected path refused — sassymcp module file
-        protected = Path(r"V:\Projects\SassyMCP\sassymcp\modules\shell.py")
+        protected = SHELL_PY
         out = _safe_move_to_staging([str(protected)], "rm", f"rm {protected}")
         check("sandbox: protected source refused",
               "REFUSED" in _text(out) and protected.exists(),
@@ -245,7 +262,7 @@ async def test_fileops():
         check("safe_delete: refuses staging folder", "Refused" in msg, f"msg={msg}")
 
         # sassy_safe_delete: refuses protected (sassymcp source)
-        msg = await sassy_safe_delete(r"V:\Projects\SassyMCP\sassymcp\modules\shell.py")
+        msg = await sassy_safe_delete(str(SHELL_PY))
         check("safe_delete: refuses protected source", "Refused" in msg, f"msg={msg}")
 
         # sassy_write_file: rewrite snapshots existing content
@@ -258,7 +275,7 @@ async def test_fileops():
               f"snaps={snaps}")
 
         # sassy_write_file: refuses protected source
-        msg = await sassy_write_file(r"V:\Projects\SassyMCP\sassymcp\modules\shell.py", "junk", "rewrite")
+        msg = await sassy_write_file(str(SHELL_PY), "junk", "rewrite")
         check("write_file: refuses protected", "Refused" in msg, f"msg={msg}")
 
         # sassy_move: refuses overwrite of existing destination
@@ -270,7 +287,7 @@ async def test_fileops():
         check("move: dst not touched on refusal", b.read_text() == "b")
 
         # sassy_move: refuses protected source
-        msg = await sassy_move(r"V:\Projects\SassyMCP\sassymcp\modules\shell.py", str(td_path / "out.py"))
+        msg = await sassy_move(str(SHELL_PY), str(td_path / "out.py"))
         check("move: refuses protected source", "Refused" in msg, f"msg={msg}")
 
         # v1.1.2: sassy_copy refuses existing destination (no silent overwrite)
@@ -281,11 +298,11 @@ async def test_fileops():
         check("copy: dst unchanged on refusal", c2.read_text() == "two")
 
         # v1.1.2: sassy_copy refuses protected source
-        msg = await sassy_copy(r"V:\Projects\SassyMCP\sassymcp\modules\shell.py", str(td_path / "stolen.py"))
+        msg = await sassy_copy(str(SHELL_PY), str(td_path / "stolen.py"))
         check("copy: refuses protected source", "Refused" in msg, f"msg={msg}")
 
         # v1.1.2: sassy_copy refuses protected destination
-        msg = await sassy_copy(str(c1), r"V:\Projects\SassyMCP\sassymcp\modules\clobber.py")
+        msg = await sassy_copy(str(c1), str(CLOBBER_PY))
         check("copy: refuses protected dest", "Refused" in msg, f"msg={msg}")
 
         # v1.1.2: sassy_copy normal happy path still works
@@ -312,7 +329,7 @@ async def test_editor():
         # edit_block: refuses protected file — using a real file path that
         # is_protected_path will flag WITHOUT the tool actually touching it.
         # We use a path that exists and is inside the protected tree.
-        protected_target = r"V:\Projects\SassyMCP\sassymcp\modules\shell.py"
+        protected_target = str(SHELL_PY)
         msg = await sassy_edit_block(protected_target,
                                      "def _THIS_WILL_NEVER_MATCH_ANYTHING_xyzzy",
                                      "def NUKED")
@@ -333,7 +350,7 @@ async def test_editor():
 
         # edit_multi: refuses protected file
         msg = await sassy_edit_multi(
-            r"V:\Projects\SassyMCP\sassymcp\modules\_security.py",
+            str(SECURITY_PY),
             '[{"old":"_THIS_WILL_NEVER_MATCH_ANYTHING_xyzzy","new":"NUKED"}]',
         )
         check("edit_multi: refuses protected file",
@@ -499,11 +516,11 @@ for raw, expected in strip_cases:
 print("\n[12] detect_delete_intent — quoted `>` no longer flags redirect")
 quoted_cases = [
     # The classic v1.2.0 false positive: `>` lives inside a parameter value.
-    ('Start-Process -RedirectStandardOutput "V:\\logs\\bridge.out.log"', False),
+    ('Start-Process -RedirectStandardOutput "logs/bridge.out.log"', False),
     # Even a literal `>` character inside a quoted string is data, not a redirect.
     # Use a non-/tmp, non-exempt-extension target (the .log/.txt/.csv/.out/
     # .err/.json redirect exemptions would otherwise suppress the match).
-    ('echo "a > b" > C:\\Users\\me\\out.dat', True),   # the SECOND `>` is real
+    ('echo "a > b" > out.dat',      True),   # the SECOND `>` is real
     ('echo "a > b"',                False),  # only the quoted `>` exists
     ("echo 'a > b'",                False),
     # Bare redirect must still trip (non-exempt ext; .txt/.log are exempt).

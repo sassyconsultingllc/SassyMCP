@@ -325,6 +325,45 @@ def _action_run_server(_info: dict):
     return "run_server"
 
 
+def _action_check_updates(info: dict):
+    print()
+    print(_bold("Checking for updates (GitHub Releases & PyPI)..."))
+    print()
+    from sassymcp.modules.updater import Updater
+    upd = Updater()
+    result = upd.check(force=True)
+
+    current = result.get("current", info["version"])
+    latest = result.get("latest", current)
+    upgradable = result.get("upgradable", False)
+
+    # Status breakdown
+    gh_ver = result.get("latest")
+    pypi_ver = result.get("pypi_latest")
+    pypi_err = result.get("pypi_error")
+
+    print(f"  Installed : {_dim(current)}")
+    if gh_ver:
+        print(f"  GitHub    : {gh_ver} {_dim(result.get('release_url') or '')}")
+    if pypi_ver:
+        print(f"  PyPI      : {pypi_ver} {_dim(result.get('pypi_url') or '')}")
+    elif pypi_err:
+        print(f"  PyPI      : {_yellow('unavailable')} ({pypi_err})")
+
+    print()
+    if upgradable:
+        print(_bold(_green(f"  Update available: {current} → {latest}")))
+        hint = result.get("upgrade_hint", "")
+        if hint:
+            print()
+            print(_bold("  To upgrade:"))
+            print(f"    {_green(hint)}")
+    else:
+        print(_green(f"  You are running the latest version (v{current})."))
+    print()
+    _pause()
+
+
 # ── Menu loop ─────────────────────────────────────────────────────────
 
 _MENU = [
@@ -333,13 +372,14 @@ _MENU = [
     ("License (activate / status / re-check / deactivate)", _action_license),
     ("Auth tokens (list / generate)", _action_tokens),
     ("Run as HTTP server", _action_run_server),
+    ("Check for updates", _action_check_updates),
     ("Exit", None),
 ]
 
 
 def run_wizard() -> str | None:
     """Drive the interactive wizard. Returns one of:
-      - "run_server" if the user picked option 5
+      - "run_server" if the user picked the HTTP server option
       - None on any other exit (clean quit / Ctrl+C)
     The caller (server.py main) decides what to do with that signal.
     """
