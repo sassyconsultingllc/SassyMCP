@@ -160,6 +160,28 @@ def test_unmapped_variant_defaults_to_free(tmp_path, monkeypatch):
     assert "999999" in result["warning"]
 
 
+def test_commercial_variant_maps_to_commercial_tier_by_default(tmp_path, monkeypatch):
+    """The live commercial-license variant resolves through the baked-in
+    DEFAULT_VARIANT_MAP (no env override) to the 'commercial' tier, with no
+    misconfig warning, and the label survives a round-trip through
+    validate_license."""
+    lic, ls = _fresh_modules(monkeypatch, tmp_path / "h")
+    assert ls.DEFAULT_VARIANT_MAP["2352600"] == {"tier": "commercial", "addons": []}
+    _mock_ls_response(monkeypatch, ls, {
+        "_http_status": 200,
+        "activated": True,
+        "license_key": {"id": 7, "status": "active", "expires_at": None},
+        "instance": {"id": "inst-commercial", "name": "sassymcp:user@host"},
+        "meta": {"customer_email": "work@example.com", "variant_id": 2352600},
+    })
+
+    result = lic.activate_via_lemonsqueezy("COMM-ERCI-ALKE-Y000")
+    assert result["valid"] is True
+    assert result["tier"] == "commercial"
+    assert "warning" not in result
+    assert lic.validate_license()["tier"] == "commercial"
+
+
 # ── Activation: failure modes ─────────────────────────────────────────
 
 def test_activate_ls_rejection_writes_no_file(tmp_path, monkeypatch):

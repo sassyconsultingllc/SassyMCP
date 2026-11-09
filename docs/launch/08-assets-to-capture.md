@@ -55,7 +55,7 @@ directory listings (most directories want a square icon ≥ 128px).
 
 ## Where each asset goes
 
-| Asset | PH gallery | X | Reddit | dev.to | pricing.html | directories |
+| Asset | PH gallery | X | Reddit | dev.to | site (/store#sassymcp) | directories |
 |---|---|---|---|---|---|---|
 | Demo GIF | #1 (thumbnail) | tweet 1 | top of post | header | hero | — |
 | Context savings | #3 | tweet 4 | in comments | body | — | — |
