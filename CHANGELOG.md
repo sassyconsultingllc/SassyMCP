@@ -10,11 +10,42 @@ All notable changes to SassyMCP. Newest first. Versions follow semver:
 for new user-visible features, PATCH for fixes that don't move buyer-
 facing surfaces.
 
-## [Unreleased]
+## [1.19.0] — 2026-11-09 — Linux/BSD/macOS compatibility pass
+
+### Cross-platform
+
+Commands now work across Linux distros (Debian/Kali/Ubuntu, Fedora/RHEL,
+Arch, openSUSE, Alpine, Void, Gentoo), the BSDs and macOS.
+
+* `sassy_setup_tools` detects the native package manager (apt, dnf, yum,
+  pacman, zypper, apk, xbps, emerge, pkg, pkg_add, pkgin, brew) and uses
+  that distro's package names. Non-root installs use `sudo -n`, so a
+  password prompt fails fast with a hint instead of hanging.
+* Linux window control (new `_linuxwm.py`, wmctrl/xdotool/xrandr): window
+  list, focus, close, move/resize, maximize/minimize/restore, snap, and
+  monitor layout. Resize no longer moves the window to 0,0 when x/y is -1.
+* Fallbacks for minimal installs: `ss` / `ip neigh`, `dig` / `host` /
+  `getent` for `nslookup`, `tracepath` / `mtr`, syslog files without
+  journald, Wi-Fi scan without assuming `wlan0` (iwd supported).
+* Firewall status checks ufw, firewalld, nftables/iptables, and pf/ipfw.
+  Endpoint status reports ClamAV per distro plus SELinux/AppArmor.
+* Wayland clipboard (wl-clipboard); BlueZ >= 5.65 paired-device syntax.
+* `shell="powershell"` runs `pwsh` on Linux/macOS when installed; the
+  default shell is host-appropriate and verified to exist.
+* POSIX `/bin/sh` launchers matching the `.bat` scripts: `start-local.sh`,
+  `start-lan.sh`, `start-supervised.sh`, `start-tunnel.sh`, `deploy.sh`,
+  and `autostart-bridge.sh` (systemd user unit / LaunchAgent / crontab).
+
+### License
+
+* Free for personal and educational use; commercial use requires a
+  license (see `LICENSE` and `LICENSING.md`).
+
+### Post-1.16 work also shipping in this release
 
 Written on 2026-09-23/24 as part of a v1.16.0 respin, but v1.16.0 was tagged
 and published on 2026-09-22 without it, and v1.17.0/v1.18.0 shipped without it
-too. References to "v1.16.0" below mean this unreleased work.
+too. References to "v1.16.0" below mean this work.
 
 ### Split architecture scaffold (remote policy worker)
 
