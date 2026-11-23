@@ -10,6 +10,43 @@ All notable changes to SassyMCP. Newest first. Versions follow semver:
 for new user-visible features, PATCH for fixes that don't move buyer-
 facing surfaces.
 
+## [1.21.0] — 2026-11-22 — Hot-swappable Host allowlist (no-restart tunnel hostnames)
+
+A Cloudflare *quick* tunnel mints a random `*.trycloudflare.com`
+hostname that is only known *after* the tunnel starts — but
+`SASSYMCP_ALLOWED_HOSTS` had to list it *before* the server started.
+That catch-22 is gone: the allowlist is now file-backed and live.
+
+- **`sassymcp allow-host <hostname>`** appends to
+  `~/.sassymcp/allowed_hosts` and takes effect on the running server's
+  very next request — no restart, no re-exec. `sassymcp list-hosts`
+  shows the effective list; `sassymcp deny-host <hostname>` removes one
+  (also live). Loopback (`localhost`, `127.0.0.1`) is always allowed and
+  can't be removed.
+- The file is the runtime source of truth; `SASSYMCP_ALLOWED_HOSTS`
+  remains the initial seed (the first `allow-host` write carries the
+  env-var hosts into the file, so nothing already allowed stops being
+  allowed). The file also seeds the next boot.
+- Enforcement is unchanged: the MCP SDK's per-request check still
+  returns HTTP 421 for unknown Hosts (and 403 for bad Origins). Only the
+  list contents are live — the check itself was not reimplemented. The
+  sync is mtime-cached, so an unchanged file costs one `stat()` per
+  request; a corrupt/unreadable file fails safe on the last-known list.
+- **`sassymcp tunnel`** — one-command quick tunnel: starts
+  `cloudflared tunnel --url http://127.0.0.1:21001`, reads the minted
+  `*.trycloudflare.com` hostname from cloudflared's output, and
+  allow-lists it automatically. Runs in the foreground until Ctrl-C.
+  Warns if nothing is listening on the bridge port yet.
+- **Opt-in suffix wildcards**: `sassymcp allow-host *.trycloudflare.com`
+  admits any hostname under that suffix, provisioned live per request.
+  Explicit opt-in only, never default-on; a bare `*` is rejected. With
+  a wildcard the bearer token is the only gate for hosts under that
+  suffix — DNS-rebinding protection is effectively off there, so never
+  combine a wildcard with auth disabled (the server logs a loud warning
+  if you do). Prefer the exact hostname when you can.
+- See `docs/TUNNEL.md` ("Quick tunnels") for the new flow: start tunnel
+  → `sassymcp allow-host <new-name>` → requests pass.
+
 ## [1.20.0] — 2026-11-09 — Update checker & setup wizard improvements
 
 ### Features

@@ -42,6 +42,11 @@ PERSONA_FILE: Path = HOME / "persona.md"
 CONFIG_FILE: Path = HOME / "config.json"
 TOKENS_FILE: Path = HOME / "tokens.json"
 OAUTH_FILE: Path = HOME / "oauth.json"
+# Hot-swappable Host allowlist (sassymcp/_allowed_hosts.py): one host per
+# line, `#` comments. `sassymcp allow-host <host>` appends to it; the
+# running server re-reads it on every HTTP request, so a new Cloudflare
+# quick-tunnel hostname takes effect without a restart.
+ALLOWED_HOSTS_FILE: Path = HOME / "allowed_hosts"
 LICENSE_FILE: Path = HOME / "license.json"
 AUDIT_LOG: Path = HOME / "audit.log"
 CROSSLINK_DB: Path = HOME / "crosslink.db"
@@ -62,6 +67,7 @@ SUPERVISOR_CMD: Path = HOME / "supervisor.cmd"
 # here, to keep this file from sprawling.
 
 __all__ = [
+    "ALLOWED_HOSTS_FILE",
     "AUDIT_LOG",
     "CONFIG_FILE",
     "CROSSLINK_DB",
