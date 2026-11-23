@@ -262,17 +262,18 @@ def _build_server() -> FastMCP:
     # at import time into `_BIND` (see above); the OAuth metadata below
     # advertises that exact bind so clients' address checks pass.
     #
-    # To expose this server over a tunnel or LAN, add your hostname via the
-    # SASSYMCP_ALLOWED_HOSTS env var (comma-separated). Use `host:*` to
-    # allow any port, or `host:port` for an exact port. E.g.:
-    #     setx SASSYMCP_ALLOWED_HOSTS "mcp.your-domain.tld,localhost:*,127.0.0.1:*"
-    # See docs/TUNNEL.md for the full Cloudflare Tunnel walk-through.
-    default_hosts = "localhost:*,127.0.0.1:*,localhost,127.0.0.1"
-    allowed_hosts = [
-        h.strip()
-        for h in os.environ.get("SASSYMCP_ALLOWED_HOSTS", default_hosts).split(",")
-        if h.strip()
-    ]
+    # HOT-SWAP (v1.21.0): the allowlist is no longer frozen at startup.
+    # The initial list below comes from `sassymcp._allowed_hosts`
+    # (allowlist file if it exists, else SASSYMCP_ALLOWED_HOSTS, else the
+    # loopback defaults), and `main()` wraps the HTTP/SSE app so the SDK
+    # settings object is re-synced from that file on every request
+    # (mtime-cached: one stat() when unchanged). Enforcement stays 100%
+    # the SDK's per-request check — only the list contents are live. Add
+    # a host with `sassymcp allow-host <hostname>`; it takes effect on the
+    # next request with no restart. See docs/TUNNEL.md ("Quick tunnels").
+    from sassymcp._allowed_hosts import initial_allowed_hosts
+
+    allowed_hosts = initial_allowed_hosts()
     kwargs = {
         "name": "sassymcp",
         "transport_security": TransportSecuritySettings(
@@ -1571,6 +1572,149 @@ def _cli_show_token(argv: list[str]) -> int:
     return 0
 
 
+def _cli_allow_host(argv: list[str]) -> int:
+    """`sassymcp allow-host <hostname>` — add a Host to the allowlist live.
+
+    Appends to ~/.sassymcp/allowed_hosts (atomic write). A running server
+    picks the new host up on its very next request — no restart — because
+    main() wraps the HTTP app with a per-request sync of the SDK's
+    allowlist. If the server is down, the file seeds the next boot.
+    """
+    import argparse
+
+    from sassymcp import _allowed_hosts as _ah
+
+    p = argparse.ArgumentParser(
+        prog="sassymcp allow-host",
+        description="Allow a Host header without restarting the server "
+                    "(e.g. a fresh Cloudflare quick-tunnel hostname).",
+    )
+    p.add_argument("hostname", help="hostname to allow, e.g. abc.trycloudflare.com "
+                   "(bare host, host:port, or host:* all accepted)")
+    p.add_argument("--json", action="store_true",
+                   help="emit machine-readable JSON")
+    args = p.parse_args(argv)
+
+    try:
+        host = _ah.add_host(args.hostname)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps({
+            "added": host,
+            "allowed_hosts": _ah.get_effective_hosts(),
+            "file": str(_ah._hosts_file()),
+            "note": "Takes effect on the running server's next request; no restart needed.",
+        }, indent=2))
+    else:
+        print(f"Allowed host: {host}")
+        print(f"Stored in: {_ah._hosts_file()}")
+        print("A running server accepts it on its next request — no restart needed.")
+        print("If the server is down, it is picked up at the next boot.")
+    return 0
+
+
+def _cli_deny_host(argv: list[str]) -> int:
+    """`sassymcp deny-host <hostname>` — remove a Host from the allowlist."""
+    import argparse
+
+    from sassymcp import _allowed_hosts as _ah
+
+    p = argparse.ArgumentParser(
+        prog="sassymcp deny-host",
+        description="Remove a Host from the allowlist (takes effect on the "
+                    "running server's next request). Loopback hosts are "
+                    "implicit and cannot be removed.",
+    )
+    p.add_argument("hostname", help="hostname to remove")
+    p.add_argument("--json", action="store_true",
+                   help="emit machine-readable JSON")
+    args = p.parse_args(argv)
+
+    try:
+        host = _ah.remove_host(args.hostname)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps({
+            "removed": host,
+            "allowed_hosts": _ah.get_effective_hosts(),
+        }, indent=2))
+    else:
+        print(f"Removed host: {host} (loopback hosts are implicit and stay allowed)")
+    return 0
+
+
+def _cli_list_hosts(argv: list[str]) -> int:
+    """`sassymcp list-hosts` — show the effective Host allowlist."""
+    import argparse
+
+    from sassymcp import _allowed_hosts as _ah
+
+    p = argparse.ArgumentParser(
+        prog="sassymcp list-hosts",
+        description="Show the effective Host allowlist (loopback defaults "
+                    "plus the allowlist file / SASSYMCP_ALLOWED_HOSTS seed).",
+    )
+    p.add_argument("--json", action="store_true",
+                   help="emit machine-readable JSON")
+    args = p.parse_args(argv)
+
+    effective = _ah.get_effective_hosts()
+    if args.json:
+        print(json.dumps({
+            "allowed_hosts": effective,
+            "wildcard_hosts": [h for h in effective if _ah.is_suffix_wildcard(h)],
+            "file_hosts": _ah.get_file_hosts(),
+            "file": str(_ah._hosts_file()),
+        }, indent=2))
+    else:
+        for h in effective:
+            suffix = " (suffix wildcard)" if _ah.is_suffix_wildcard(h) else ""
+            print(f"  {h}{suffix}")
+        print(f"(file: {_ah._hosts_file()})")
+    return 0
+
+
+def _cli_tunnel(argv: list[str]) -> int:
+    """`sassymcp tunnel` — one-command Cloudflare quick tunnel.
+
+    Starts a quick tunnel to the local bridge, reads the minted
+    *.trycloudflare.com hostname from cloudflared's output, and
+    allow-lists it automatically — no manual `allow-host` step, no
+    restart. Runs in the foreground until Ctrl-C (stopping it stops the
+    tunnel), like start-tunnel.bat.
+    """
+    import argparse
+
+    from sassymcp._tunnel import TunnelError, run_quick_tunnel
+
+    p = argparse.ArgumentParser(
+        prog="sassymcp tunnel",
+        description="Start a Cloudflare quick tunnel to this bridge and "
+                    "auto allow-list its hostname (no manual allow-host, "
+                    "no restart). Runs in the foreground until Ctrl-C.",
+    )
+    p.add_argument("--host", default="127.0.0.1",
+                   help="local bridge host to tunnel to (default: 127.0.0.1)")
+    p.add_argument("--port", type=int, default=21001,
+                   help="local bridge port to tunnel to (default: 21001)")
+    p.add_argument("--cloudflared", default=os.environ.get("SASSYMCP_CLOUDFLARED", "cloudflared"),
+                   help="cloudflared binary (default: 'cloudflared' on PATH; "
+                        "override with SASSYMCP_CLOUDFLARED)")
+    args = p.parse_args(argv)
+
+    try:
+        return run_quick_tunnel(
+            host=args.host, port=args.port, cloudflared=args.cloudflared,
+        )
+    except TunnelError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
 def _cli_mesh(argv: list[str]) -> int:
     """Emit coordination-mesh data/actions as one JSON line, for external UIs
     (e.g. the Sassy Brain desktop app) that shell out to a bundled/installed
@@ -1614,6 +1758,14 @@ def _dispatch_subcommand() -> int | None:
         return _cli_generate_token(sys.argv[2:])
     if sub == "show-token":
         return _cli_show_token(sys.argv[2:])
+    if sub == "allow-host":
+        return _cli_allow_host(sys.argv[2:])
+    if sub == "deny-host":
+        return _cli_deny_host(sys.argv[2:])
+    if sub == "list-hosts":
+        return _cli_list_hosts(sys.argv[2:])
+    if sub == "tunnel":
+        return _cli_tunnel(sys.argv[2:])
     if sub == "install":
         from sassymcp.install import main as _install_main
         return _install_main(sys.argv[2:])
@@ -1647,8 +1799,10 @@ def main():
 
     parser = argparse.ArgumentParser(
         description=f"SassyMCP Server v{__version__}",
-        epilog="Subcommands: setup | install | supervise | mesh | generate-token | show-token  "
-               "(e.g. `sassymcp.exe setup` opens the interactive wizard)\n"
+        epilog="Subcommands: setup | install | supervise | mesh | generate-token | show-token | "
+               "allow-host | deny-host | list-hosts | tunnel  "
+               "(e.g. `sassymcp.exe setup` opens the interactive wizard; "
+               "`sassymcp tunnel` starts a quick tunnel and auto allow-lists it)\n"
                "Note: --serve is a silent alias of --http.",
     )
     parser.add_argument(
@@ -1895,6 +2049,49 @@ def main():
         # take effect without a manual restart (bind changes re-exec).
         # Stdio mode is excluded — the MCP client owns our pipes there.
         _start_config_watcher()
+
+        # Hot-swappable Host allowlist (v1.21.0): wrap the app so the SDK's
+        # allowlist is re-synced from ~/.sassymcp/allowed_hosts on every
+        # HTTP request (mtime-cached, one stat() when unchanged). A host
+        # added with `sassymcp allow-host <hostname>` takes effect on the
+        # next request — no restart. Enforcement stays the SDK's
+        # TransportSecurityMiddleware; this only keeps its list current.
+        #
+        # NB: pass mcp.settings.transport_security — the object FastMCP
+        # actually holds. Its pydantic Settings COPIES the nested settings
+        # at construction, so mutating the TransportSecuritySettings
+        # object _build_server() created would change nothing the
+        # middleware reads.
+        try:
+            from sassymcp._allowed_hosts import wrap_allowed_hosts_sync
+
+            _ts = getattr(getattr(mcp, "settings", None), "transport_security", None)
+            if _ts is not None:
+                app = wrap_allowed_hosts_sync(app, _ts)
+                from sassymcp._paths import ALLOWED_HOSTS_FILE as _AHF
+
+                logger.info(f"Allowed hosts hot-swap on ({_AHF}); "
+                            "`sassymcp allow-host <host>` adds one live")
+                # A suffix wildcard (e.g. *.trycloudflare.com) makes the
+                # bearer token the ONLY gate for every host under it. With
+                # auth off that is an open server — say so loudly instead
+                # of letting it pass silently.
+                if not _ACTIVE_AUTH_TOKEN:
+                    try:
+                        from sassymcp._allowed_hosts import get_effective_hosts as _geh
+                        if any(h.startswith("*.") for h in _geh()):
+                            logger.warning(
+                                "SECURITY: a suffix-wildcard allowlist entry "
+                                "(*.suffix) is active AND bearer auth is OFF "
+                                "(SASSYMCP_NO_AUTH=1) — any host under that "
+                                "suffix can reach this server with no "
+                                "credentials. Enable auth or remove the "
+                                "wildcard (`sassymcp deny-host '*.suffix'`)."
+                            )
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.warning(f"Allowed-hosts hot-swap wrapper not installed: {e}")
 
         uvicorn.run(app, **uvicorn_kwargs)
 
