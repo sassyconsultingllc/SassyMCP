@@ -1,14 +1,17 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-WUPEPBZWEXPF
 """SassyMCP Observability — Real-time metrics, health checks, and debug endpoints.
 
 Exposes server metrics, health status, and tool usage stats for any MCP client
 or external monitoring system.
 """
 
+import logging
 import os
 import time
-import logging
-from datetime import datetime, timezone
-from typing import Dict, Any
+from datetime import UTC, datetime
+from typing import Any
 
 from sassymcp import __version__
 
@@ -34,14 +37,14 @@ class Observability:
         if not success:
             self.error_count += 1
 
-    def get_metrics(self) -> Dict[str, Any]:
+    def get_metrics(self) -> dict[str, Any]:
         uptime = int(time.time() - self.start_time)
 
         metrics = {
             "uptime_seconds": uptime,
             "tool_calls_total": self.tool_call_count,
             "error_rate": round(self.error_count / max(self.tool_call_count, 1) * 100, 2),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "version": __version__,
             "live_reload_enabled": os.environ.get("SASSYMCP_DEV") == "1",
         }
@@ -57,7 +60,7 @@ class Observability:
 
         return metrics
 
-    def get_health(self) -> Dict[str, Any]:
+    def get_health(self) -> dict[str, Any]:
         return {
             "status": "healthy",
             "uptime_seconds": int(time.time() - self.start_time),
@@ -71,17 +74,17 @@ def register(server):
     obs = Observability()
 
     @server.tool()
-    async def sassy_observability_metrics() -> dict:
+    def sassy_observability_metrics() -> dict:
         """Return real-time server metrics and performance data."""
         return obs.get_metrics()
 
     @server.tool()
-    async def sassy_observability_health() -> dict:
+    def sassy_observability_health() -> dict:
         """Simple health check for monitoring tools and load balancers."""
         return obs.get_health()
 
     @server.tool()
-    async def sassy_observability_tool_stats() -> dict:
+    def sassy_observability_tool_stats() -> dict:
         """Full usage tracker stats + pruning suggestions."""
         try:
             from sassymcp.modules._tool_loader import get_tracker

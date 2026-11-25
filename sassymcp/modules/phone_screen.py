@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-6N6ND2LDNM4T
 """PhoneScreen - Android live vision, UI awareness, interaction, and screen mirroring.
 
 Dynamic phone observation: reads the UI accessibility tree (uiautomator),
@@ -10,13 +13,16 @@ Scrcpy support retained for live mirroring when available.
 import asyncio
 import base64
 import io
-import json
+import logging
 import os
 import shutil
 import time
 import xml.etree.ElementTree as ET
+from typing import Any
 
 from sassymcp import _platform
+
+logger = logging.getLogger("sassymcp.phone_screen")
 
 # ── Autonomous Pause/Resume State ────────────────────────────
 # When paused, all interaction tools (tap/swipe/type) refuse to execute.
@@ -27,27 +33,53 @@ _phone_paused = False
 _pause_reason = ""
 
 
+# Per-host-OS install hint for the missing-adb error (audit L1-F1).
+_ADB_INSTALL_HINT = _platform.pick(
+    windows="winget install Google.PlatformTools",
+    macos="brew install --cask android-platform-tools",
+    linux="sudo apt install android-tools-adb",
+    default="install the Android platform-tools package",
+    feature="adb install hint",
+)
+
+
+def _adb_missing_error() -> str:
+    """Explicit missing-binary error. Matches adb.py's 'Error: adb not found'
+    wording, plus a per-host-OS install hint and the SASSYMCP_ADB override."""
+    return (
+        "Error: adb not found — install Android platform-tools "
+        f"({_ADB_INSTALL_HINT}), or set SASSYMCP_ADB to your adb binary."
+    )
+
+
+def _is_infra_error(out: str) -> bool:
+    """True when _adb output is an infrastructure failure (missing adb binary
+    or command timeout), not device data. Callers use this to surface the
+    error explicitly instead of treating it as empty output."""
+    return isinstance(out, str) and (
+        out.startswith("Error: adb not found")
+        or out.startswith("Error: adb command timed out")
+    )
+
+
 def _adb_path() -> str:
-    path = shutil.which("adb")
-    if path:
-        return path
-    for c in _platform.adb_candidates():
-        if os.path.isfile(c):
-            return c
-    return "adb"
-
-
-# Bound concurrent ADB invocations. A LOOP of phone-state / phone-glance
-# can fork an adb subprocess on every call; enough concurrent calls runs
-# the device service out of slots and wedges every phone tool at once.
-# Cap at 4 in flight — plenty for real use, refuses a flood.
-_ADB_SEMAPHORE = asyncio.Semaphore(4)
+    # Single shared resolution (audit F-5): honors SASSYMCP_ADB, then PATH,
+    # then per-OS candidates, else bare "adb" for a clean not-found error.
+    return _platform.resolve_adb()
 
 
 async def _adb(*args, device="", timeout=15):
     """Run an ADB call, return stdout string.
 
-    Bounded by _ADB_SEMAPHORE (4 in flight). When a caller passes a
+    Failure contract (unified with adb.py, audit L1-F1):
+    - missing adb binary  -> "Error: adb not found — ..." (with install hint)
+    - command timeout     -> "Error: adb command timed out after Ns"
+    - device-side error   -> stderr text (may not start with "Error:")
+    - legitimate no output -> "" (empty string, e.g. no matching dumpsys lines)
+
+    Bounded by the shared _platform.adb_semaphore() (4 in flight, audit
+    F-6) — shared with adb.py so a loop over sassy_adb_* can't wedge the
+    device service either. When a caller passes a
     multi-token shell pipeline via ('shell', 'dumpsys ...', '|', 'grep ...'),
     we glue the pipeline onto ONE argument so `adb shell` invokes the
     device's `sh -c` — passing `|` as a separate argv element ships it
@@ -60,7 +92,7 @@ async def _adb(*args, device="", timeout=15):
     if device:
         cmd.extend(["-s", device])
     cmd.extend(raw_args)
-    async with _ADB_SEMAPHORE:
+    async with _platform.adb_semaphore():
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
@@ -69,14 +101,14 @@ async def _adb(*args, device="", timeout=15):
             if proc.returncode != 0 and not out:
                 return stderr.decode("utf-8", errors="replace").strip()
             return out
-        except asyncio.TimeoutError:
+        except TimeoutError:
             try:
                 proc.kill()
             except Exception:
                 pass
-            return ""
+            return f"Error: adb command timed out after {timeout}s"
         except FileNotFoundError:
-            return ""
+            return _adb_missing_error()
 
 
 def _parse_ui_xml(xml_text: str) -> list[dict]:
@@ -91,7 +123,6 @@ def _parse_ui_xml(xml_text: str) -> list[dict]:
         text = node.get("text", "")
         desc = node.get("content-desc", "")
         cls = node.get("class", "")
-        pkg = node.get("package", "")
         bounds = node.get("bounds", "")
         clickable = node.get("clickable") == "true"
         focused = node.get("focused") == "true"
@@ -247,8 +278,8 @@ Diagnose Android issues systematically.
 
 try:
     _register_hooks()
-except Exception:
-    pass
+except Exception as e:
+    logger.warning("phone_screen: hook registration failed: %s", e)
 
 
 def _find_scrcpy():
@@ -267,147 +298,253 @@ def _find_scrcpy():
     return None
 
 
+# ── Module-level observation implementations ─────────────────────────────
+# sassy_combo_phone_observe calls these directly (combos.py getattr's
+# _phone_state / _phone_ui / _phone_glance at module scope), so the logic
+# lives here; the @server.tool wrappers inside register() are thin
+# delegates that keep the public docstrings and signatures unchanged.
+
+# Keywords/patterns that indicate auth, payments, or user-decision screens
+_SENSITIVE_KEYWORDS = {
+    "password", "passcode", "pin", "sign in", "signin", "sign up", "signup",
+    "log in", "login", "log out", "logout", "authenticate", "verification",
+    "verify", "2fa", "two-factor", "otp", "one-time", "biometric",
+    "fingerprint", "face id", "confirm", "authorize", "permission",
+    "allow", "deny", "grant", "accept", "decline", "consent",
+    "purchase", "buy", "pay", "checkout", "payment", "subscribe",
+    "billing", "credit card", "debit", "cvv", "expir",
+    "delete account", "remove account", "reset", "erase",
+    "choose account", "select account", "switch account", "add account",
+    "captcha", "i'm not a robot", "security check",
+    "terms", "privacy policy", "agree",
+    "send money", "transfer", "withdraw",
+    "uninstall", "factory reset", "wipe",
+}
+
+_SENSITIVE_RESOURCE_IDS = {
+    "password", "passwd", "pin_entry", "otp", "captcha",
+    "login", "signin", "signup", "auth",
+    "payment", "checkout", "purchase",
+}
+
+
+def _detect_sensitive_context(elements: list[dict]) -> dict | None:
+    """Scan UI elements for auth/payment/decision contexts.
+    Returns context info if sensitive, None if safe to proceed."""
+    triggers = []
+    for el in elements:
+        text = (el.get("text", "") + " " + el.get("desc", "")).lower()
+        res_id = el.get("id", "").lower()
+
+        for kw in _SENSITIVE_KEYWORDS:
+            if kw in text:
+                triggers.append({"keyword": kw, "element_text": el.get("text", ""),
+                                 "element_id": el.get("id", "")})
+                break
+        for rid in _SENSITIVE_RESOURCE_IDS:
+            if rid in res_id:
+                triggers.append({"keyword": f"resource:{rid}", "element_text": el.get("text", ""),
+                                 "element_id": el.get("id", "")})
+                break
+
+    if triggers:
+        # Deduplicate
+        seen = set()
+        unique = []
+        for t in triggers:
+            key = (t["keyword"], t.get("element_id"))
+            if key not in seen:
+                seen.add(key)
+                unique.append(t)
+        return {
+            "sensitive": True,
+            "reason": "Screen contains auth, payment, or permission elements",
+            "triggers": unique[:10],
+            "action": "CONFIRM_WITH_USER — describe what you see and ask the user what to do. Do NOT tap, type, or interact without explicit user instruction.",
+        }
+    return None
+
+
+async def _phone_ui(device: str = "") -> dict[str, Any]:
+    """Read the phone's UI accessibility tree (module-level implementation)."""
+    xml = await _adb("exec-out", "uiautomator", "dump", "/dev/tty", device=device, timeout=10)
+    if _is_infra_error(xml):
+        return {"error": xml}
+    if not xml or "<hierarchy" not in xml:
+        return {"error": "Could not read UI tree. Screen may be locked or uiautomator unavailable."}
+
+    elements = _parse_ui_xml(xml)
+    result = {
+        "elements": elements,
+        "count": len(elements),
+        "timestamp": time.time(),
+    }
+    # Flag sensitive contexts so the AI knows to ask the user
+    sensitive = _detect_sensitive_context(elements)
+    if sensitive:
+        result["caution"] = sensitive
+    return result
+
+
+async def _phone_state(device: str = "") -> dict[str, Any]:
+    """Phone state snapshot: foreground app, screen, battery, wifi (module-level)."""
+    results = {}
+    infra_errors = []
+
+    async def _q(*a, **kw):
+        """_adb wrapper that records infrastructure failures so the whole
+        status report degrades to an explicit error instead of a
+        misleading mostly-empty dict."""
+        out = await _adb(*a, **kw)
+        if _is_infra_error(out):
+            infra_errors.append(out)
+        return out
+
+    # Foreground activity
+    top = await _q("shell", "dumpsys", "activity", "activities",
+                     "|", "grep", "-E", "mResumedActivity|mFocusedApp",
+                     device=device, timeout=5)
+    if top:
+        # Extract package/activity from the output
+        for line in top.splitlines():
+            if "u0" in line:
+                parts = line.strip().split()
+                for p in parts:
+                    if "/" in p and "." in p:
+                        pkg_act = p.strip("{").strip("}")
+                        results["foreground"] = pkg_act
+                        break
+
+    # Screen state
+    screen = await _q("shell", "dumpsys", "power", "|", "grep", "mScreenOn",
+                        device=device, timeout=5)
+    results["screen_on"] = "true" in screen.lower() if screen else None
+
+    # Battery
+    battery = await _q("shell", "dumpsys", "battery", "|",
+                         "grep", "-E", "level|status|plugged",
+                         device=device, timeout=5)
+    if battery:
+        for line in battery.splitlines():
+            line = line.strip()
+            if "level" in line.lower():
+                try:
+                    results["battery_level"] = int(line.split(":")[-1].strip())
+                except ValueError:
+                    pass
+            elif "status" in line.lower():
+                val = line.split(":")[-1].strip()
+                status_map = {"2": "charging", "3": "discharging", "4": "not_charging", "5": "full"}
+                results["battery_status"] = status_map.get(val, val)
+            elif "plugged" in line.lower():
+                val = line.split(":")[-1].strip()
+                results["plugged"] = val != "0"
+
+    # WiFi
+    wifi = await _q("shell", "dumpsys", "wifi", "|", "grep", "mNetworkInfo",
+                      device=device, timeout=5)
+    if wifi and "CONNECTED" in wifi.upper():
+        results["wifi"] = "connected"
+    elif wifi:
+        results["wifi"] = "disconnected"
+
+    # Notification count (quick)
+    notif = await _q("shell", "dumpsys", "notification", "|",
+                       "grep", "-c", "StatusBarNotification",
+                       device=device, timeout=5)
+    try:
+        results["notification_count"] = int(notif.strip())
+    except (ValueError, AttributeError):
+        pass
+
+    if infra_errors:
+        # adb itself is broken — don't return a half-empty status dict
+        # that reads as "phone has no data".
+        return {"error": infra_errors[0]}
+
+    results["timestamp"] = time.time()
+    return results
+
+
+async def _phone_glance(
+    device: str = "",
+    max_width: int = 480,
+    quality: int = 20,
+) -> dict[str, Any]:
+    """Fast low-res grayscale phone screenshot (module-level implementation)."""
+    from PIL import Image
+
+    adb = _adb_path()
+    if not (os.path.isfile(adb) or shutil.which(adb)):
+        return {"error": _adb_missing_error()}
+    try:
+        # exec-out pipes the PNG directly — no file write on device
+        proc = await asyncio.create_subprocess_exec(
+            adb, *(["-s", device] if device else []),
+            "exec-out", "screencap", "-p",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+
+        if not stdout or len(stdout) < 100:
+            return {"error": "Could not capture screen. Device connected?"}
+
+        img = Image.open(io.BytesIO(stdout))
+        orig_w, orig_h = img.size
+        if orig_w > max_width:
+            ratio = max_width / orig_w
+            img = img.resize((max_width, int(orig_h * ratio)), Image.LANCZOS)
+        gray = img.convert("L")
+
+        buf = io.BytesIO()
+        gray.save(buf, format="JPEG", quality=quality, optimize=True)
+        raw = buf.getvalue()
+
+        return {
+            "image_base64": base64.b64encode(raw).decode("ascii"),
+            "format": "grayscale_jpeg",
+            "original_size": [orig_w, orig_h],
+            "size": list(gray.size),
+            "bytes": len(raw),
+            "timestamp": time.time(),
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def register(server):
 
     # ── Phone Observation (what's on screen) ─────────────────────
 
     @server.tool()
-    async def sassy_phone_ui(device: str = "") -> str:
+    async def sassy_phone_ui(device: str = "") -> dict[str, Any]:
         """Read the phone's UI accessibility tree. Returns every visible element
         with text, description, coordinates, and interaction state.
 
         This is how the AI "sees" the phone — structured data, not pixels.
         Much faster than screenshots and never misses text content.
         """
-        xml = await _adb("exec-out", "uiautomator", "dump", "/dev/tty", device=device, timeout=10)
-        if not xml or "<hierarchy" not in xml:
-            return json.dumps({"error": "Could not read UI tree. Screen may be locked or uiautomator unavailable."})
-
-        elements = _parse_ui_xml(xml)
-        result = {
-            "elements": elements,
-            "count": len(elements),
-            "timestamp": time.time(),
-        }
-        # Flag sensitive contexts so the AI knows to ask the user
-        sensitive = _detect_sensitive_context(elements)
-        if sensitive:
-            result["caution"] = sensitive
-        return json.dumps(result)
+        return await _phone_ui(device=device)
 
     @server.tool()
-    async def sassy_phone_state(device: str = "") -> str:
+    async def sassy_phone_state(device: str = "") -> dict[str, Any]:
         """Get phone state: foreground app, screen on/off, battery, wifi, notifications.
 
         Quick status check — combine with sassy_phone_ui for full awareness.
         """
-        results = {}
-
-        # Foreground activity
-        top = await _adb("shell", "dumpsys", "activity", "activities",
-                         "|", "grep", "-E", "mResumedActivity|mFocusedApp",
-                         device=device, timeout=5)
-        if top:
-            # Extract package/activity from the output
-            for line in top.splitlines():
-                if "u0" in line:
-                    parts = line.strip().split()
-                    for p in parts:
-                        if "/" in p and "." in p:
-                            pkg_act = p.strip("{").strip("}")
-                            results["foreground"] = pkg_act
-                            break
-
-        # Screen state
-        screen = await _adb("shell", "dumpsys", "power", "|", "grep", "mScreenOn",
-                            device=device, timeout=5)
-        results["screen_on"] = "true" in screen.lower() if screen else None
-
-        # Battery
-        battery = await _adb("shell", "dumpsys", "battery", "|",
-                             "grep", "-E", "level|status|plugged",
-                             device=device, timeout=5)
-        if battery:
-            for line in battery.splitlines():
-                line = line.strip()
-                if "level" in line.lower():
-                    try:
-                        results["battery_level"] = int(line.split(":")[-1].strip())
-                    except ValueError:
-                        pass
-                elif "status" in line.lower():
-                    val = line.split(":")[-1].strip()
-                    status_map = {"2": "charging", "3": "discharging", "4": "not_charging", "5": "full"}
-                    results["battery_status"] = status_map.get(val, val)
-                elif "plugged" in line.lower():
-                    val = line.split(":")[-1].strip()
-                    results["plugged"] = val != "0"
-
-        # WiFi
-        wifi = await _adb("shell", "dumpsys", "wifi", "|", "grep", "mNetworkInfo",
-                          device=device, timeout=5)
-        if wifi and "CONNECTED" in wifi.upper():
-            results["wifi"] = "connected"
-        elif wifi:
-            results["wifi"] = "disconnected"
-
-        # Notification count (quick)
-        notif = await _adb("shell", "dumpsys", "notification", "|",
-                           "grep", "-c", "StatusBarNotification",
-                           device=device, timeout=5)
-        try:
-            results["notification_count"] = int(notif.strip())
-        except (ValueError, AttributeError):
-            pass
-
-        results["timestamp"] = time.time()
-        return json.dumps(results, indent=2)
+        return await _phone_state(device=device)
 
     @server.tool()
     async def sassy_phone_glance(
         device: str = "",
         max_width: int = 480,
         quality: int = 20,
-    ) -> str:
+    ) -> dict[str, Any]:
         """Fast low-res grayscale phone screenshot for AI vision. ~4-8KB.
 
         Uses exec-out to pipe directly (no temp file on device).
         Converts to grayscale and compresses hard for minimal context cost.
         """
-        from PIL import Image
-
-        try:
-            # exec-out pipes the PNG directly — no file write on device
-            proc = await asyncio.create_subprocess_exec(
-                _adb_path(), *(["-s", device] if device else []),
-                "exec-out", "screencap", "-p",
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-
-            if not stdout or len(stdout) < 100:
-                return json.dumps({"error": "Could not capture screen. Device connected?"})
-
-            img = Image.open(io.BytesIO(stdout))
-            orig_w, orig_h = img.size
-            if orig_w > max_width:
-                ratio = max_width / orig_w
-                img = img.resize((max_width, int(orig_h * ratio)), Image.LANCZOS)
-            gray = img.convert("L")
-
-            buf = io.BytesIO()
-            gray.save(buf, format="JPEG", quality=quality, optimize=True)
-            raw = buf.getvalue()
-
-            return json.dumps({
-                "image_base64": base64.b64encode(raw).decode("ascii"),
-                "format": "grayscale_jpeg",
-                "original_size": [orig_w, orig_h],
-                "size": list(gray.size),
-                "bytes": len(raw),
-                "timestamp": time.time(),
-            })
-        except Exception as e:
-            return json.dumps({"error": str(e)})
+        return await _phone_glance(device=device, max_width=max_width, quality=quality)
 
     @server.tool()
     async def sassy_phone_watch(
@@ -416,7 +553,7 @@ def register(server):
         device: str = "",
         change_threshold: float = 3.0,
         max_frames: int = 8,
-    ) -> str:
+    ) -> dict[str, Any]:
         """Monitor phone screen for changes. Returns UI tree snapshots when content changes.
 
         Uses uiautomator (fast, structured) for change detection, not pixels.
@@ -437,6 +574,15 @@ def register(server):
         while time.time() - start < seconds and len(snapshots) < max_frames:
             xml = await _adb("exec-out", "uiautomator", "dump", "/dev/tty",
                              device=device, timeout=8)
+            if _is_infra_error(xml):
+                # adb itself failed — surface it explicitly instead of
+                # recording empty snapshots that read as "nothing changed".
+                return {
+                    "snapshots": snapshots,
+                    "snapshot_count": len(snapshots),
+                    "duration_s": round(time.time() - start, 2),
+                    "error": xml,
+                }
             elements = _parse_ui_xml(xml) if xml and "<hierarchy" in xml else []
             elapsed = round(time.time() - start, 2)
 
@@ -470,72 +616,15 @@ def register(server):
             prev_elements = elements
             await asyncio.sleep(interval)
 
-        return json.dumps({
+        return {
             "snapshots": snapshots,
             "snapshot_count": len(snapshots),
             "duration_s": round(time.time() - start, 2),
-        })
+        }
 
     # ── Sensitive Context Detection ────────────────────────────────
-
-    # Keywords/patterns that indicate auth, payments, or user-decision screens
-    _SENSITIVE_KEYWORDS = {
-        "password", "passcode", "pin", "sign in", "signin", "sign up", "signup",
-        "log in", "login", "log out", "logout", "authenticate", "verification",
-        "verify", "2fa", "two-factor", "otp", "one-time", "biometric",
-        "fingerprint", "face id", "confirm", "authorize", "permission",
-        "allow", "deny", "grant", "accept", "decline", "consent",
-        "purchase", "buy", "pay", "checkout", "payment", "subscribe",
-        "billing", "credit card", "debit", "cvv", "expir",
-        "delete account", "remove account", "reset", "erase",
-        "choose account", "select account", "switch account", "add account",
-        "captcha", "i'm not a robot", "security check",
-        "terms", "privacy policy", "agree",
-        "send money", "transfer", "withdraw",
-        "uninstall", "factory reset", "wipe",
-    }
-
-    _SENSITIVE_RESOURCE_IDS = {
-        "password", "passwd", "pin_entry", "otp", "captcha",
-        "login", "signin", "signup", "auth",
-        "payment", "checkout", "purchase",
-    }
-
-    def _detect_sensitive_context(elements: list[dict]) -> dict | None:
-        """Scan UI elements for auth/payment/decision contexts.
-        Returns context info if sensitive, None if safe to proceed."""
-        triggers = []
-        for el in elements:
-            text = (el.get("text", "") + " " + el.get("desc", "")).lower()
-            res_id = el.get("id", "").lower()
-
-            for kw in _SENSITIVE_KEYWORDS:
-                if kw in text:
-                    triggers.append({"keyword": kw, "element_text": el.get("text", ""),
-                                     "element_id": el.get("id", "")})
-                    break
-            for rid in _SENSITIVE_RESOURCE_IDS:
-                if rid in res_id:
-                    triggers.append({"keyword": f"resource:{rid}", "element_text": el.get("text", ""),
-                                     "element_id": el.get("id", "")})
-                    break
-
-        if triggers:
-            # Deduplicate
-            seen = set()
-            unique = []
-            for t in triggers:
-                key = (t["keyword"], t.get("element_id"))
-                if key not in seen:
-                    seen.add(key)
-                    unique.append(t)
-            return {
-                "sensitive": True,
-                "reason": "Screen contains auth, payment, or permission elements",
-                "triggers": unique[:10],
-                "action": "CONFIRM_WITH_USER — describe what you see and ask the user what to do. Do NOT tap, type, or interact without explicit user instruction.",
-            }
-        return None
+    # (keyword sets and _detect_sensitive_context live at module scope so the
+    # combo path can use them too; _check_screen_safety stays a closure.)
 
     async def _check_screen_safety(device: str = "") -> dict | None:
         """Quick UI tree scan for sensitive context. Returns warning or None."""
@@ -549,7 +638,7 @@ def register(server):
     # ── Pause/Resume Controls ────────────────────────────────────
 
     @server.tool()
-    async def sassy_phone_pause(reason: str = "User requested pause") -> str:
+    def sassy_phone_pause(reason: str = "User requested pause") -> dict[str, Any]:
         """Pause all phone interaction. Observation tools still work.
 
         Call when: user says "wait", "hold on", "let me handle this", or when
@@ -563,15 +652,15 @@ def register(server):
         global _phone_paused, _pause_reason
         _phone_paused = True
         _pause_reason = reason
-        return json.dumps({
+        return {
             "status": "paused",
             "reason": reason,
             "note": "Phone interaction paused. Observation tools (ui, glance, watch, state) still work. "
                     "Call sassy_phone_resume when the user is ready to continue.",
-        })
+        }
 
     @server.tool()
-    async def sassy_phone_resume() -> str:
+    def sassy_phone_resume() -> dict[str, Any]:
         """Resume phone interaction after a pause.
 
         Call this when the user says they're done with manual interaction
@@ -582,11 +671,11 @@ def register(server):
         old_reason = _pause_reason
         _phone_paused = False
         _pause_reason = ""
-        return json.dumps({
+        return {
             "status": "resumed",
             "was_paused": was_paused,
             "previous_reason": old_reason,
-        })
+        }
 
     # ── Phone Interaction (touch, type, navigate) ────────────────
     # All interaction tools:
@@ -606,7 +695,7 @@ def register(server):
         return None
 
     @server.tool()
-    async def sassy_phone_tap(x: int, y: int, device: str = "", confirmed: bool = False) -> str:
+    async def sassy_phone_tap(x: int, y: int, device: str = "", confirmed: bool = False) -> dict[str, Any]:
         """Tap a point on the phone screen. Use sassy_phone_ui to find coordinates.
 
         Safety: auto-checks screen for login/payment/permission contexts.
@@ -616,17 +705,19 @@ def register(server):
         paused = _pause_check()
         if paused:
             paused["blocked_action"] = f"tap({x}, {y})"
-            return json.dumps(paused)
+            return paused
 
         if not confirmed:
             warning = await _check_screen_safety(device)
             if warning:
                 warning["blocked_action"] = f"tap({x}, {y})"
                 warning["hint"] = "Tell the user what you see on the phone and ask if they want you to tap. Then call again with confirmed=True."
-                return json.dumps(warning)
+                return warning
 
         result = await _adb("shell", "input", "tap", str(x), str(y), device=device)
-        return json.dumps({"tapped": [x, y], "result": result or "ok"})
+        if _is_infra_error(result):
+            return {"error": result}
+        return {"tapped": [x, y], "result": result or "ok"}
 
     @server.tool()
     async def sassy_phone_swipe(
@@ -634,7 +725,7 @@ def register(server):
         duration_ms: int = 300,
         device: str = "",
         confirmed: bool = False,
-    ) -> str:
+    ) -> dict[str, Any]:
         """Swipe on the phone screen. duration_ms controls speed.
 
         Safety: auto-checks for sensitive contexts before swiping.
@@ -642,24 +733,26 @@ def register(server):
         paused = _pause_check()
         if paused:
             paused["blocked_action"] = f"swipe({x1},{y1} -> {x2},{y2})"
-            return json.dumps(paused)
+            return paused
 
         if not confirmed:
             warning = await _check_screen_safety(device)
             if warning:
                 warning["blocked_action"] = f"swipe({x1},{y1} -> {x2},{y2})"
                 warning["hint"] = "Describe the screen to the user and ask before swiping. Call with confirmed=True after."
-                return json.dumps(warning)
+                return warning
 
         duration_ms = max(100, min(duration_ms, 5000))
         result = await _adb("shell", "input", "swipe",
                             str(x1), str(y1), str(x2), str(y2), str(duration_ms),
                             device=device)
-        return json.dumps({"swiped": [[x1, y1], [x2, y2]], "duration_ms": duration_ms,
-                           "result": result or "ok"})
+        if _is_infra_error(result):
+            return {"error": result}
+        return {"swiped": [[x1, y1], [x2, y2]], "duration_ms": duration_ms,
+                           "result": result or "ok"}
 
     @server.tool()
-    async def sassy_phone_type(text: str, device: str = "", confirmed: bool = False) -> str:
+    async def sassy_phone_type(text: str, device: str = "", confirmed: bool = False) -> dict[str, Any]:
         """Type text on the phone. Requires a text field to be focused.
 
         Safety: auto-checks for login/auth contexts. Won't type into password
@@ -668,24 +761,26 @@ def register(server):
         paused = _pause_check()
         if paused:
             paused["blocked_action"] = f"type('{text[:20]}...')" if len(text) > 20 else f"type('{text}')"
-            return json.dumps(paused)
+            return paused
 
         if not confirmed:
             warning = await _check_screen_safety(device)
             if warning:
                 warning["blocked_action"] = f"type('{text[:20]}...')" if len(text) > 20 else f"type('{text}')"
                 warning["hint"] = "The phone shows a sensitive screen. Describe it to the user and ask what to type. Call with confirmed=True after."
-                return json.dumps(warning)
+                return warning
 
         # Escape special characters for ADB input text
         safe = text.replace("\\", "\\\\").replace(" ", "%s").replace("'", "\\'").replace('"', '\\"')
         safe = safe.replace("&", "\\&").replace("<", "\\<").replace(">", "\\>")
         safe = safe.replace("|", "\\|").replace(";", "\\;").replace("(", "\\(").replace(")", "\\)")
         result = await _adb("shell", "input", "text", safe, device=device)
-        return json.dumps({"typed": text, "chars": len(text), "result": result or "ok"})
+        if _is_infra_error(result):
+            return {"error": result}
+        return {"typed": text, "chars": len(text), "result": result or "ok"}
 
     @server.tool()
-    async def sassy_phone_key(keycode: str, device: str = "") -> str:
+    async def sassy_phone_key(keycode: str, device: str = "") -> dict[str, Any]:
         """Send a key event. Common keycodes: KEYCODE_HOME, KEYCODE_BACK,
         KEYCODE_ENTER, KEYCODE_VOLUME_UP, KEYCODE_VOLUME_DOWN, KEYCODE_POWER,
         KEYCODE_APP_SWITCH (recent apps), KEYCODE_MENU.
@@ -694,15 +789,19 @@ def register(server):
         if not keycode.startswith("KEYCODE_"):
             keycode = f"KEYCODE_{keycode.upper()}"
         result = await _adb("shell", "input", "keyevent", keycode, device=device)
-        return json.dumps({"key": keycode, "result": result or "ok"})
+        if _is_infra_error(result):
+            return {"error": result}
+        return {"key": keycode, "result": result or "ok"}
 
     @server.tool()
-    async def sassy_phone_open(package: str, device: str = "") -> str:
+    async def sassy_phone_open(package: str, device: str = "") -> dict[str, Any]:
         """Open an app by package name. Use sassy_adb_packages to find package names."""
         result = await _adb("shell", "monkey", "-p", package,
                             "-c", "android.intent.category.LAUNCHER", "1",
                             device=device)
-        return json.dumps({"opened": package, "result": result or "ok"})
+        if _is_infra_error(result):
+            return {"error": result}
+        return {"opened": package, "result": result or "ok"}
 
     # ── Scrcpy (retained for live mirroring) ─────────────────────
 
@@ -771,7 +870,7 @@ def register(server):
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
             await asyncio.wait_for(proc.communicate(), timeout=time_limit + 10)
             return f"Recording saved to {output_path}"
-        except asyncio.TimeoutError:
+        except TimeoutError:
             try:
                 proc.kill()
             except Exception:

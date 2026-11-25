@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-KIEN2N36AD4X
 """Registry - Windows Registry read/write for forensics.
 
 The raw registry tools (sassy_reg_read/write/export) are Windows-only by
@@ -8,11 +11,11 @@ Linux.
 """
 
 import asyncio
-
-from sassymcp import _platform
-from sassymcp.modules._security import validate_path as _validate_path, is_protected_path as _is_protected_path
 from pathlib import Path
 
+from sassymcp import _platform
+from sassymcp.modules._security import is_protected_path as _is_protected_path
+from sassymcp.modules._security import validate_path as _validate_path
 
 # macOS / Linux persistence inventories (run via /bin/sh -c; no user input).
 _MAC_AUTORUNS = (
@@ -50,11 +53,12 @@ Triggered when the user asks about Windows persistence, what's running on
 boot, suspicious autorun entries, or generic forensic investigation.
 
 ### Triage order
-1. **Boot persistence** (highest signal-to-noise) — `sassy_reg_autoruns` returns
-   the union of all known autorun keys (Run, RunOnce, RunOnceEx, Image File
-   Execution Options, Services, Scheduled Tasks shadow). Look for unsigned
+1. **Boot persistence** (highest signal-to-noise) — `sassy_autorun_entries`
+   returns the Run and RunOnce keys under both HKLM and HKCU. Look for unsigned
    binaries, paths under %TEMP% or %APPDATA%, names that mimic legit Windows
-   processes (svhost.exe vs svchost.exe).
+   processes (svhost.exe vs svchost.exe). For Services, Scheduled Tasks, and
+   Image File Execution Options hijacks, follow up with `sassy_reg_read` on the
+   specific hive — they are not covered by this call.
 2. **Specific key inspection** — `sassy_reg_read key_path="HKLM\\Software\\..."`
    for ad-hoc reads. Use forward-slash escaping for nested values.
 3. **Export for offline analysis** — `sassy_reg_export key_path="..." output_file="..."`
@@ -94,7 +98,7 @@ async def _reg(*args, timeout=15):
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         out = stdout.decode("utf-8", errors="replace").strip()
         return out if out else stderr.decode("utf-8", errors="replace").strip()
-    except asyncio.TimeoutError:
+    except TimeoutError:
         try:
             proc.kill()
         except Exception:
@@ -129,10 +133,23 @@ def register(server):
         return await _reg("query", key_path)
 
     @server.tool()
-    async def sassy_reg_write(key_path: str, value_name: str, value_data: str, value_type: str = "REG_SZ") -> str:
-        """Write a Windows registry value (Windows only)."""
+    async def sassy_reg_write(key_path: str, value_name: str, value_data: str,
+                              value_type: str = "REG_SZ", confirm: str = "") -> str:
+        """Write a Windows registry value (Windows only).
+
+        Irreversible-enough that a mistaken write is a persistence / IFEO-class
+        change — requires confirm='YES' (exact, case-sensitive), matching
+        sassy_permission privilege mutations and sassy_audit_clear.
+        """
         if not _platform.IS_WINDOWS:
             return _reg_unsupported("`defaults write <domain> <key> <value>` (macOS)")
+        if confirm != "YES":
+            return (
+                "Refused: registry writes silently overwrite with /f and are "
+                "hard to undo. Re-run with confirm='YES' (exact, "
+                "case-sensitive) after verifying the key with sassy_reg_read "
+                "and preferably backing it up with sassy_reg_export."
+            )
         valid_types = {"REG_SZ", "REG_DWORD", "REG_QWORD", "REG_EXPAND_SZ", "REG_MULTI_SZ", "REG_BINARY"}
         if value_type not in valid_types:
             return f"Error: invalid type. Use: {', '.join(sorted(valid_types))}"
@@ -146,7 +163,12 @@ def register(server):
         ok, err = _validate_path(output_file)
         if not ok:
             return f"Error: {err}"
-        prot, reason = _is_protected_path(Path(output_file).absolute())
+        # Path.absolute() calls os.getcwd() and the protected-path check stats
+        # the filesystem — both block. Cheap individually, but this tool is
+        # async and the thread hop keeps the loop clean.
+        prot, reason = await asyncio.to_thread(
+            lambda: _is_protected_path(Path(output_file).absolute())
+        )
         if prot:
             return f"Refused: output_file is protected ({reason})"
         result = await _reg("export", key_path, output_file, "/y", timeout=30)

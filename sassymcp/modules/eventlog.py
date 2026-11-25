@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-P3B2IEWOCE4S
 """EventLog - System log (Windows Event Log / macOS unified log / Linux journald) + Android logcat.
 
 The host log source is selected at the head (see _platform):
@@ -12,8 +15,11 @@ import asyncio
 import re
 
 from sassymcp import _platform
+from sassymcp.modules._security import validate_adb_device, validate_adb_package
 
 _SAFE_NAME = re.compile(r'^[A-Za-z0-9 _\-\.]+$')
+
+_LOGCAT_LEVELS = ("V", "D", "I", "W", "E", "F", "S")
 
 
 def _sanitize(value: str, label: str) -> str:
@@ -84,6 +90,25 @@ def _linux_journal_argv(count: int, level: str, source: str, keyword: str = "") 
     return argv
 
 
+def _syslog_argv(count: int, source: str = "", keyword: str = "") -> list[str]:
+    """Plain-text syslog fallback for hosts without journald (Alpine, Void,
+    Gentoo/OpenRC, Devuan, Slackware, the BSDs). Inputs are _sanitize()d, and
+    are passed as positional args ($1..$3) so nothing is interpolated."""
+    script = (
+        'for f in /var/log/syslog /var/log/messages /var/log/system.log; do '
+        '[ -r "$f" ] && { log="$f"; break; }; done; '
+        '[ -z "$log" ] && { echo "No readable syslog file (try running as root, or install journald/rsyslog)"; exit 0; }; '
+        'tail -n 5000 "$log" | grep -i -- "$2" | grep -i -- "$3" | tail -n "$1"'
+    )
+    return ["/bin/sh", "-c", script, "sassymcp-syslog", str(count), source or "", keyword or ""]
+
+
+def _posix_log_argv(count: int, level: str, source: str, keyword: str = "") -> list[str]:
+    if _platform.which("journalctl"):
+        return _linux_journal_argv(count, level, source, keyword)
+    return _syslog_argv(count, source, keyword)
+
+
 async def _run(argv: list[str], timeout: int = 30) -> str:
     proc = await asyncio.create_subprocess_exec(
         *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
@@ -93,7 +118,7 @@ async def _run(argv: list[str], timeout: int = 30) -> str:
         if not out:
             out = stderr.decode("utf-8", errors="replace").strip()
         return out[:5000]
-    except asyncio.TimeoutError:
+    except TimeoutError:
         try:
             proc.kill()
         except Exception:
@@ -106,7 +131,7 @@ def register(server):
     async def sassy_eventlog(log_name: str = "System", count: int = 20, level: str = "", source: str = "") -> str:
         """Read the system log. Windows: log_name = System/Application/Security
         (Get-WinEvent). macOS: unified log (`log show`). Linux: journald
-        (`journalctl`). level: error/warning/information. source: provider /
+        (`journalctl`), or /var/log/syslog|messages without journald. level: error/warning/information. source: provider /
         process / subsystem name. log_name is Windows-only; ignored elsewhere."""
         log_name = _sanitize(log_name, "log_name")
         count = max(1, min(count, 1000))
@@ -115,7 +140,7 @@ def register(server):
         argv = _platform.pick(
             windows=_win_read_argv(log_name, count, level, source),
             macos=_macos_log_argv(count, level, source),
-            linux=_linux_journal_argv(count, level, source),
+            posix=_posix_log_argv(count, level, source),
             feature="system event log",
         )
         return await _run(argv)
@@ -130,7 +155,7 @@ def register(server):
         argv = _platform.pick(
             windows=_win_search_argv(log_name, keyword, count),
             macos=_macos_log_argv(count, "", "", keyword=keyword),
-            linux=_linux_journal_argv(count, "", "", keyword=keyword),
+            posix=_posix_log_argv(count, "", "", keyword=keyword),
             feature="system event log search",
         )
         return await _run(argv)
@@ -138,17 +163,38 @@ def register(server):
     @server.tool()
     async def sassy_android_logcat(tag: str = "", level: str = "", lines: int = 100, device: str = "") -> str:
         """Read Android logcat."""
-        args = ["adb"] + (["-s", device] if device else []) + ["logcat", "-d", "-t", str(lines)]
+        # Same validation as sassy_adb_logcat (audit 2.1/4.5): clamp lines to
+        # 1-10000, validate tag/level charset, validate the device selector.
+        lines = max(1, min(lines, 10000))
+        if device:
+            ok, err = validate_adb_device(device)
+            if not ok:
+                return f"Error: {err}"
+        if tag:
+            ok, err = validate_adb_package(tag)  # same safe charset as logcat filters
+            if not ok:
+                return f"Error: invalid tag: {tag}"
+        if level:
+            if level.upper() not in _LOGCAT_LEVELS:
+                return (f"Error: invalid level {level!r}: "
+                        f"must be one of {', '.join(_LOGCAT_LEVELS)}")
+            level = level.upper()
+        adb = _platform.resolve_adb()  # honors SASSYMCP_ADB, not just PATH
+        args = [adb] + (["-s", device] if device else []) + ["logcat", "-d", "-t", str(lines)]
         if tag and level:
             args.extend([f"{tag}:{level}", "*:S"])
         elif tag:
             args.extend([f"{tag}:V", "*:S"])
-        proc = await asyncio.create_subprocess_exec(
-            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        except FileNotFoundError:
+            return ("Error: adb not found — install Android platform-tools "
+                    "or set SASSYMCP_ADB to your adb binary.")
         try:
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
             return stdout.decode("utf-8", errors="replace").strip()
-        except asyncio.TimeoutError:
+        except TimeoutError:
             try:
                 proc.kill()
             except Exception:

@@ -1,19 +1,35 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-HV27N3GSARWZ
 [project]
 name = "sassymcp"
 dynamic = ["version"]
 description = "Unified MCP server for cross-platform (Windows/macOS/Linux) desktop automation, Android device control, security auditing, web inspection, cross-session communication, GitHub operations, and AI workflow persona"
 readme = "README.md"
 requires-python = ">=3.11"
-license = {text = "MIT"}
-authors = [{name = "SassyMCP Contributors"}]
+license = {text = "Proprietary. Free for personal and educational use; commercial use requires a license. See LICENSE and LICENSING.md."}
+authors = [{name = "Shane Smith / Sassy Consulting LLC"}]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: Other/Proprietary License",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development",
+]
 
 dependencies = [
-    "mcp>=1.0.0,<2.0.0",
+    "mcp>=1.28.1,<2.0.0",
     "psutil>=5.9.0",
     "pyautogui>=0.9.54",
-    "pillow>=10.0.0",
+    "pillow>=12.3.0",
     "uvicorn>=0.30.0",
-    "cryptography>=42.0.0",
+    "cryptography>=50.0.0",
     "httpx>=0.27.0",
     # Windows-only UI automation (UIA backend + win32 window control).
     "pywinauto>=0.6.8; sys_platform == 'win32'",
@@ -31,24 +47,71 @@ dependencies = [
     "python-xlib>=0.33; sys_platform == 'linux'",
 ]
 
+# Must stay BELOW `dependencies` — a [project.urls] table opened above it
+# makes TOML read the following `dependencies = [...]` as a key of THAT
+# table, and the build dies with "URL `dependencies` of field
+# `project.urls` must be a string". That killed the first v1.15.2 run.
+[project.urls]
+Homepage = "https://sassyconsultingllc.com/store"
+Repository = "https://github.com/sassyconsultingllc/SassyMCP"
+Issues = "https://github.com/sassyconsultingllc/SassyMCP/issues"
+Changelog = "https://github.com/sassyconsultingllc/SassyMCP/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
 dev = ["pytest", "ruff", "mypy"]
 reload = ["watchdog>=3.0.0"]
 vision = ["pytesseract>=0.3.10"]
 web = ["playwright>=1.40.0"]
+overlay = ["pystray>=0.19.0", "keyboard>=0.13.5"]
+desktop = ["pywebview>=5.0"]
 all = [
     "pytesseract>=0.3.10",
     "playwright>=1.40.0",
     "watchdog>=3.0.0",
+    "pystray>=0.19.0",
+    "keyboard>=0.13.5",
+    "pywebview>=5.0",
 ]
 
 [project.scripts]
 sassymcp = "sassymcp.server:main"
 sassymcp-install = "sassymcp.install:main"
+sassymcp-overlay = "sassymcp.overlay.app:main"
+sassymcp-brain = "sassymcp.desktop.app:main"
 
 [tool.ruff]
 target-version = "py311"
 line-length = 120
+
+[tool.ruff.lint]
+# NOTE: `select` is deliberately left at ruff's default rather than pinned.
+# Pinning an explicit rule set was tried and rejected: selecting whole families
+# (S, SIM, PLW, TRY, ...) took the baseline from 446 to 807 findings, 403 of them
+# `S101 assert` inside tests/ — where asserts are the entire point — plus S603/S607
+# subprocess rules that fight what a desktop-automation server does for a living.
+# Adopting rules only to blanket-ignore them is worse than not adopting them.
+#
+# The real risk of relying on the default is that it shifts between ruff releases,
+# so pin the ruff VERSION in the dev dependency instead of pinning rules here.
+ignore = [
+    # SassyMCP is a long-lived multi-session server: a tool body that raises must
+    # degrade into a structured error, never take down the process or wedge other
+    # sessions. `except Exception` around optional features, fallback paths and
+    # tool bodies is the deliberate architecture, not an oversight — see the
+    # audit wrapper in server.py ("never let audit break tools") and the
+    # supervisor's psutil fallbacks. These three rules flag ~390 such sites;
+    # narrowing them would trade resilience for lint cleanliness.
+    # Genuine swallowed-error bugs should be caught in review, not by these rules.
+    "BLE001",  # blind-except
+    "S110",    # try-except-pass
+    "S112",    # try-except-continue
+
+    # ASYNC109 objects to a `timeout` parameter on an async def and wants
+    # asyncio.timeout() instead. Many of these forward the value straight to
+    # subprocess/urllib on a worker thread, where an asyncio timeout would not
+    # apply. Kept visible as a design note rather than enforced.
+    "ASYNC109",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -60,6 +123,17 @@ path = "sassymcp/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["sassymcp"]
+
+[tool.hatch.build.targets.sdist]
+# Keep source distributions limited to runtime packaging surfaces.
+# Avoid shipping internal audits, tooling, and monorepo sidecars on PyPI.
+only-include = [
+    "sassymcp",
+    "README.md",
+    "LICENSE",
+    "LICENSING.md",
+    "pyproject.toml",
+]
 
 [tool.uv]
 # python managed by .python-version file
@@ -75,3 +149,6 @@ constraint-dependencies = ["pydantic-settings>=2.14.2"]
 markers = [
     "slow: long-running stress tests (use -m slow to run, deselected by default)"
 ]
+# _DELETE_ is the safe-delete staging area and _backups holds pre-edit
+# snapshots; both contain stale copies of real tests that must not be collected.
+norecursedirs = ["_DELETE_", "_backups", ".venv", "build", "dist"]

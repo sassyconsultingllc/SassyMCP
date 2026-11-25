@@ -1,9 +1,11 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-7JGYZYYCWXDY
 """SecurityAudit - Hash verification, permissions, certs, APK analysis, forensics."""
 
 import asyncio
 import hashlib
 import json
-from pathlib import Path
 
 from sassymcp import _platform
 from sassymcp.modules._security import is_sensitive_read_path
@@ -94,9 +96,23 @@ except Exception:
     pass
 
 
+# Probe every common Linux firewall front-end; distros differ (Kali/Ubuntu:
+# ufw or raw nftables; Fedora/RHEL: firewalld; Arch: nftables/iptables).
+# Read-only queries; non-root runs fall back to whatever is readable.
+_LINUX_FW = (
+    'found=0; '
+    'if command -v ufw >/dev/null 2>&1; then echo "== ufw =="; ufw status verbose 2>&1; found=1; fi; '
+    'if command -v firewall-cmd >/dev/null 2>&1; then echo "== firewalld =="; '
+    'firewall-cmd --state 2>&1 && firewall-cmd --list-all 2>&1; found=1; fi; '
+    'if command -v nft >/dev/null 2>&1; then echo "== nftables =="; nft list ruleset 2>&1 | head -150; found=1; '
+    'elif command -v iptables >/dev/null 2>&1; then echo "== iptables =="; iptables -L -n 2>&1; found=1; fi; '
+    '[ $found = 0 ] && echo "No firewall front-end found (ufw/firewalld/nft/iptables)"; true'
+)
+
+
 def register(server):
     @server.tool()
-    async def sassy_hash_file(path: str, algorithm: str = "sha256") -> str:
+    def sassy_hash_file(path: str, algorithm: str = "sha256") -> str:
         """Compute file hash. algorithm: md5, sha1, sha256, sha512.
 
         Refuses paths in the sensitive-read denylist (SSH keys, credential
@@ -119,7 +135,9 @@ def register(server):
     @server.tool()
     async def sassy_file_permissions(path: str) -> str:
         """Check file/directory permissions. Windows: ACLs (Get-Acl). macOS:
-        POSIX mode + ACLs + flags (ls -led@). Linux: getfacl, or ls -lad."""
+        POSIX mode + ACLs + flags (ls -led@). Linux: getfacl, or ls -lad.
+        Surfaces only metadata/ACLs — never file bytes — so the
+        sensitive-read denylist does not apply here."""
         # argv form means `path` is a single token (no shell), so no escaping
         # is needed on POSIX; the PS branch still escapes for its quoted string.
         safe_path = path.replace("'", "''")
@@ -141,8 +159,8 @@ def register(server):
     async def sassy_cert_check(target: str, port: int = 443) -> str:
         """Check TLS certificate for a host."""
         import re
-        import ssl
         import socket
+        import ssl
         if not re.match(r'^[A-Za-z0-9\.\-\:]+$', target):
             return f"Error: invalid target: {target!r}"
         # Use synchronous ssl socket — avoids Python 3.14 asyncio
@@ -150,9 +168,11 @@ def register(server):
         ctx = ssl.create_default_context()
         try:
             def _get_cert():
-                with socket.create_connection((target, port), timeout=10) as sock:
-                    with ctx.wrap_socket(sock, server_hostname=target) as ssock:
-                        return ssock.getpeercert()
+                with (
+                    socket.create_connection((target, port), timeout=10) as sock,
+                    ctx.wrap_socket(sock, server_hostname=target) as ssock,
+                ):
+                    return ssock.getpeercert()
             cert = await asyncio.get_event_loop().run_in_executor(None, _get_cert)
         except Exception as e:
             return json.dumps({"error": str(e)})
@@ -201,14 +221,16 @@ def register(server):
     @server.tool()
     async def sassy_firewall_status() -> str:
         """Check the host firewall. Windows: netsh advfirewall. macOS:
-        Application Firewall (socketfilterfw). Linux: ufw, or iptables."""
+        Application Firewall (socketfilterfw) + pf. Linux: ufw, firewalld,
+        nftables, or iptables (whichever is present). BSD: pf / ipfw."""
         argv = _platform.pick(
             windows=["netsh", "advfirewall", "show", "allprofiles"],
             macos=["/usr/libexec/ApplicationFirewall/socketfilterfw",
                    "--getglobalstate", "--getstealthmode",
                    "--getblockall", "--getloggingmode"],
-            linux=(["ufw", "status", "verbose"] if _platform.which("ufw")
-                   else ["iptables", "-L", "-n"]),
+            linux=["/bin/sh", "-c", _LINUX_FW],
+            posix=["/bin/sh", "-c",
+                   "pfctl -s info 2>&1 || ipfw list 2>&1 || echo 'no pf/ipfw found'"],
             feature="firewall status",
         )
         proc = await asyncio.create_subprocess_exec(
@@ -219,9 +241,21 @@ def register(server):
 
     @server.tool()
     async def sassy_open_ports() -> str:
-        """List all listening ports (netstat on every OS; LISTEN/LISTENING)."""
+        """List all listening ports (netstat; `ss` on Linux without net-tools)."""
+        argv = _platform.pick(
+            windows=["netstat", "-an"],
+            macos=["netstat", "-an"],
+            linux=_platform.first_available(["ss", "-tuln"], ["netstat", "-an"]),
+            posix=_platform.first_available(["netstat", "-an"], ["sockstat", "-l"]),
+        )
+        if argv[:2] == ["ss", "-tuln"]:
+            # ss marks UDP listeners UNCONN; keep both so UDP services show.
+            proc = await asyncio.create_subprocess_exec(
+                *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+            return stdout.decode("utf-8", errors="replace").strip()
         proc = await asyncio.create_subprocess_exec(
-            "netstat", "-an",
+            *argv,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
         # Windows prints state "LISTENING"; macOS/Linux print "LISTEN".
@@ -255,13 +289,20 @@ def register(server):
         )
         linux_sh = (
             'if command -v clamscan >/dev/null 2>&1; then clamscan --version; '
-            'systemctl is-active clamav-daemon 2>/dev/null; '
-            'else echo "No on-access AV (ClamAV) detected. Check distro security tooling."; fi'
+            # Debian/Kali: clamav-daemon; Fedora/RHEL: clamd@scan; Arch/SUSE: clamd
+            'for u in clamav-daemon clamd@scan clamd; do '
+            's=$(systemctl is-active "$u" 2>/dev/null) && echo "$u: $s"; done; '
+            'else echo "No on-access AV (ClamAV) detected."; fi; '
+            'echo "== MAC =="; '
+            '(command -v getenforce >/dev/null 2>&1 && echo "SELinux: $(getenforce)") ; '
+            '(command -v aa-enabled >/dev/null 2>&1 && echo "AppArmor: $(aa-enabled 2>&1)") ; '
+            'true'
         )
         argv = _platform.pick(
             windows=["powershell.exe", "-NoProfile", "-Command", win_ps],
             macos=["/bin/sh", "-c", mac_sh],
             linux=["/bin/sh", "-c", linux_sh],
+            posix=["/bin/sh", "-c", "freebsd-version 2>/dev/null; securelevel=$(sysctl -n kern.securelevel 2>/dev/null) && echo kern.securelevel=$securelevel; command -v clamscan >/dev/null && clamscan --version || echo 'No ClamAV detected.'"],
             feature="endpoint protection status",
         )
         proc = await asyncio.create_subprocess_exec(

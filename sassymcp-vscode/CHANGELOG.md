@@ -1,6 +1,38 @@
+<!--
+   Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+   Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+   CodeMark: SCLLC1-SassyMCP-EQEZTC7TCMRF
+-->
 # Changelog
 
-*Last updated: 2026-05-20*
+*Last updated: 2026-09-24*
+
+Extension version tracks the server (`sassymcp/__init__.py`). CI rewrites this
+package.json on tag so the VSIX filename matches the GitHub release.
+
+## 1.16.0 — 2026-09-24
+
+Aligned with server v1.16.0 (tool metadata, MCP spec-gap refusals, iPhone
+group). No extension feature change beyond the version stamp.
+
+## 1.15.1 — 2026-09-14
+
+Release-pipeline repair on the server repo (macos-15-intel / macos-15 runners,
+PyPI `skip-existing`). No extension feature change. Version stamp aligned to
+the server so the GitHub Release VSIX is `sassymcp-1.15.1.vsix`.
+
+## 1.15.0 — 2026-09-14
+
+Server MINOR: `sassy_batch`, structured tool output for 93 tools, event-loop
+hygiene. Cockpit/status bar still read the same local `~/.sassymcp/` brain.
+Clients that parsed tool `result` as a JSON *string* must read the object
+directly after upgrading the server.
+
+## 1.14.4 — 2026-08-14
+
+Server: offline fallback + dependency pins (including vscode npm transitives
+already in this package.json `overrides`). Extension still auto-configs MCP
+clients; no Pro/free split (removed in 1.13.0).
 
 ## 1.5.0 — 2026-05-20
 

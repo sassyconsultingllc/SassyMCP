@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-RPZQEGCMINKM
 """Runtime Config — Full DC-parity dynamic configuration and system info.
 
 Provides get_config (rich system snapshot), set_config_value,
@@ -11,16 +14,19 @@ import os
 import platform
 import sys
 import time
-from pathlib import Path
+from typing import Any
 
-from sassymcp import __version__
+from sassymcp import __version__, _platform
 from sassymcp._atomic import atomic_write_json
-from sassymcp._paths import HOME as CONFIG_DIR, CONFIG_FILE
+from sassymcp._paths import CONFIG_FILE
+from sassymcp._paths import HOME as CONFIG_DIR
 
 logger = logging.getLogger("sassymcp.config")
 
 _DEFAULTS = {
-    "defaultShell": "powershell",
+    # Host-appropriate: powershell on Windows, the login shell (zsh/bash/sh)
+    # on macOS/Linux/BSD. Resolved once at import via the platform head.
+    "defaultShell": _platform.default_shell(),
     "fileReadLineLimit": 1000,
     "fileWriteLineLimit": 500,
     "allowedDirectories": [],
@@ -57,6 +63,20 @@ _DEFAULTS = {
     "panel.enabled": False,
     # panel.port: preferred loopback port (auto-increments if taken).
     "panel.port": 8765,
+    # ── HTTP bind (sassymcp._httpbind) ─────────────────────────────────
+    # http.host / http.port: bind address for --http / --serve mode.
+    # Precedence: CLI flags (--host/--port) > SASSYMCP_HOST/SASSYMCP_PORT
+    # env vars > these keys > built-in defaults (127.0.0.1:21001).
+    # Changing them while the server runs triggers an automatic restart
+    # (standalone) or supervised respawn so the new port takes effect
+    # without a manual restart.
+    "http.host": "127.0.0.1",
+    "http.port": 21001,
+    # http.ssl: serve HTTPS with the self-signed cert (same as --ssl).
+    "http.ssl": False,
+    # http.liveReload: watch config.json and apply changes without a manual
+    # restart (SASSYMCP_NO_CONFIG_WATCH=1 disables the watcher entirely).
+    "http.liveReload": True,
 }
 
 _config: dict = {}
@@ -64,7 +84,9 @@ _start_time = time.time()
 
 
 def _load():
-    global _config
+    # No `global _config` needed: this only mutates the dict in place via
+    # .update(), it never rebinds the name. Declaring global here implied a
+    # rebinding that does not happen.
     try:
         if CONFIG_FILE.exists():
             raw = json.loads(CONFIG_FILE.read_text())
@@ -86,6 +108,26 @@ def get(key: str, default=None):
     if not _config:
         _load()
     return _config.get(key, default)
+
+
+def reload():
+    """Re-read config.json from disk, replacing the in-memory config.
+
+    Used by the server's live-reload watcher so edits made while the
+    server runs take effect. On a corrupt/unreadable file the last good
+    config is kept (fail static, never fail empty).
+    """
+    fresh: dict = {}
+    try:
+        if CONFIG_FILE.exists():
+            fresh.update(json.loads(CONFIG_FILE.read_text()))
+    except Exception as e:
+        logger.warning(f"Failed to reload config (keeping previous): {e}")
+        return
+    for k, v in _DEFAULTS.items():
+        fresh.setdefault(k, v)
+    _config.clear()
+    _config.update(fresh)
 
 
 def set_val(key: str, value):
@@ -167,7 +209,7 @@ def _get_tool_usage_stats() -> dict:
 def register(server):
 
     @server.tool()
-    async def sassy_get_config() -> str:
+    def sassy_get_config() -> dict[str, Any]:
         """Get full SassyMCP configuration and system info.
 
         Returns: config settings, system info (OS, Python, memory, disk),
@@ -189,10 +231,10 @@ def register(server):
             },
             "toolUsage": _get_tool_usage_stats(),
         }
-        return json.dumps(result, indent=2)
+        return result
 
     @server.tool()
-    async def sassy_set_config(key: str, value: str) -> str:
+    def sassy_set_config(key: str, value: str) -> str:
         """Set a runtime config value.
 
         Supported keys: defaultShell, fileReadLineLimit,
@@ -210,11 +252,12 @@ def register(server):
         return json.dumps({"key": key, "old": old, "new": parsed})
 
     @server.tool()
-    async def sassy_permission(
+    def sassy_permission(
         action: str = "status",
         mode: str = "",
         path: str = "",
         rule: str = "",
+        confirm: str = "",
     ) -> str:
         """View and control the permission engine (sassymcp.policy).
 
@@ -233,14 +276,23 @@ def register(server):
                           bypass  — allow all except protected paths
                           ""      — clear the override; derive from the legacy
                                     interceptor.destructiveAction setting
-          add_root      add path= to permission.sandboxRoots (the jail)
-          remove_root   remove path= from permission.sandboxRoots
+                        Switching to bypass is privilege escalation: it
+                        disables the destructive-pattern gating for shell
+                        and file tools (only protected paths stay blocked),
+                        so it requires confirm='YES' (exact, case-sensitive).
+          add_root      add path= to permission.sandboxRoots (the jail);
+                        widens the sandbox, so requires confirm='YES'
+          remove_root   remove path= from permission.sandboxRoots (shrinks
+                        the jail; no confirmation needed)
           add_rule      append rule= (JSON: {"action","tool","path","command"})
                         to permission.rules; first match wins, evaluated before
-                        the mode default
-          clear_rules   remove all rules
+                        the mode default. Rules can allow destructive tools,
+                        so this requires confirm='YES'
+          clear_rules   remove all rules; requires confirm='YES'
         """
         from sassymcp import policy
+
+        _PRIVILEGE_ACTIONS = ("add_root", "add_rule", "clear_rules")
 
         def _status() -> dict:
             return {
@@ -261,10 +313,32 @@ def register(server):
         if action == "status":
             return json.dumps(_status(), indent=2)
 
+        # Privilege mutations (audit C F1 parity with set_mode=bypass): adding
+        # a sandbox root widens the jail, and adding/clearing rules can
+        # silently allow destructive tools — all require explicit consent.
+        if action in _PRIVILEGE_ACTIONS and confirm != "YES":
+            return (
+                f"Refused: '{action}' is a privilege mutation of the permission "
+                "engine. add_root widens the sandbox jail, and add_rule/"
+                "clear_rules can grant destructive tools a free pass, so any "
+                "MCP client that can call this tool could weaken your safety "
+                "gating. Re-run with confirm='YES' (exact, case-sensitive) "
+                "to acknowledge this."
+            )
+
         if action == "set_mode":
             m = (mode or "").strip().lower()
             if m and m not in policy.VALID_MODES:
                 return f"Invalid mode {mode!r}. Valid: {list(policy.VALID_MODES)} (or '' to clear)"
+            if m == "bypass" and confirm != "YES":
+                return (
+                    "Refused: set_mode to 'bypass' requires confirm='YES'. "
+                    "Bypass mode disables the destructive-pattern gating for "
+                    "shell and file tools (only protected paths stay blocked), "
+                    "so any MCP client that can call this tool could then run "
+                    "destructive operations without further checks. Re-run "
+                    "with confirm='YES' to acknowledge this risk."
+                )
             set_val("permission.mode", m)
             return json.dumps({"set": "permission.mode", "value": m or "(cleared)",
                                "effective_mode": policy.current_mode()}, indent=2)
@@ -303,19 +377,31 @@ def register(server):
                 "remove_root, add_rule, clear_rules")
 
     @server.tool()
-    async def sassy_panel(action: str = "status") -> str:
+    def sassy_panel(action: str = "status") -> dict[str, Any]:
         """Control the SassyMCP Control Panel — the loopback web UI for the
         permission engine, settings, event log, and classifiers.
 
+        The bearer token is revealed ONLY by the explicit `url` or `rotate`
+        actions. `status` and `start` deliberately return a tokenless URL so
+        the token is not handed to every caller that checks panel health.
+
         action:
-          status (default) — running state + URL (with token) if up
-          start            — launch the panel and enable it at future startups
+          status (default) — running state + tokenless URL (never the token)
+          start            — launch the panel and enable it at future startups;
+                             returns a tokenless URL; call action="url" for the
+                             tokenized link to open in a browser
           stop             — shut the panel down and disable auto-start
-          url              — print the tokenized URL (does not start it)
+          url              — print the tokenized URL (reveals the bearer token;
+                             does not start the panel)
+          rotate           — regenerate the panel bearer token, persist it to
+                             the token file, audit-log the rotation, and return
+                             the NEW token (the old token stops working
+                             immediately, no restart needed)
 
         The panel binds 127.0.0.1 only and requires the per-install token
-        (stored owner-only in ~/.sassymcp/control_panel.token). Open the
-        printed URL in a browser on this machine.
+        (stored owner-only in ~/.sassymcp/control_panel.token). Send the token
+        in the X-Panel-Token header (the ?token= query form still works but is
+        deprecated).
         """
         from sassymcp import control_panel as cp
         action = (action or "status").strip().lower()
@@ -325,26 +411,47 @@ def register(server):
         if action == "start":
             info = cp.start_panel(port=port)
             set_val("panel.enabled", True)
-            return json.dumps({"started": cp.is_running(), **info}, indent=2)
+            out: dict[str, Any] = {"started": cp.is_running(),
+                                   "url": cp.panel_base_url(port=port),
+                                   "port": cp.current_port() or port}
+            if info.get("error"):
+                out["error"] = info["error"]
+            else:
+                # tokenless on purpose — the caller must explicitly ask for it
+                out["hint"] = 'call sassy_panel(action="url") for the tokenized URL'
+            return out
         if action == "stop":
             cp.stop_panel()
             set_val("panel.enabled", False)
-            return json.dumps({"running": cp.is_running(), "note": "auto-start disabled"})
+            return {"running": cp.is_running(), "note": "auto-start disabled"}
         if action == "url":
             # panel_info reports the actual bound port when running, else `port`.
-            return json.dumps(cp.panel_info(port=port), indent=2)
-        # status
-        return json.dumps({"running": cp.is_running(),
-                           "enabled_at_startup": get("panel.enabled", False),
-                           **cp.panel_info(port=port)},
-                          indent=2)
+            return cp.panel_info(port=port)
+        if action == "rotate":
+            new_token = cp.rotate_panel_token()
+            # the MCP audit wrapper logs the tool call itself; this extra event
+            # mirrors the panel-mutation audit entries for settings/rules
+            try:
+                from sassymcp.modules.audit import log_tool_call
+                log_tool_call("control_panel",
+                              {"actor": "mcp:sassy_panel", "api": "rotate_token"},
+                              0)
+            except Exception:
+                pass
+            return {"rotated": True, **cp.panel_info(port=port)}
+        # status — tokenless by design (audit C F2); unknown actions also land
+        # here, matching the historical fall-through behavior
+        return {"running": cp.is_running(),
+                "enabled_at_startup": get("panel.enabled", False),
+                "url": cp.panel_base_url(port=port),
+                "port": cp.current_port() or port}
 
     @server.tool()
-    async def sassy_recent_tool_calls(
+    def sassy_recent_tool_calls(
         max_results: int = 50,
         tool_name: str = "",
         since_minutes: int = 0,
-    ) -> str:
+    ) -> dict[str, Any]:
         """Get recent tool call history from audit log.
 
         max_results: how many to return (1-1000)
@@ -353,7 +460,7 @@ def register(server):
         """
         audit_file = CONFIG_DIR / "audit.jsonl"
         if not audit_file.exists():
-            return json.dumps({"calls": [], "note": "No audit log found"})
+            return {"calls": [], "note": "No audit log found"}
 
         cutoff = 0.0
         if since_minutes > 0:
@@ -377,12 +484,12 @@ def register(server):
                     continue
                 calls.append(entry)
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return {"error": str(e)}
 
         # Return most recent N
         calls = calls[-max_results:]
-        return json.dumps({
+        return {
             "calls": calls,
             "count": len(calls),
             "total_in_log": total_lines,
-        }, indent=2)
+        }

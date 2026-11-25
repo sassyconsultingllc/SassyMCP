@@ -1,17 +1,19 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-ABZHMHV6D3TX
 """External tool bootstrap -- PATH injection and winget-based auto-install.
 
 Runs at startup to inject bundled tools/ into PATH and warn about missing
 required tools. Tesseract is always required (vision/OCR uses it unconditionally).
 """
 
-import json
+import asyncio
 import logging
 import os
 import shutil
 import sys
-import asyncio
 from pathlib import Path
-from typing import Optional
+from typing import Any
 
 from sassymcp import _platform
 
@@ -52,6 +54,19 @@ _TOOL_DEFS = {
         "description": "Android screen mirror -- sassy_scrcpy_start, sassy_scrcpy_record",
         "optional_for": "android",
     },
+    "idevice": {
+        # Representative binary; the suite ships idevice_id, ideviceinfo,
+        # idevicescreenshot, idevicesyslog, ideviceinstaller, idevicepair.
+        "binary": "idevice_id", "subdir": "libimobiledevice", "logical": "idevice",
+        # No reliable winget id on Windows -- install happens in WSL2 or on
+        # a macOS/Linux host instead.
+        "pkg": {"windows": None, "macos": "libimobiledevice", "linux": "libimobiledevice-utils"},
+        "extra_paths": _platform.pick(
+            macos=["/opt/homebrew/bin/idevice_id", "/usr/local/bin/idevice_id"],
+            linux=["/usr/bin/idevice_id"], default=[]),
+        "description": "libimobiledevice suite -- required for all sassy_iphone_* tools (experimental iOS support)",
+        "optional_for": "iphone",
+    },
     "nmap": {
         "binary": "nmap", "subdir": "nmap",
         "pkg": {"windows": "Insecure.Nmap", "macos": "nmap", "linux": "nmap"},
@@ -63,7 +78,7 @@ _TOOL_DEFS = {
     },
     "plink": {
         # POSIX hosts have native ssh; plink is the Windows/PuTTY stand-in.
-        "binary": _platform.pick(windows="plink", default="ssh"), "subdir": "putty",
+        "binary": _platform.pick(windows="plink", default="ssh"), "subdir": "putty", "logical": "ssh",
         "pkg": {"windows": "PuTTY.PuTTY", "macos": "putty", "linux": "putty-tools"},
         "extra_paths": _platform.pick(
             windows=[r"C:\Program Files\PuTTY\plink.exe", r"C:\Program Files (x86)\PuTTY\plink.exe", r"C:\ProgramData\chocolatey\bin\plink.exe"],
@@ -82,23 +97,31 @@ _TOOL_DEFS = {
 }
 
 
-def _pkg_id(info: dict) -> Optional[str]:
-    """Host package-manager id for a tool def, or None if not packaged here."""
-    return (info.get("pkg") or {}).get(_platform.OS)
+def _pkg_id(info: dict) -> str | None:
+    """Host package-manager id for a tool def, or None if not packaged here.
+
+    Windows/macOS use the static `pkg` table; Linux/BSD resolve through the
+    distro-aware table in _platform (apt/dnf/pacman/zypper/apk/pkg/...), so
+    Kali, Fedora, Arch, openSUSE, Alpine and FreeBSD all get correct names.
+    """
+    if _platform.IS_WINDOWS or _platform.IS_MACOS:
+        return (info.get("pkg") or {}).get(_platform.OS)
+    logical = info.get("logical") or info["binary"]
+    return _platform.pkg_name(logical)
 
 
 def _pkg_manager() -> str:
     """Name of the host package manager used by _pkg_install."""
-    return _platform.pick(windows="winget", macos="brew", linux="apt-get", default="(none)")
+    return _platform.pkg_manager() or "(none)"
 
 
-def _get_exe_dir() -> Optional[Path]:
+def _get_exe_dir() -> Path | None:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent
     return Path(__file__).parent.parent.parent
 
 
-def _find_bundled_tools_dir() -> Optional[Path]:
+def _find_bundled_tools_dir() -> Path | None:
     d = _get_exe_dir()
     if d is None:
         return None
@@ -106,7 +129,7 @@ def _find_bundled_tools_dir() -> Optional[Path]:
     return t if t.is_dir() else None
 
 
-def _which_tool(name: str) -> Optional[str]:
+def _which_tool(name: str) -> str | None:
     info = _TOOL_DEFS.get(name)
     if not info:
         return None
@@ -148,18 +171,15 @@ _spawn = getattr(__import__("asyncio"), "create_subprocess_" + "exec")
 
 def _install_argv(pkg_id: str) -> list[str]:
     """argv for installing `pkg_id` via the host package manager."""
-    return _platform.pick(
-        windows=["winget", "install", "--id", pkg_id, "--silent",
-                 "--accept-source-agreements", "--accept-package-agreements"],
-        macos=["brew", "install", pkg_id],
-        linux=["sudo", "apt-get", "install", "-y", pkg_id],
-        default=["true"],
-    )
+    return _platform.install_argv(pkg_id) or ["false"]
 
 
 async def _pkg_install(pkg_id: str, timeout: int = 180) -> dict:
-    """Install a package via the host manager (winget / brew / apt-get)."""
+    """Install a package via the host manager (winget / brew / apt / dnf / pacman / ...)."""
     mgr = _pkg_manager()
+    if mgr == "(none)":
+        return {"error": f"no supported package manager found on {_platform.OS_LABEL}",
+                "success": False}
     if not pkg_id:
         return {"error": f"no {mgr} package id for this tool on {_platform.OS_LABEL}", "success": False}
     try:
@@ -170,15 +190,19 @@ async def _pkg_install(pkg_id: str, timeout: int = 180) -> dict:
         out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         o = out.decode("utf-8", errors="replace").strip()
         e = err.decode("utf-8", errors="replace").strip()
-        return {"manager": mgr, "exit_code": proc.returncode, "success": proc.returncode == 0,
-                "stdout": o[-500:], "stderr": e[-300:]}
-    except asyncio.TimeoutError:
+        res = {"manager": mgr, "exit_code": proc.returncode, "success": proc.returncode == 0,
+               "stdout": o[-500:], "stderr": e[-300:]}
+        if proc.returncode != 0 and "password is required" in e:
+            res["hint"] = ("sudo needs a password and this server has no TTY. Run it yourself: "
+                           + " ".join(a for a in _install_argv(pkg_id) if a != "-n"))
+        return res
+    except TimeoutError:
         return {"error": f"{mgr} timed out after {timeout}s", "success": False}
     except FileNotFoundError:
         hint = _platform.pick(
             windows="Install App Installer (winget) from Microsoft Store.",
             macos="Install Homebrew from https://brew.sh.",
-            linux="apt-get not found; use your distro package manager.",
+            linux="No supported package manager found (apt/dnf/pacman/zypper/apk/pkg).",
             default="No package manager available.",
         )
         return {"error": f"{mgr} not found", "hint": hint, "success": False}
@@ -188,15 +212,15 @@ async def _pkg_install(pkg_id: str, timeout: int = 180) -> dict:
 
 def register(server):
     @server.tool()
-    async def sassy_setup_tools(action: str = "check", tool_name: str = "") -> str:
+    async def sassy_setup_tools(action: str = "check", tool_name: str = "") -> dict[str, Any]:
         """Manage external tool dependencies (tesseract, adb, nmap, plink, scrcpy, cloudflared).
 
         action: check | install | install_required | add_to_path
         tool_name: which tool to install (only for action=install)
 
         check            -- report all tools: found, path, required flag
-        install          -- winget-install a specific tool by name
-        install_required -- winget-install any missing required tools (always: tesseract)
+        install          -- install a specific tool via the host package manager
+        install_required -- install any missing required tools (always: tesseract)
         add_to_path      -- re-run PATH bootstrap (after placing tools in tools/ dir)
 
         tesseract is always required -- OCR/vision tools need it unconditionally.
@@ -214,45 +238,45 @@ def register(server):
                 }
             mreq = [n for n, v in res.items() if not v["found"] and v["required"]]
             mopt = [n for n, v in res.items() if not v["found"] and not v["required"]]
-            return json.dumps({
+            return {
                 "tools": res,
                 "summary": {
                     "installed": [n for n, v in res.items() if v["found"]],
                     "missing_required": mreq, "missing_optional": mopt,
                 },
                 "hint": "Run action=install_required to auto-install missing required tools." if mreq else "All required tools present.",
-            }, indent=2)
+            }
 
         elif action == "install_required":
             miss = [n for n in _REQUIRED_TOOLS if not _which_tool(n)]
             if not miss:
-                return json.dumps({"status": "ok", "message": "All required tools already installed."})
+                return {"status": "ok", "message": "All required tools already installed."}
             r = {}
             for n in miss:
                 r[n] = await _pkg_install(_pkg_id(_TOOL_DEFS[n]))
-            return json.dumps({
+            return {
                 "action": "install_required", "package_manager": _pkg_manager(), "results": r,
                 "next_step": "Restart SassyMCP or call sassy_setup_tools(action=add_to_path) to pick up new binaries.",
-            }, indent=2)
+            }
 
         elif action == "install":
             if not tool_name or tool_name not in _TOOL_DEFS:
-                return json.dumps({"error": f"Unknown tool: {tool_name!r}", "valid_names": list(_TOOL_DEFS.keys())})
+                return {"error": f"Unknown tool: {tool_name!r}", "valid_names": list(_TOOL_DEFS.keys())}
             r = await _pkg_install(_pkg_id(_TOOL_DEFS[tool_name]))
-            return json.dumps({
+            return {
                 "tool": tool_name, "package_manager": _pkg_manager(),
                 "package_id": _pkg_id(_TOOL_DEFS[tool_name]), **r,
                 "next_step": "Restart SassyMCP or call sassy_setup_tools(action=add_to_path) to pick up the new binary.",
-            }, indent=2)
+            }
 
         elif action == "add_to_path":
             r = bootstrap()
             injected = r["injected_paths"]
-            return json.dumps({
+            return {
                 "action": "add_to_path", "injected_paths": injected,
                 "missing_required": r["missing_required"],
                 "message": f"PATH refreshed -- added {len(injected)} tool dirs." if injected else "No bundled tools/ dir found adjacent to exe.",
-            }, indent=2)
+            }
 
-        return json.dumps({"error": f"Unknown action: {action!r}", "valid_actions": ["check", "install", "install_required", "add_to_path"]})
+        return {"error": f"Unknown action: {action!r}", "valid_actions": ["check", "install", "install_required", "add_to_path"]}
 

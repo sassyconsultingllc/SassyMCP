@@ -1,3 +1,8 @@
+<!--
+   Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+   Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+   CodeMark: SCLLC1-SassyMCP-NZ4XLWNGDXJA
+-->
 # Cloudflare Tunnel setup for SassyMCP
 
 This guide takes a fresh install of SassyMCP from "localhost only" to
@@ -17,9 +22,7 @@ hostname with HTTP 421.
 1. A Cloudflare account with a domain you own (the apex zone must be on
    Cloudflare's nameservers).
 2. `cloudflared` on PATH. Windows: `winget install Cloudflare.cloudflared`.
-3. `sassymcp.exe` extracted from the portable zip, or installed via the
-   DXT / VSIX / `sassymcp-install` paths. The tunnel launcher expects
-   the exe next to it (`%~dp0sassymcp.exe`).
+3. `sassymcp.exe` from a GitHub release (or `pip install sassymcp` / DXT / VSIX). The tunnel launcher (`deploy/start-tunnel.bat` or a copy next to the exe) expects `sassymcp.exe` beside it (`%~dp0sassymcp.exe`).
 4. A SassyMCP auth token. Generate one with:
    ```powershell
    $b = New-Object byte[] 32
@@ -86,7 +89,8 @@ any request arriving with `Host: mcp.<your-domain>.tld` is rejected
 with HTTP 421 — exactly what you want before you've configured a real
 hostname, exactly *not* what you want now.
 
-Set the env var at User scope so it persists across reboots:
+For a **named tunnel** (stable hostname) set the env var at User scope
+so it persists across reboots:
 
 ```powershell
 [Environment]::SetEnvironmentVariable(
@@ -98,6 +102,80 @@ Set the env var at User scope so it persists across reboots:
 
 Comma-separated. Order doesn't matter. Open a new shell so the bridge
 inherits the new value.
+
+For a **quick tunnel** (random `*.trycloudflare.com` hostname, new on
+every start) use the hot-swap flow instead — see "Quick tunnels" below.
+The env var is only the *initial seed*; once
+`~/.sassymcp/allowed_hosts` exists, that file is the source of truth.
+
+## Quick tunnels (v1.21.0+) — no restart needed
+
+A quick tunnel mints a hostname you only learn *after* it starts, which
+used to be a catch-22: the hostname had to be in
+`SASSYMCP_ALLOWED_HOSTS` before the server started, but it didn't exist
+until after. Since v1.21.0 the allowlist is file-backed and hot-swappable.
+
+**One command (easiest):**
+
+```powershell
+sassymcp tunnel
+```
+
+That starts a quick tunnel to the local bridge
+(`http://127.0.0.1:21001` by default; `--host` / `--port` override it),
+reads the minted `*.trycloudflare.com` hostname out of cloudflared's
+output, and allow-lists it automatically — the running server accepts
+it on its next request, no restart, no manual step. It runs in the
+foreground until Ctrl-C, like `start-tunnel.bat`. If nothing is
+listening on the bridge port yet it warns you (the tunnel would 502
+until the bridge starts) and keeps going.
+
+**Manual flow (same result):**
+
+```powershell
+# 1. Start the tunnel (note the hostname it prints, e.g. abc.trycloudflare.com)
+cloudflared tunnel --url http://127.0.0.1:21001
+
+# 2. Allow it — takes effect on the running server's NEXT request, no restart
+sassymcp allow-host abc.trycloudflare.com
+
+# 3. Done. Requests to https://abc.trycloudflare.com/mcp now pass.
+```
+
+Notes:
+
+- `sassymcp allow-host <hostname>` appends to
+  `~/.sassymcp/allowed_hosts` (one host per line, `#` comments). The
+  first write seeds the file from `SASSYMCP_ALLOWED_HOSTS`, so hosts
+  the env var already allowed stay allowed.
+- `sassymcp list-hosts` shows the effective allowlist;
+  `sassymcp deny-host <hostname>` removes one (also live, next request).
+  Loopback (`localhost`, `127.0.0.1`) is always allowed and can't be removed.
+- The file also seeds the *next* boot, so a host allowed once stays
+  allowed across restarts until you `deny-host` it.
+- Enforcement is unchanged: unknown Hosts still get HTTP 421, exactly
+  as before — only the list contents are live now.
+
+### Suffix wildcards (opt-in only)
+
+If the hostname changes on every run and you don't want to allow-list
+each one, you can allow a whole suffix instead:
+
+```powershell
+sassymcp allow-host *.trycloudflare.com
+```
+
+This is EXPLICIT opt-in — wildcards are never added by default. The
+tradeoff, stated plainly: with `*.trycloudflare.com`, **any** hostname
+under that suffix passes the Host check, including a tunnel somebody
+else minted. The bearer token becomes the only gate for those hosts,
+and the DNS-rebinding protection the Host check provides is effectively
+off for that suffix. Prefer the exact hostname (`allow-host
+<exact-host>`, or `sassymcp tunnel`) whenever you can; use the wildcard
+only when the hostname genuinely changes every run and you accept
+that. Never combine a wildcard with auth disabled
+(`SASSYMCP_NO_AUTH=1`) — the server logs a loud warning if you do.
+A bare `*` is rejected; wildcards only ever take the `*.suffix` form.
 
 ## Step 6 — Run it
 
@@ -131,20 +209,53 @@ curl.exe -sS -X POST `
 
 You should get the MCP `initialize` response in JSON or SSE form, not a
 `421 Misdirected Request` or `403 Forbidden`. If you get 421, your
-`SASSYMCP_ALLOWED_HOSTS` is wrong (or the bridge process predates your
-last env-var change — restart it). If you get 403, your bearer token
+allowlist doesn't include the `Host:` header value the client sent —
+add it with `sassymcp allow-host <hostname>` (live, no restart) or set
+`SASSYMCP_ALLOWED_HOSTS` and restart. If you get 403, your bearer token
 doesn't match what the bridge expects — re-read it from
 `$env:SASSYMCP_AUTH_TOKEN` and try again.
 
 `scripts/smoke-test.ps1 -RemoteUrl https://mcp.<your-domain>.tld/mcp`
 does the same call wrapped in a one-shot script.
 
+## Token rotation cadence
+
+The bridge's Bearer <redacted> a long-lived secret — treat it like a
+password and rotate it on a schedule:
+
+- **Recommended cadence:** every 90 days for personal use; every 30 days
+  if the tunnel hostname is shared with other people or services.
+- **Rotate immediately** if the token was ever pasted into a chat log,
+  screenshot, ticket, CI output, or anywhere outside your password manager.
+- **How:**
+  1. On the bridge machine, mint a replacement:
+     ```powershell
+     sassymcp.exe generate-token --client-id default
+     ```
+     (Copy the printed token — it is shown once.)
+  2. Set it at User scope so the bridge picks it up on next launch:
+     ```powershell
+     [Environment]::SetEnvironmentVariable("SASSYMCP_AUTH_TOKEN", "<new-token>", "User")
+     ```
+  3. Update every client's `Authorization: Bearer` header / `mcpServers`
+     config with the new value.
+  4. Restart the bridge (re-run `start-tunnel.bat`; the old token stops
+     working the moment the new bridge starts).
+
 ## Optional — OAuth proxy in front of the tunnel
+
+As of v1.18.0, SassyMCP has a built-in OAuth 2.1 authorization server
+(metadata, dynamic client registration, `/authorize` with PKCE, token
+exchange, refresh rotation, and revocation) that activates automatically
+on loopback-HTTP or any-HTTPS binds. If your client can reach the
+server's bind address directly, you don't need anything below — point
+the client at it and approve each grant on the operator consent screen.
 
 The bare-bones setup above issues a static bearer token that *you* paste
 into each client. That works for personal use; it doesn't work for
 clients (like claude.ai's hosted Connectors UI) that require an OAuth
-2.1 dynamic-client-registration flow.
+2.1 dynamic-client-registration flow *and* can't reach your server
+directly.
 
 For the hosted-Claude case, deploy `sassymcp-oauth/` — a Cloudflare
 Worker that handles DCR, consent, PKCE, and token issuance, then
@@ -172,9 +283,10 @@ so you do *not* run a second tunnel for it.
 
 ## Quick troubleshooting
 
-- **`421 Misdirected Request`** — `SASSYMCP_ALLOWED_HOSTS` doesn't list
-  the `Host:` header value the client sent. Add it and restart the
-  bridge.
+- **`421 Misdirected Request`** — the allowlist doesn't list
+  the `Host:` header value the client sent. Add it live with
+  `sassymcp allow-host <hostname>` (no restart), or set
+  `SASSYMCP_ALLOWED_HOSTS` and restart the bridge.
 - **`403 Forbidden`** — bearer token mismatch. The bridge reads
   `SASSYMCP_AUTH_TOKEN` from its own env at startup; the client must
   send the same string in the `Authorization: Bearer` header.

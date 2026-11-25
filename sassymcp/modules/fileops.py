@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-RO2I6SYRBVNG
 """Enhanced FileOps — Full DC-parity file I/O.
 
 Covers: read, write, read_multiple, list_dir, search, move, copy,
@@ -6,12 +9,17 @@ read_multiple_files for batch reads, and image rendering support.
 """
 
 import json
-import shutil
 import re
+import shutil
 import time
 from pathlib import Path
-from sassymcp.modules._security import is_protected_path, validate_path
+
 from sassymcp.modules import audit as _audit
+from sassymcp.modules._security import (
+    is_protected_path,
+    is_sensitive_read_path,
+    validate_path,
+)
 
 
 def _check_path(path: str) -> str | None:
@@ -58,7 +66,6 @@ def _check_write_path(path: str) -> str | None:
     err = _check_path(path)
     if err:
         return err
-    from sassymcp.modules._security import is_sensitive_read_path
     denied, reason = is_sensitive_read_path(path)
     if denied:
         return f"Refused: write to sensitive-read path. {reason}"
@@ -68,13 +75,80 @@ def _check_write_path(path: str) -> str | None:
     return None
 
 
+# ── Sensitive-read safety floor ─────────────────────────────────────
+#
+# is_sensitive_read_path() is the denylist for credential/secret material
+# (~/.ssh, ~/.aws, SassyMCP tokens, /etc/shadow, browser login DBs, ...).
+# It is a SAFETY FLOOR, not a permission rule: it runs before any
+# permission-mode / allowlist logic and before the file is touched, so it
+# holds in bypass, standard, and sandbox modes alike. Every tool below that
+# surfaces or relocates file bytes (copy/move are read-equivalent — the
+# bytes leave their controlled location) calls _refuse_sensitive_read()
+# first; the refusal is audit-logged and reaches the client as "Refused: ...".
+
+_SENSITIVE_READ_LABELS = (
+    (".ssh", "SSH private key material"),
+    (".gnupg", "PGP/GPG key material"),
+    (".aws", "AWS credential file"),
+    (".kube", "Kubernetes credential file"),
+    (".docker", "Docker credential file"),
+    (".netrc", "stored credential file"),
+    (".pypirc", "stored credential file"),
+    (".npmrc", "stored credential file"),
+    ("tokens", "SassyMCP token/credential file"),
+    ("license", "SassyMCP license file"),
+    ("login data", "browser credential database"),
+    ("cookies", "browser cookie store"),
+    ("keychains", "OS keychain"),
+    ("credentials", "OS credential vault"),
+    ("profiles", "browser profile data"),
+    ("shadow", "OS password hash store"),
+    ("gshadow", "OS password hash store"),
+    ("sudoers", "OS privilege configuration"),
+    ("sam", "Windows SAM credential hive"),
+    ("security", "Windows SECURITY credential hive"),
+)
+
+
+def _sensitive_read_label(reason: str) -> str:
+    """Best-effort human class name for a sensitive-read denylist match."""
+    lowered = reason.lower()
+    for fragment, label in _SENSITIVE_READ_LABELS:
+        if fragment in lowered:
+            return label
+    return "sensitive credential material"
+
+
+def _refuse_sensitive_read(tool_name: str, path: str) -> str | None:
+    """Safety-floor refusal for file-content reads of credential material.
+
+    Runs BEFORE any permission-mode / allowlist logic and before the file
+    is touched (no existence probe, no bytes read), so it holds in bypass,
+    standard, and sandbox modes alike. Every refusal attempt is written to
+    the audit log. Returns the client-facing refusal string, or None when
+    the path is not on the denylist.
+    """
+    try:
+        denied, reason = is_sensitive_read_path(path)
+    except Exception as e:  # the floor must never crash a tool
+        _audit.log_intercept(tool_name, "sensitive_read_check_error",
+                             str(path), [str(path)], [repr(e)])
+        return None
+    if not denied:
+        return None
+    label = _sensitive_read_label(reason or "")
+    _audit.log_intercept(tool_name, "sensitive_read_refused",
+                         str(path), [str(path)], [reason or label])
+    return f"Refused: will not read {label} ({path}): {reason}"
+
+
 _STAGING_FOLDER = "_DELETE_"
 
 
 def register(server):
 
     @server.tool()
-    async def sassy_safe_delete(path: str) -> str:
+    def sassy_safe_delete(path: str) -> str:
         """Move a file or directory to a _DELETE_ staging folder for review.
 
         Instead of permanent deletion, items are moved to a _DELETE_ folder
@@ -121,13 +195,18 @@ def register(server):
             return f"Error moving to staging: {e}"
 
     @server.tool()
-    async def sassy_read_file(path: str, offset: int = 0, length: int = 1000) -> str:
+    def sassy_read_file(path: str, offset: int = 0, length: int = 1000) -> str:
         """Read file contents with line-based pagination.
 
         offset >= 0 : start from that line (0-based)
         offset < 0  : read last N lines (tail)
         length      : max lines to return (ignored when offset < 0)
         """
+        # Safety floor: credential/secret material is refused before any
+        # permission-mode logic and before the file is touched.
+        refusal = _refuse_sensitive_read("sassy_read_file", path)
+        if refusal:
+            return refusal
         err = _check_path(path)
         if err:
             return f"Error: {err}"
@@ -157,7 +236,7 @@ def register(server):
         return header + "\n" + "\n".join(numbered)
 
     @server.tool()
-    async def sassy_read_multiple(paths: str) -> str:
+    def sassy_read_multiple(paths: str) -> str:
         """Read multiple files at once. paths = JSON array of file paths."""
         try:
             file_list = json.loads(paths)
@@ -166,6 +245,12 @@ def register(server):
 
         results = []
         for fp in file_list:
+            # Safety floor first: never surface credential/secret bytes,
+            # regardless of permission mode.
+            refusal = _refuse_sensitive_read("sassy_read_multiple", fp)
+            if refusal:
+                results.append(f"--- {fp} ---\n{refusal}")
+                continue
             fp_err = _check_path(fp)
             if fp_err:
                 results.append(f"--- {fp} ---\nError: {fp_err}")
@@ -182,7 +267,7 @@ def register(server):
         return "\n\n".join(results)
 
     @server.tool()
-    async def sassy_write_file(
+    def sassy_write_file(
         path: str,
         content: str,
         mode: str = "rewrite",
@@ -223,7 +308,8 @@ def register(server):
                 )
                 return (
                     f"Refused: rewrite of protected path blocked ({reason}). "
-                    "Use sassy_selfmod_edit for controlled edits inside the SassyMCP tree."
+                    "Edit SassyMCP sources outside the running MCP server "
+                    "(PR / local checkout), not via tool calls."
                 )
             # Snapshot the existing file into _DELETE_ before overwriting.
             if p.exists() and p.is_file():
@@ -272,8 +358,11 @@ def register(server):
         return f"Written {lines} lines, {len(data)} bytes to {path} ({mode}, {encoding}, {le})"
 
     @server.tool()
-    async def sassy_list_dir(path: str, depth: int = 2) -> str:
+    def sassy_list_dir(path: str, depth: int = 2) -> str:
         """List directory contents. [FILE]/[DIR] prefixes. depth controls recursion."""
+        refused = _refuse_sensitive_read("sassy_list_dir", path)
+        if refused:
+            return refused
         err = _check_path(path)
         if err:
             return f"Error: {err}"
@@ -319,7 +408,7 @@ def register(server):
         return "\n".join(results[:1000])
 
     @server.tool()
-    async def sassy_search_files(
+    def sassy_search_files(
         path: str,
         pattern: str,
         search_type: str = "files",
@@ -337,6 +426,11 @@ def register(server):
         err = _check_path(path)
         if err:
             return f"Error: {err}"
+        # Safety floor: refuse to search inside credential/secret stores
+        # (e.g. ~/.ssh) before any permission-mode logic runs.
+        refusal = _refuse_sensitive_read("sassy_search_files", path)
+        if refusal:
+            return refusal
         max_results = min(max(max_results, 1), 500)
         results = []
         p = Path(path)
@@ -354,6 +448,12 @@ def register(server):
             glob_pat = file_pattern or "*"
             for fpath in p.rglob(glob_pat):
                 if not fpath.is_file() or fpath.stat().st_size > 5_000_000:
+                    continue
+                # Safety floor: skip credential/secret material found under
+                # the search root (e.g. ~/.aws/credentials inside a ~
+                # search). The skip is audit-logged; it is not surfaced in
+                # results so no existence signal leaks to the client.
+                if _refuse_sensitive_read("sassy_search_files", str(fpath)):
                     continue
                 try:
                     lines = fpath.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -378,12 +478,20 @@ def register(server):
         return "\n".join(results) if results else "No matches found"
 
     @server.tool()
-    async def sassy_move(source: str, destination: str) -> str:
+    def sassy_move(source: str, destination: str) -> str:
         """Move or rename a file/directory.
 
         Blocks moves from/to protected paths and refuses to overwrite an
         existing destination without an explicit sassy_safe_delete first.
+        Relocating credential/secret material is read-equivalent
+        exfiltration, so sensitive sources are refused like content reads.
         """
+        # Safety floor: the source is refused exactly like a content read —
+        # moving bytes out of their controlled location is exfiltration.
+        # Runs before any permission-mode / allowlist logic.
+        refusal = _refuse_sensitive_read("sassy_move", source)
+        if refusal:
+            return refusal
         for p in (source, destination):
             err = _check_path(p)
             if err:
@@ -415,13 +523,21 @@ def register(server):
             return f"Error moving: {e}"
 
     @server.tool()
-    async def sassy_copy(source: str, destination: str) -> str:
+    def sassy_copy(source: str, destination: str) -> str:
         """Copy a file or directory tree.
 
         Refuses protected src/dst and refuses to silently overwrite an
         existing destination (use sassy_safe_delete on the destination
-        first if you really need to replace it).
+        first if you really need to replace it). Copying credential/secret
+        material is read-equivalent exfiltration, so sensitive sources
+        are refused like content reads.
         """
+        # Safety floor: the source is refused exactly like a content read —
+        # copying bytes out of their controlled location is exfiltration.
+        # Runs before any permission-mode / allowlist logic.
+        refusal = _refuse_sensitive_read("sassy_copy", source)
+        if refusal:
+            return refusal
         for p in (source, destination):
             err = _check_path(p)
             if err:
@@ -456,11 +572,17 @@ def register(server):
             return f"Error copying: {e}"
 
     @server.tool()
-    async def sassy_file_info(path: str) -> str:
+    def sassy_file_info(path: str) -> str:
         """Get detailed file/directory metadata.
 
         Includes: size, timestamps, line count (text), sheet info (Excel).
         """
+        # Safety floor: line counts / sheet metadata are derived from file
+        # contents, so credential/secret stores are refused before touching
+        # the file, regardless of permission mode.
+        refusal = _refuse_sensitive_read("sassy_file_info", path)
+        if refusal:
+            return refusal
         err = _check_path(path)
         if err:
             return f"Error: {err}"
@@ -509,7 +631,7 @@ def register(server):
         return json.dumps(info, indent=2)
 
     @server.tool()
-    async def sassy_mkdir(path: str) -> str:
+    def sassy_mkdir(path: str) -> str:
         """Create a directory (and any missing parents)."""
         err = _check_path(path)
         if err:

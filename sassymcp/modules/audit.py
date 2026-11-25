@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-JT425TNASU4E
 """Audit - Tool call logging with automatic rotation.
 
 Logs every MCP tool invocation with timestamp, tool name, and sanitized
@@ -168,11 +171,22 @@ _SENSITIVE_KEY_FRAGMENTS = (
 
 # Value-level regex matches for shapes that are credentials regardless of
 # what key they came in under (catches `command="ssh -p ghp_..." too).
+#
+# Conservative by design: only prefixes/shapes with near-zero collision
+# risk against ordinary prose. RESIDUAL (accepted, 2026-09-21): arbitrary
+# non-standard secrets echoed in exception text (custom token formats,
+# passwords, API keys with no distinctive prefix) cannot be recognized
+# here — no regex distinguishes them from ordinary words. Key-based
+# masking (_SENSITIVE_KEY_FRAGMENTS) is the backstop for those; values
+# under innocuous keys with no recognizable shape remain visible.
 _VALUE_SECRET_PATTERNS = (
     re.compile(r"\bghp_[A-Za-z0-9]{30,}\b"),           # GitHub fine-grained PAT prefix
     re.compile(r"\bgithub_pat_[A-Za-z0-9_]{50,}\b"),   # GitHub fine-grained PAT
     re.compile(r"\bsk-[A-Za-z0-9_\-]{20,}\b"),         # OpenAI/Anthropic-style
     re.compile(r"\bxoxb-[A-Za-z0-9-]{20,}\b"),         # Slack bot token
+    re.compile(r"\bxoxp-[A-Za-z0-9-]{20,}\b"),         # Slack user token
+    re.compile(r"\bxoxe-[A-Za-z0-9-]{20,}\b"),         # Slack external/enterprise token
+    re.compile(r"\bAIza[A-Za-z0-9_\-]{35}\b"),         # Google API key
     re.compile(r"\bAKIA[A-Z0-9]{16}\b"),               # AWS access key id
     re.compile(r"\bASIA[A-Z0-9]{16}\b"),               # AWS STS key id
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |)PRIVATE KEY-----"),
@@ -208,7 +222,7 @@ def _mask_args(args: dict) -> dict:
     return out
 
 
-def log_tool_call(tool_name: str, args: dict, elapsed_ms: int = 0, error: str = None):
+def log_tool_call(tool_name: str, args: dict, elapsed_ms: int = 0, error: str | None = None):
     """Log a tool invocation. Called by the audit wrapper in server.py.
 
     Args:
@@ -256,7 +270,7 @@ def log_tool_call(tool_name: str, args: dict, elapsed_ms: int = 0, error: str = 
 
 def register(server):
     @server.tool()
-    async def sassy_audit_log(count: int = 50) -> str:
+    def sassy_audit_log(count: int = 50) -> str:
         """Read recent audit log entries."""
         if not _LOG_FILE.exists():
             return "No audit log entries yet"
@@ -270,7 +284,7 @@ def register(server):
         return "\n".join(recent)
 
     @server.tool()
-    async def sassy_audit_search(keyword: str, count: int = 50) -> str:
+    def sassy_audit_search(keyword: str, count: int = 50) -> str:
         """Search audit log for a keyword."""
         if not _LOG_FILE.exists():
             return "No audit log entries yet"
@@ -286,7 +300,7 @@ def register(server):
         return "\n".join(recent) if recent else f"No entries matching '{keyword}'"
 
     @server.tool()
-    async def sassy_audit_false_positives(count: int = 20, include_bypasses: bool = True) -> str:
+    def sassy_audit_false_positives(count: int = 20, include_bypasses: bool = True) -> str:
         """Show recent shell-interceptor pattern matches (blocks + bypasses).
 
         Surfaces the noisy-pattern events you'd otherwise have to grep for.
@@ -327,12 +341,12 @@ def register(server):
         for r in rows:
             out.append(
                 f"{r.get('ts','?')} | {r.get('event','?'):<15} | "
-                f"{str(r.get('pattern','?')):<25} | {str(r.get('command',''))[:120]}"
+                f"{r.get('pattern','?')!s:<25} | {str(r.get('command',''))[:120]}"
             )
         return "\n".join(out)
 
     @server.tool()
-    async def sassy_audit_clear(confirm: str = "") -> str:
+    def sassy_audit_clear(confirm: str = "") -> str:
         """Rotate the audit log to a timestamped archive.
 
         The log is NEVER unlinked — always renamed to audit.cleared.<ts>.log

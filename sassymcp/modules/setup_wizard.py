@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-TZGYD5VU3ZRC
 """SassyMCP Setup Wizard — First-run questionnaire that generates persona.md.
 
 On first launch (no ~/.sassymcp/persona.md), the wizard tool is prominently
@@ -9,12 +12,13 @@ For monetization: this is the onboarding flow. Every new user gets a
 personalized experience from their first session.
 """
 
+import asyncio
 import json
 import logging
 import os
 import secrets
 import time
-from pathlib import Path
+from typing import Any
 
 from sassymcp import _platform
 from sassymcp._atomic import atomic_write_json, atomic_write_text
@@ -84,9 +88,15 @@ except Exception:
     pass
 
 from sassymcp._paths import (
-    HOME as _SASSYMCP_DIR,
-    PERSONA_FILE as _PERSONA_FILE,
     CONFIG_FILE as _CONFIG_FILE,
+)
+from sassymcp._paths import (
+    HOME as _SASSYMCP_DIR,
+)
+from sassymcp._paths import (
+    PERSONA_FILE as _PERSONA_FILE,
+)
+from sassymcp._paths import (
     TOKENS_FILE as _TOKENS_FILE,
 )
 
@@ -212,18 +222,18 @@ def _generate_persona_md(answers: dict) -> str:
     sections.append("| \"phone status\" | `sassy_phone_state` then `sassy_phone_glance` |")
     sections.append("| \"phone UI\" / \"tap that button\" | `sassy_phone_ui` FIRST (read coords) then `sassy_phone_tap` |")
     sections.append("| \"check the audit\" / \"what got blocked\" | `sassy_audit_search pattern_event=\"pattern_block\"` |")
-    sections.append("| \"review the PR\" | `sassy_github_quick_pr action=\"show\"` then `action=\"diff\"` |")
+    sections.append("| \"review the PR\" | `sassy_combo_pr_review owner=<owner> repo=<repo> pr=N` — metadata + diff + comments + CI status in one call |")
     sections.append("| \"remember this for next session\" | `sassy_memory_remember` with key prefix `task_<concept>_<project>_state` |")
     sections.append("| \"what was I working on\" | `sassy_memory_context` FIRST, then `sassy_crosslink_recv channel=\"task-handoff\"` |")
     sections.append("| \"build / compile / dev server\" | `sassy_session_start` (NOT `sassy_shell` — sessions persist past a single call) |")
-    sections.append("| \"scan my network\" | `sassy_netstat` + `sassy_arp` for local; `sassy_port_scan` for remote |")
-    sections.append("| \"what's running on this machine\" / \"autoruns\" | `sassy_reg_autoruns` (Windows forensics) |")
+    sections.append("| \"scan my network\" | `sassy_netstat` + `sassy_arp_table` for local; `sassy_port_scan` for remote |")
+    sections.append("| \"what's running on this machine\" / \"autoruns\" | `sassy_autorun_entries` (cross-platform boot/login persistence) |")
     sections.append("| \"hand off to my [other client]\" | `sassy_crosslink_send channel=\"task-handoff\"` |")
-    sections.append("| \"add a tool that...\" | Activate `self_modify` hook; use `sassy_selfmod_*` workflow (read → edit → hot-reload) |")
+    sections.append("| \"add a tool that...\" | Edit the SassyMCP source checkout and ship a new release — self-modification tools are removed |")
     sections.append("")
     sections.append("Discover more playbooks any time: `sassy_hooks_list` shows registered operational hooks; `sassy_hooks_activate name=\"<x>\"` loads a hook's full playbook into context.")
     sections.append("")
-    sections.append("Smart loading: SassyMCP auto-loads tool groups whose top tools have a usage score >= 0.5 in your `~/.sassymcp/tool_usage.json` history. Override with `SASSYMCP_GROUPS=core,android,system` env var, or `SASSYMCP_LOAD_ALL=1` for all 257.")
+    sections.append("Smart loading: SassyMCP auto-loads tool groups whose top tools have a usage score >= 0.5 in your `~/.sassymcp/tool_usage.json` history. Override with `SASSYMCP_GROUPS=core,android,system` env var, or `SASSYMCP_LOAD_ALL=1` to load every group.")
     sections.append("")
 
     return "\n".join(sections)
@@ -238,7 +248,7 @@ def register(server):
     """Register setup wizard tools."""
 
     @server.tool()
-    async def sassy_setup_wizard(
+    def sassy_setup_wizard(
         role: str = "developer",
         expertise_level: str = "senior",
         specializations: str = "",
@@ -252,7 +262,7 @@ def register(server):
         has_android: bool = False,
         has_linux: bool = False,
         notes: str = "",
-    ) -> str:
+    ) -> dict[str, Any]:
         """First-run setup wizard. Generates ~/.sassymcp/persona.md from your answers.
 
         Call with your profile to personalize SassyMCP. All fields optional.
@@ -287,7 +297,15 @@ def register(server):
             "notes": notes,
         }
 
-        # Generate persona.md
+        # Generate persona.md — keep a one-deep backup first so a hand-edited
+        # persona is never silently destroyed by a re-run (audit C F10).
+        backup_path = None
+        try:
+            if _PERSONA_FILE.exists():
+                backup_path = _PERSONA_FILE.with_name(_PERSONA_FILE.name + ".bak")
+                backup_path.write_bytes(_PERSONA_FILE.read_bytes())
+        except Exception as e:
+            logger.warning(f"persona.md backup failed (non-fatal): {e}")
         content = _generate_persona_md(answers)
         atomic_write_text(_PERSONA_FILE, content)
 
@@ -303,6 +321,7 @@ def register(server):
         # Reload persona module so it picks up the new file
         try:
             import importlib
+
             import sassymcp.modules.persona as persona_mod
             importlib.reload(persona_mod)
             persona_mod.USER_CONTEXT = persona_mod._load_user_context()
@@ -327,66 +346,40 @@ def register(server):
         if has_linux:
             tools_to_install.append("plink")
 
-        return json.dumps({
+        return {
             "status": "setup_complete",
             "persona_file": str(_PERSONA_FILE),
-            "profile": answers,
+            "persona_backup": str(backup_path) if backup_path else None,            "profile": answers,
             "tools_to_install": tools_to_install,
             "next_steps": next_steps,
             "tool_install_hint": (
-                f"Call sassy_setup_tools(action='install_required') to install tesseract (required). "
-                + (f"Also run sassy_setup_tools(action='install', tool_name='adb') and tool_name='scrcpy' for Android. " if has_android else "")
-                + (f"Also run sassy_setup_tools(action='install', tool_name='plink') for Linux/SSH." if has_linux else "")
+                "Call sassy_setup_tools(action='install_required') to install tesseract (required). "
+                + ("Also run sassy_setup_tools(action='install', tool_name='adb') and tool_name='scrcpy' for Android. " if has_android else "")
+                + ("Also run sassy_setup_tools(action='install', tool_name='plink') for Linux/SSH." if has_linux else "")
             ),
-        }, indent=2)
-
-    @server.tool()
-    async def sassy_setup_status() -> str:
-        """Check setup status: is persona configured? Auth tokens? Config state?"""
-        config = _load_config()
-
-        persona_exists = _PERSONA_FILE.exists()
-        persona_size = _PERSONA_FILE.stat().st_size if persona_exists else 0
-        tokens_exist = _TOKENS_FILE.exists()
-        auth_token_env = bool(os.environ.get("SASSYMCP_AUTH_TOKEN"))
-
-        # Check what's configured
-        status = {
-            "setup_complete": config.get("setup_complete", False),
-            "persona": {
-                "exists": persona_exists,
-                "size_bytes": persona_size,
-                "path": str(_PERSONA_FILE),
-            },
-            "auth": {
-                "env_token_set": auth_token_env,
-                "tokens_file_exists": tokens_exist,
-                "auth_active": auth_token_env or tokens_exist,
-            },
-            "config": {
-                "path": str(_CONFIG_FILE),
-                "keys": list(config.keys()),
-            },
-            "data_dir": str(_SASSYMCP_DIR),
-            "files_in_data_dir": sorted([
-                f.name for f in _SASSYMCP_DIR.iterdir()
-            ]) if _SASSYMCP_DIR.exists() else [],
         }
 
-        if not config.get("setup_complete"):
-            status["action_required"] = (
-                "Run sassy_setup_wizard to complete initial setup. "
-                "This generates your persona profile for personalized AI interaction."
-            )
-
-        return json.dumps(status, indent=2)
+    # NOTE: an earlier, less complete duplicate of sassy_setup_status lived here.
+    # FastMCP keeps the FIRST registration of a name and only logs
+    # 'Tool already exists', so this copy silently shadowed the richer one
+    # defined later in this same module - the one that also reports GitHub
+    # token and SSH host status. Removed so that version is the one served.
 
     @server.tool()
-    async def sassy_setup_generate_token(client_id: str = "default", scopes: str = "read,write") -> str:
+    def sassy_setup_generate_token(client_id: str = "default", scopes: str = "read,write") -> dict[str, Any]:
         """Generate a new auth token for MCP client authentication.
 
         Creates a secure token and saves it to ~/.sassymcp/tokens.json.
         Use this token in SASSYMCP_AUTH_TOKEN env var or in client config.
+
+        Trust assumption (deliberate, not an oversight): this tool is NOT
+        gated by a confirmation — any MCP client that can call tools can
+        mint bearer tokens, equivalent to the `generate-token` CLI
+        subcommand. Gating it would break legitimate local automation that
+        bootstraps client auth. The flip side: a compromised or
+        prompt-injected model session can create persistent credentials, so
+        treat every minted token like a password and review
+        ~/.sassymcp/tokens.json if a session ever behaves unexpectedly.
 
         client_id: identifier for the client (e.g. "claude-desktop", "grok", "cursor")
         scopes: comma-separated permissions (read, write, admin)
@@ -430,7 +423,7 @@ def register(server):
             except OSError as _e:
                 logger.warning(f"chmod 0600 on tokens.json failed: {_e}")
 
-        return json.dumps({
+        return {
             "token": token,
             "client_id": client_id,
             "scopes": scope_list,
@@ -441,12 +434,12 @@ def register(server):
                 "query": f"?token={token}",
             },
             "note": "Store this token securely. It won't be shown again in full.",
-        }, indent=2)
+        }
 
     # ── GitHub Token Setup ────────────────────────────────────────
 
     @server.tool()
-    async def sassy_setup_github(action: str = "check", token: str = "") -> str:
+    def sassy_setup_github(action: str = "check", token: str = "") -> dict[str, Any]:
         """Guide GitHub token setup. Opens browser, validates, saves.
 
         action: check | open_browser | save_token | skip
@@ -467,20 +460,20 @@ def register(server):
                                      timeout=10)
                     if resp.status_code == 200:
                         user = resp.json()
-                        return json.dumps({
+                        return {
                             "status": "configured",
                             "github_user": user.get("login"),
                             "token_prefix": gh_token[:4] + "...",
                             "scopes": resp.headers.get("x-oauth-scopes", "unknown"),
-                        })
-                    return json.dumps({"status": "invalid_token", "http_status": resp.status_code,
-                                       "hint": "Token exists but GitHub rejected it. Re-run with action=open_browser to create a new one."})
+                        }
+                    return {"status": "invalid_token", "http_status": resp.status_code,
+                                       "hint": "Token exists but GitHub rejected it. Re-run with action=open_browser to create a new one."}
                 except Exception as e:
-                    return json.dumps({"status": "error", "error": str(e)})
-            return json.dumps({
+                    return {"status": "error", "error": str(e)}
+            return {
                 "status": "not_configured",
                 "hint": "No GITHUB_TOKEN found. Use action=open_browser to create one, or action=skip to skip.",
-            })
+            }
 
         elif action == "open_browser":
             url = "https://github.com/settings/tokens?type=beta"
@@ -488,7 +481,7 @@ def register(server):
                 webbrowser.open(url)
             except Exception:
                 pass
-            return json.dumps({
+            return {
                 "status": "browser_opened",
                 "url": url,
                 "instructions": [
@@ -500,13 +493,13 @@ def register(server):
                     "6. Click 'Generate token' and copy the token.",
                     "7. Call sassy_setup_github with action='save_token' and token='ghp_your_token_here'.",
                 ],
-            })
+            }
 
         elif action == "save_token":
             if not token:
-                return json.dumps({"error": "Provide the token parameter with your GitHub PAT."})
-            if not (token.startswith("ghp_") or token.startswith("github_pat_") or len(token) > 20):
-                return json.dumps({"error": "Invalid token format. GitHub tokens start with ghp_ or github_pat_"})
+                return {"error": "Provide the token parameter with your GitHub PAT."}
+            if not (token.startswith(("ghp_", "github_pat_")) or len(token) > 20):
+                return {"error": "Invalid token format. GitHub tokens start with ghp_ or github_pat_"}
 
             # Validate
             try:
@@ -515,10 +508,10 @@ def register(server):
                                  headers={"Authorization": f"Bearer {token}"},
                                  timeout=10)
                 if resp.status_code != 200:
-                    return json.dumps({"error": f"GitHub rejected the token (HTTP {resp.status_code}). Check and try again."})
+                    return {"error": f"GitHub rejected the token (HTTP {resp.status_code}). Check and try again."}
                 user = resp.json()
             except Exception as e:
-                return json.dumps({"error": f"Could not validate token: {e}"})
+                return {"error": f"Could not validate token: {e}"}
 
             # Save to process env
             os.environ["GITHUB_TOKEN"] = token
@@ -529,7 +522,7 @@ def register(server):
             config["github_token_set"] = time.strftime('%Y-%m-%d %H:%M')
             _save_config(config)
 
-            return json.dumps({
+            return {
                 "status": "saved",
                 "github_user": user.get("login"),
                 "scopes": resp.headers.get("x-oauth-scopes", "unknown"),
@@ -538,15 +531,15 @@ def register(server):
                     "claude_desktop": 'Add "GITHUB_TOKEN": "your_token" to env section in claude_desktop_config.json',
                     "system": 'Run: setx GITHUB_TOKEN "your_token" in an admin terminal',
                 },
-            }, indent=2)
+            }
 
         elif action == "skip":
             config["github_configured"] = False
             config["github_skipped"] = True
             _save_config(config)
-            return json.dumps({"status": "skipped", "note": "GitHub integration skipped. Run sassy_setup_github anytime to configure later."})
+            return {"status": "skipped", "note": "GitHub integration skipped. Run sassy_setup_github anytime to configure later."}
 
-        return json.dumps({"error": f"Unknown action: {action}. Use: check, open_browser, save_token, skip"})
+        return {"error": f"Unknown action: {action}. Use: check, open_browser, save_token, skip"}
 
     # ── SSH Setup ────────────────────────────────────────────────
 
@@ -558,7 +551,7 @@ def register(server):
         password: str = "",
         key: str = "",
         session: str = "",
-    ) -> str:
+    ) -> dict[str, Any]:
         """Guide SSH/Linux remote setup. Checks plink, saves creds, tests connection.
 
         action: check | save | test | skip
@@ -578,17 +571,23 @@ def register(server):
         config = _load_config()
 
         # Find the SSH client (plink on Windows, native ssh on macOS/Linux).
-        if _platform.IS_WINDOWS:
-            plink = (os.environ.get("PLINK_PATH")
-                     or shutil.which("plink")
-                     or next((p for p in [
-                         os.path.expandvars(r"%LOCALAPPDATA%\Temp\plink.exe"),
-                         r"C:\Program Files\PuTTY\plink.exe",
-                         r"C:\Program Files (x86)\PuTTY\plink.exe",
-                         r"C:\ProgramData\chocolatey\bin\plink.exe",
-                     ] if os.path.isfile(p)), None))
-        else:
-            plink = os.environ.get("SSH_CLIENT_PATH") or shutil.which("ssh")
+        # shutil.which() walks every PATH entry and os.path.isfile() stats the
+        # disk; both block, and this tool is `async def`, so the whole resolution
+        # goes to a worker thread. Moving only the isfile() calls — the ones the
+        # linter flags — would leave the slower PATH walk on the event loop.
+        def _resolve_ssh_client() -> str | None:
+            if _platform.IS_WINDOWS:
+                return (os.environ.get("PLINK_PATH")
+                        or shutil.which("plink")
+                        or next((p for p in [
+                            os.path.expandvars(r"%LOCALAPPDATA%\Temp\plink.exe"),
+                            r"C:\Program Files\PuTTY\plink.exe",
+                            r"C:\Program Files (x86)\PuTTY\plink.exe",
+                            r"C:\ProgramData\chocolatey\bin\plink.exe",
+                        ] if os.path.isfile(p)), None))
+            return os.environ.get("SSH_CLIENT_PATH") or shutil.which("ssh")
+
+        plink = await asyncio.to_thread(_resolve_ssh_client)
 
         if action == "check":
             ssh_host = os.environ.get("SSH_HOST")
@@ -597,7 +596,7 @@ def register(server):
             ssh_key = os.environ.get("SSH_KEY")
             ssh_session = os.environ.get("SSH_SESSION")
             has_auth = bool(ssh_session or ssh_key or ssh_pass)
-            return json.dumps({
+            return {
                 "plink_found": plink is not None,
                 "plink_path": plink,
                 "plink_install_url": "https://www.chiark.greenend.org.uk/~sgtatham/putty/latest.html" if not plink else None,
@@ -612,19 +611,19 @@ def register(server):
                     if (ssh_session or (ssh_host and ssh_user and has_auth))
                     else "Use action=save with host+user and AT LEAST ONE of: key, session, password."
                 ),
-            })
+            }
 
         elif action == "save":
             # A saved PuTTY session carries host+user+key in its own config,
             # so session alone is a complete configuration. Otherwise we
             # need host+user PLUS one of (key, password, session).
             if not session and (not host or not user):
-                return json.dumps({
+                return {
                     "status": "incomplete",
                     "error": "Provide host+user (or set session=<putty-session-name>).",
-                })
+                }
             if not session and not key and not password:
-                return json.dumps({
+                return {
                     "status": "incomplete",
                     "error": (
                         "No auth source provided. Pass exactly one of: "
@@ -634,7 +633,7 @@ def register(server):
                         "Key-based auth is strongly preferred — your remote "
                         "may refuse password auth (publickey-only config)."
                     ),
-                })
+                }
 
             if host:
                 os.environ["SSH_HOST"] = host
@@ -657,7 +656,7 @@ def register(server):
             config["ssh_configured_at"] = time.strftime('%Y-%m-%d %H:%M')
             _save_config(config)
 
-            return json.dumps({
+            return {
                 "status": "saved",
                 "host": host or config.get("ssh_host"),
                 "user": user or config.get("ssh_user"),
@@ -672,7 +671,7 @@ def register(server):
                     "MCP client config."
                 ),
                 "next": "Use action=test to verify the connection.",
-            })
+            }
 
         elif action == "test":
             ssh_host = os.environ.get("SSH_HOST")
@@ -681,11 +680,11 @@ def register(server):
             ssh_key = os.environ.get("SSH_KEY")
             ssh_session = os.environ.get("SSH_SESSION")
             if not (ssh_session or (ssh_host and ssh_user)):
-                return json.dumps({"error": "SSH_HOST/SSH_USER (or SSH_SESSION) not set. Use action=save first."})
+                return {"error": "SSH_HOST/SSH_USER (or SSH_SESSION) not set. Use action=save first."}
             if not (ssh_session or ssh_key or ssh_pass):
-                return json.dumps({"error": "No SSH auth source set (need SSH_KEY, SSH_SESSION, or SSH_PASS). Use action=save first."})
+                return {"error": "No SSH auth source set (need SSH_KEY, SSH_SESSION, or SSH_PASS). Use action=save first."}
             if not plink:
-                return json.dumps({"error": "plink not found. Install PuTTY: https://www.chiark.greenend.org.uk/~sgtatham/putty/latest.html"})
+                return {"error": "plink not found. Install PuTTY: https://www.chiark.greenend.org.uk/~sgtatham/putty/latest.html"}
             try:
                 import asyncio as _asyncio
 
@@ -723,23 +722,23 @@ def register(server):
                 stdout, stderr = await _asyncio.wait_for(proc.communicate(), timeout=15)
                 out = stdout.decode("utf-8", errors="replace").strip()
                 if "SassyMCP_SSH_OK" in out:
-                    return json.dumps({"status": "connected", "host": ssh_host or "(session)", "user": ssh_user or "(session)", "output": out})
-                return json.dumps({"status": "failed", "stdout": out, "stderr": stderr.decode("utf-8", errors="replace").strip()})
+                    return {"status": "connected", "host": ssh_host or "(session)", "user": ssh_user or "(session)", "output": out}
+                return {"status": "failed", "stdout": out, "stderr": stderr.decode("utf-8", errors="replace").strip()}
             except Exception as e:
-                return json.dumps({"status": "error", "error": str(e)})
+                return {"status": "error", "error": str(e)}
 
         elif action == "skip":
             config["ssh_configured"] = False
             config["ssh_skipped"] = True
             _save_config(config)
-            return json.dumps({"status": "skipped", "note": "SSH integration skipped. Run sassy_setup_ssh anytime to configure later."})
+            return {"status": "skipped", "note": "SSH integration skipped. Run sassy_setup_ssh anytime to configure later."}
 
-        return json.dumps({"error": f"Unknown action: {action}. Use: check, save, test, skip"})
+        return {"error": f"Unknown action: {action}. Use: check, save, test, skip"}
 
     # ── Optional Tools Check ─────────────────────────────────────
 
     @server.tool()
-    async def sassy_setup_check_tools() -> str:
+    def sassy_setup_check_tools() -> dict[str, Any]:
         """Scan for external tools and report availability. Tesseract is required.
 
         Checks: nmap, Tesseract OCR (REQUIRED), adb, scrcpy, plink (PuTTY), Chrome/Chromium.
@@ -839,7 +838,7 @@ def register(server):
                 packages[pkg] = {"installed": False, "install": pip_cmd}
 
         missing_required = [k for k, v in tools.items() if not v["installed"] and v.get("required")]
-        return json.dumps({
+        return {
             "system_tools": tools,
             "python_packages": packages,
             "summary": {
@@ -852,13 +851,17 @@ def register(server):
                 if missing_required else
                 "All required tools present."
             ),
-        }, indent=2)
+        }
 
     # ── License Management ───────────────────────────────────────
 
     @server.tool()
-    async def sassy_setup_license(key: str = "", action: str = "status") -> str:
-        """Manage your SassyMCP license against LemonSqueezy.
+    async def sassy_setup_license(key: str = "", action: str = "status") -> dict[str, Any]:
+        """Manage your SassyMCP supporter license against LemonSqueezy.
+
+        All tool groups are unlocked for everyone — no key required. A
+        license is an optional supporter purchase; activating one records
+        your tier label (shown in the banner, control panel, cockpit).
 
         action: status | activate | deactivate | validate
         key: LemonSqueezy license key (format XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX),
@@ -871,8 +874,10 @@ def register(server):
                     local file.
         """
         from sassymcp.license import (
-            validate_license, activate_via_lemonsqueezy, deactivate_via_lemonsqueezy,
             LICENSE_FILE,
+            activate_via_lemonsqueezy,
+            deactivate_via_lemonsqueezy,
+            validate_license,
         )
 
         if action == "status":
@@ -898,21 +903,26 @@ def register(server):
                             info[f] = raw[f]
                 except Exception:
                     pass
+            info["note"] = (
+                "All tool groups are unlocked for everyone — no key required. "
+                "A license is an optional supporter purchase."
+            )
             if tier == "free" and not result.get("valid"):
-                info["upgrade"] = {
+                info["support"] = {
                     "url": "https://sassyconsultingllc.com/store",
-                    "what_you_get": "255 tools, persistent memory, dynamic vision, phone control, "
-                                    "GitHub full API, operational hooks, self-modification, and more.",
+                    "what_it_does": "Registers this machine as a LemonSqueezy seat and "
+                                    "records your supporter tier. It does not unlock "
+                                    "anything — everything already ships unlocked.",
                 }
-            return json.dumps(info, indent=2)
+            return info
 
         elif action == "activate":
             if not key:
-                return json.dumps({
+                return {
                     "error": "Provide the key parameter with your LemonSqueezy license key.",
                     "format_hint": "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX",
                     "get_key": "https://sassyconsultingllc.com/store",
-                })
+                }
             result = activate_via_lemonsqueezy(key)
             if result.get("valid"):
                 out = {
@@ -922,14 +932,15 @@ def register(server):
                     "email": result.get("email"),
                     "expires": result.get("expires"),
                     "ls_instance_id": result.get("ls_instance_id"),
-                    "note": "Restart the server to load Pro tools, or call sassy_selfmod_restart().",
+                    "note": "Thanks for supporting SassyMCP. All tools were already "
+                            "unlocked — this registers your seat and supporter tier.",
                 }
                 # Surface the unmapped-variant misconfiguration (paid purchase
                 # that resolved to free) so the buyer doesn't silently get nothing.
                 if result.get("warning"):
                     out["warning"] = result["warning"]
-                return json.dumps(out, indent=2)
-            return json.dumps({
+                return out
+            return {
                 "status": "failed",
                 "reason": result.get("reason"),
                 "detail": result.get("detail"),
@@ -939,52 +950,57 @@ def register(server):
                     "ls_rejected: check the key format and that the license isn't already "
                     "activated on the maximum number of machines."
                 ),
-            }, indent=2)
+            }
 
         elif action == "deactivate":
             result = deactivate_via_lemonsqueezy()
-            return json.dumps(result, indent=2)
+            return result
 
         elif action == "validate":
             # Force a synchronous re-check against LS. Useful for support
             # ("verify my key works") and right after activation.
+
             from sassymcp.license import _ls_revalidate
-            import asyncio
             if not LICENSE_FILE.exists():
-                return json.dumps({"status": "no_license", "tier": "free"})
+                return {"status": "no_license", "tier": "free"}
             try:
                 data = json.loads(LICENSE_FILE.read_text())
             except Exception as e:
-                return json.dumps({"status": "corrupt", "error": str(e)})
+                return {"status": "corrupt", "error": str(e)}
             ls_key = data.get("ls_license_key")
             ls_inst = data.get("ls_instance_id")
             if not (ls_key and ls_inst):
-                return json.dumps({
+                return {
                     "status": "legacy_key",
                     "note": "Self-signed key — no LS to validate against. Use status instead.",
-                })
+                }
             await _ls_revalidate(data, ls_key, ls_inst)
             # Re-read post-revalidate (file may have been removed)
             post = validate_license()
-            return json.dumps({
+            return {
                 "status": "checked",
                 "tier": post.get("tier"),
                 "addons": post.get("addons", []),
                 "valid": post.get("valid"),
                 "license_exists": LICENSE_FILE.exists(),
-            }, indent=2)
+            }
 
-        return json.dumps({
+        return {
             "error": f"Unknown action: {action}. Use: status, activate, deactivate, validate"
-        })
+        }
 
-    # ── Updated setup_status with integration fields ─────────────
-
-    # Patch the existing sassy_setup_status to add integration checks
-    _original_setup_status = sassy_setup_status
+    # ── setup_status, with integration fields ────────────────────
+    #
+    # This is the ONLY definition now. It used to be preceded by an earlier,
+    # narrower copy plus `_original_setup_status = sassy_setup_status`, framed in
+    # a comment as "patch the existing" one. Nothing ever read that capture, and
+    # the patch never took effect regardless: FastMCP keeps the FIRST
+    # registration of a name and merely logs "Tool already exists", so the older
+    # copy won and the integration fields below were dead code that no caller
+    # could reach. Both the old copy and the unused capture are gone.
 
     @server.tool()
-    async def sassy_setup_status() -> str:
+    def sassy_setup_status() -> dict[str, Any]:
         """Check setup status: is persona configured? Auth tokens? Config state?"""
         config = _load_config()
 
@@ -1032,7 +1048,7 @@ def register(server):
                 "Run sassy_setup_check_tools to see what optional tools are available."
             )
 
-        return json.dumps(status, indent=2)
+        return status
 
     # Log setup status on load
     if _is_setup_complete():

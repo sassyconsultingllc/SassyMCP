@@ -1,27 +1,22 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-4GXMQA4Q3PSR
 """Tests for sassymcp.install — auto-detection and config patching."""
 from __future__ import annotations
 
 import json
-import os
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
 from sassymcp.install import (
     ClientInfo,
-    PatchResult,
+    _load_existing_config,
     detect_clients,
+    main,
     patch_client,
     unpatch_client,
-    find_self_exe,
-    main,
-    _CLIENT_REGISTRY,
-    _apply_server_entry,
-    _load_existing_config,
 )
-
 
 # --- detect_clients ---
 
@@ -115,8 +110,10 @@ def test_patch_takes_backup_on_first_write(tmp_path: Path):
 def test_patch_does_not_take_second_backup(tmp_path: Path):
     client = _make_client(tmp_path)
     client.config_path.write_text(json.dumps({"mcpServers": {"existing": {"command": "x"}}}))
-    r1 = patch_client(client, Path("C:/sassy/sassymcp.exe"))
-    r2 = patch_client(client, Path("C:/different/sassymcp.exe"))
+    # Both return values are intentionally unused — the assertion below is about
+    # the backup count on disk, not the per-call result.
+    patch_client(client, Path("C:/sassy/sassymcp.exe"))
+    patch_client(client, Path("C:/different/sassymcp.exe"))
     backups = list(tmp_path.glob("test_config.json.sassymcp-backup-*"))
     assert len(backups) == 1
 
@@ -391,8 +388,17 @@ def test_main_auto_other_skips_claude(tmp_path: Path, monkeypatch):
     from sassymcp import install as inst_mod
     monkeypatch.setattr(inst_mod, "_claude_desktop_config", lambda: claude_cfg)
     monkeypatch.setattr(inst_mod, "_cursor_mcp", lambda: cursor_cfg)
+    # Hermetic: constrain the registry to the two clients this test asserts on.
+    # Without this, --auto-other walks the FULL registry and writes to the real
+    # machine's Windsurf/Continue/Cline/etc. configs (a real config on disk with
+    # bad JSON even made this test fail). --no-skills likewise stops the
+    # tool-playbook deployment from writing to real rules-file paths.
+    monkeypatch.setattr(inst_mod, "_CLIENT_REGISTRY", [
+        ("Claude Desktop", "claude", "_claude_desktop_config", "mcpServers", ""),
+        ("Cursor", "cursor", "_cursor_mcp", "mcpServers", ""),
+    ])
 
-    rc = main(["--exe-path", "C:/sassy/sassymcp.exe", "--auto-other"])
+    rc = main(["--exe-path", "C:/sassy/sassymcp.exe", "--auto-other", "--no-skills"])
     assert rc == 0
     # Claude untouched
     assert not claude_cfg.exists()

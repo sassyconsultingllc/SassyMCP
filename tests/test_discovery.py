@@ -1,66 +1,78 @@
-"""Tests for the v1.10.0 tool-discovery surface + frozen-safe selfmod.
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-CGTDL5PMGAPM
+"""Tests for the tool-discovery surface (meta / persona / prompts).
 
-Registers the meta / selfmod / persona / prompts modules onto a throwaway
-FastMCP instance and asserts the new discovery tools behave. Runnable both
-under pytest and as `python tests/test_discovery.py`.
+Self-modification tools were removed; these tests no longer register selfmod.
 """
 import asyncio
+import inspect
 import json
 
 from mcp.server.fastmcp import FastMCP
 
-import sassymcp.modules.meta as meta
-import sassymcp.modules.selfmod as selfmod
-import sassymcp.modules.persona as persona
-import sassymcp.modules.prompts as prompts
+from sassymcp.modules import meta, persona, prompts
+from sassymcp.modules._tool_loader import TOOL_GROUPS
 
 
 def _call(tool):
-    return asyncio.run(tool.fn())
+    """Invoke a registered tool body from a synchronous test.
+
+    A tool body may be sync or async and both are legitimate: in production
+    server._wrap_all_tools offloads a sync body to asyncio.to_thread, so `def`
+    is the *preferred* form for blocking work — an `async def` with a blocking
+    body runs on the event loop and stalls every other session. These tests
+    register modules directly, without that wrapper, so `tool.fn` is the raw
+    function and may be either. Assuming a coroutine here made the suite fail
+    the moment a tool was correctly converted to sync.
+    """
+    result = tool.fn()
+    return asyncio.run(result) if inspect.isawaitable(result) else result
+
+
+def _obj(tool):
+    """Tool result as a parsed object, whatever the tool's return annotation is.
+
+    Tools are migrating from `-> str` (returning json.dumps(...)) to
+    `-> dict[str, Any]` so FastMCP emits real structuredContent instead of a
+    {"result": "<json string>"} envelope. json.loads() on an already-parsed dict
+    raises TypeError, so normalise here rather than at every call site.
+    """
+    r = _call(tool)
+    return json.loads(r) if isinstance(r, str) else r
 
 
 def test_self_check_reports_whole_and_runtime():
     s = FastMCP("t-selfcheck")
     meta.register(s)
     assert "sassy_self_check" in s._tool_manager._tools
-    out = json.loads(_call(s._tool_manager._tools["sassy_self_check"]))
-    # Running from a source checkout, every declared module must import.
+    out = _obj(s._tool_manager._tools["sassy_self_check"])
     assert out["verdict"] == "whole", out.get("broken")
     assert out["runtime"] == "source"
-    assert out["modules_total"] == 35
+    # selfmod group removed — one fewer module than the old 36
+    expected = sum(len(g["modules"]) for g in TOOL_GROUPS.values())
+    assert out["modules_total"] == expected
+    assert "selfmod" not in TOOL_GROUPS
     assert isinstance(out["pid"], int)
-    # Every module entry carries an import status; none expected-loaded is BROKEN.
     assert all(m["import"] == "ok" for m in out["modules"].values())
+
+
+def test_selfmod_group_removed():
+    assert "selfmod" not in TOOL_GROUPS
+    from sassymcp.modules import selfmod
+    s = FastMCP("t-noselfmod")
+    selfmod.register(s)
+    assert not any(n.startswith("sassy_selfmod_") for n in s._tool_manager._tools)
 
 
 def test_tool_catalog_enumerates_registry():
     s = FastMCP("t-catalog")
     meta.register(s)
-    out = json.loads(_call(s._tool_manager._tools["sassy_tool_catalog"]))
+    out = _obj(s._tool_manager._tools["sassy_tool_catalog"])
     assert out["total"] >= 1
-    # Catalog is keyed by group and every row has a name.
     for rows in out["tools"].values():
         for row in rows:
             assert row["name"].startswith("sassy_")
-
-
-def test_selfmod_frozen_registers_instant_stubs():
-    original = selfmod._FROZEN
-    selfmod._FROZEN = True
-    try:
-        s = FastMCP("t-frozen")
-        selfmod.register(s)
-        names = set(s._tool_manager._tools)
-        for t in ("sassy_selfmod_status", "sassy_selfmod_read", "sassy_selfmod_edit",
-                  "sassy_selfmod_write", "sassy_selfmod_reload", "sassy_selfmod_restart",
-                  "sassy_selfmod_rollback"):
-            assert t in names, f"frozen stub missing: {t}"
-        # The status stub must answer instantly with an honest reason, not hang.
-        st = json.loads(_call(s._tool_manager._tools["sassy_selfmod_status"]))
-        assert st["error"] == "selfmod unavailable in packaged build"
-        assert st["runtime"] == "frozen"
-    finally:
-        selfmod._FROZEN = original
 
 
 def test_persona_bakes_discovery_protocol():
@@ -87,8 +99,8 @@ def test_discover_prompt_registered_and_renders():
 
 if __name__ == "__main__":
     test_self_check_reports_whole_and_runtime()
+    test_selfmod_group_removed()
     test_tool_catalog_enumerates_registry()
-    test_selfmod_frozen_registers_instant_stubs()
     test_persona_bakes_discovery_protocol()
     test_discover_prompt_registered_and_renders()
     print("all discovery tests passed")

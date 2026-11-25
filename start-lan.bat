@@ -35,11 +35,18 @@ if "!BIND_ADDR!"=="0.0.0.0" (
     echo  [!] LAN mode requires an auth token for security.
     if defined SASSYMCP_AUTH_TOKEN (
         echo  [OK] SASSYMCP_AUTH_TOKEN already set.
+        echo  [INFO] It must use only letters, digits, - and _ ^(16+ chars^).
+        echo         Anything else and the server will refuse to start.
     ) else (
         echo  Enter a token or press Enter to auto-generate one:
+        echo  Token rules: letters, digits, - and _ only, at least 16 chars.
+        echo  Do NOT use spaces or symbols like ^! ^& ^| %% $ " ' ^< ^> --
+        echo  the server rejects such tokens at startup and you would be
+        echo  locked out with no way to authenticate.
         set /p USER_TOKEN="  Token: "
         if "!USER_TOKEN!"=="" (
             for /f "delims=" %%T in ('powershell -NoProfile -Command "$b=New-Object byte[] 32;(New-Object System.Security.Cryptography.RNGCryptoServiceProvider).GetBytes($b);[Convert]::ToBase64String($b).Replace('+','-').Replace('/','_').TrimEnd('=')"') do set SASSYMCP_AUTH_TOKEN=%%T
+            echo  [OK] Generated a URL-safe token ^(letters, digits, - and _^).
         ) else (
             set SASSYMCP_AUTH_TOKEN=!USER_TOKEN!
         )

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-OHEMAUCINIMV
 """sassymcp install — detect every installed MCP client on the box and
 patch its config to register sassymcp.exe.
 
@@ -26,9 +29,8 @@ import json
 import os
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 from sassymcp._atomic import atomic_write_json
 
@@ -69,7 +71,7 @@ def _claude_desktop_config() -> Path:
         return _appdata() / "Claude" / "claude_desktop_config.json"
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
-    return Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
+    return _appdata() / "Claude" / "claude_desktop_config.json"
 
 
 def _vscode_user_mcp() -> Path:
@@ -77,7 +79,7 @@ def _vscode_user_mcp() -> Path:
         return _appdata() / "Code" / "User" / "mcp.json"
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Application Support" / "Code" / "User" / "mcp.json"
-    return Path.home() / ".config" / "Code" / "User" / "mcp.json"
+    return _appdata() / "Code" / "User" / "mcp.json"
 
 
 def _cursor_mcp() -> Path:
@@ -97,17 +99,17 @@ def _cline_mcp() -> Path:
         return _appdata() / "Code" / "User" / "globalStorage" / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json"
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Application Support" / "Code" / "User" / "globalStorage" / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json"
-    return Path.home() / ".config" / "Code" / "User" / "globalStorage" / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json"
+    return _appdata() / "Code" / "User" / "globalStorage" / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json"
 
 
 def _zed_settings() -> Path:
-    return Path.home() / ".config" / "zed" / "settings.json"
+    return _appdata() / "zed" / "settings.json" if os.name != "nt" and sys.platform != "darwin" else Path.home() / ".config" / "zed" / "settings.json"
 
 
 def _grok_desktop_config() -> Path:
     if os.name == "nt":
         return _appdata() / "GrokDesktop" / "config.json"
-    return Path.home() / ".config" / "GrokDesktop" / "config.json"
+    return _appdata() / "GrokDesktop" / "config.json" if sys.platform != "darwin" else Path.home() / ".config" / "GrokDesktop" / "config.json"
 
 
 # Registry of all known clients. Order = display order in CLI output.
@@ -182,7 +184,12 @@ def _server_entry_for(client: ClientInfo, exe_path: Path) -> dict:
         "env": {"SASSYMCP_LOAD_ALL": "1"},
     }
     if client.short_name == "grok":
-        entry["args"] = ["--http", "--host", "127.0.0.1", "--port", "21001"]
+        # Grok Desktop launches the server itself over HTTP. Pin the
+        # install-time bind (CLI > env > config > defaults) so the entry
+        # matches the port the server will actually listen on.
+        from sassymcp._httpbind import resolve_http_bind
+        _bind = resolve_http_bind(argv=[])
+        entry["args"] = ["--http", "--host", _bind.host, "--port", str(_bind.port)]
     return entry
 
 
@@ -208,11 +215,11 @@ def _ensure_backup(config_path: Path, *, dry_run: bool) -> Path | None:
 def _load_existing_config(config_path: Path) -> dict:
     if not config_path.exists():
         return {}
-    try:
-        return json.loads(config_path.read_text(encoding="utf-8") or "{}")
-    except json.JSONDecodeError:
-        # Refuse to clobber a corrupt config; surface to the caller.
-        raise
+    # A JSONDecodeError propagates deliberately: refuse to clobber a corrupt
+    # config, surface it to the caller. (This was an explicit
+    # `except json.JSONDecodeError: raise`, which is what bare propagation
+    # already does — the intent now lives in this comment instead.)
+    return json.loads(config_path.read_text(encoding="utf-8") or "{}")
 
 
 def patch_client(client: ClientInfo, exe_path: Path, *, dry_run: bool = False) -> PatchResult:
@@ -376,11 +383,28 @@ def _skill_target_for(client: ClientInfo) -> Path | None:
     return None
 
 
+def _strip_leading_html_comment(text: str) -> str:
+    """Drop a leading <!-- ... --> block (the repo's CodeMark/CMI header).
+
+    The header is for the source tree; deployed renderings must start at the
+    YAML frontmatter or the H1 — Claude Skills reject frontmatter that isn't
+    the first thing in the file, and rules files shouldn't lead with an
+    unrelated comment.
+    """
+    stripped = text.lstrip()
+    if stripped.startswith("<!--"):
+        end = stripped.find("-->")
+        if end != -1:
+            return stripped[end + 3:].lstrip("\n")
+    return text
+
+
 def _render_skill_for(client: ClientInfo, source_text: str) -> str:
     """Render the canonical playbook for a specific client. Most clients want
     plain markdown; Claude Skills want a YAML frontmatter block. The source
     file already has frontmatter, so for non-Skill targets we strip it.
     """
+    source_text = _strip_leading_html_comment(source_text)
     if client.short_name == "claude":
         # Claude Skills format expects the YAML frontmatter as-is.
         return source_text
@@ -496,7 +520,9 @@ def main(argv: list[str] | None = None) -> int:
         clients = [c for c in clients if c.short_name != "claude"]
 
     results: list[PatchResult] = []
-    op = unpatch_client if args.uninstall else patch_client
+    # (An `op = unpatch_client if args.uninstall else patch_client` alias stood
+    # here but was never called — the loop below branches and calls each
+    # directly, which it has to: the two take different arguments.)
     for c in clients:
         if args.uninstall:
             results.append(unpatch_client(c, dry_run=args.dry_run))

@@ -1,10 +1,16 @@
+<!--
+   Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+   Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+   CodeMark: SCLLC1-SassyMCP-HQ73WJ6U2BIV
+-->
+<!-- mcp-name: io.github.sassyconsultingllc/sassymcp -->
 # SassyMCP
 
 **One MCP server to replace them all.**
 
-**270 tools | 35 modules | 18 tool groups | Replaces 75+ MCP servers | 34MB standalone exe**
+**278 tools | 39 modules | 18 tool groups | Replaces 75+ MCP servers | ~35MB standalone exe**
 
-*Last updated: 2026-06-18 — v1.8.1 | one-time perpetual licensing (free / pro / forensics)*
+*Last updated: 2026-11-08 — v1.18.0 | free for personal use, every tool included; [commercial license](LICENSING.md) for work*
 
 Compatible with Claude Desktop, Grok Desktop, Cursor, Windsurf, and any MCP client.
 
@@ -14,7 +20,7 @@ Compatible with Claude Desktop, Grok Desktop, Cursor, Windsurf, and any MCP clie
 
 The MCP ecosystem is fragmented. Need file operations? Install Filesystem server. Need terminal? Desktop Commander. GitHub? Another server. Android? Another. Screenshots? Another. You end up with 6-10 separate MCP servers, each consuming context window, each with its own config, bugs, and update cycle.
 
-SassyMCP replaces **75+ individual MCP servers** — including [Desktop Commander](https://github.com/wonderwhy-er/DesktopCommanderMCP) (5.9k stars), [Windows-MCP](https://github.com/CursorTouch/Windows-MCP) (5k stars), [GitHub MCP Server](https://github.com/github/github-mcp-server) (28.6k stars), Anthropic's official [Filesystem](https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem) and [Memory](https://github.com/modelcontextprotocol/servers/tree/main/src/memory) servers, [mobile-mcp](https://github.com/mobile-next/mobile-mcp) (4.4k stars), and dozens more — with a single 34MB exe.
+SassyMCP replaces **75+ individual MCP servers** — including [Desktop Commander](https://github.com/wonderwhy-er/DesktopCommanderMCP) (5.9k stars), [Windows-MCP](https://github.com/CursorTouch/Windows-MCP) (5k stars), [GitHub MCP Server](https://github.com/github/github-mcp-server) (28.6k stars), Anthropic's official [Filesystem](https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem) and [Memory](https://github.com/modelcontextprotocol/servers/tree/main/src/memory) servers, [mobile-mcp](https://github.com/mobile-next/mobile-mcp) (4.4k stars), and dozens more — with a single ~35MB exe.
 
 **Key differentiators:**
 - **Smart Tool Loading** — Only loads tool groups you use. Reduces context window overhead from ~25K tokens to ~5K tokens by default.
@@ -25,7 +31,6 @@ SassyMCP replaces **75+ individual MCP servers** — including [Desktop Commande
 - **Context Estimation** — Built-in tool to measure how much of your 200K context window tool definitions consume.
 - **Response Minification** — GitHub API responses stripped of URL metadata bloat (40-70% smaller).
 - **Safe Delete** — Delete commands (`rm`, `del`, `Remove-Item`, etc.) are intercepted across all shells. Instead of destroying files, targets are moved to a `_DELETE_/` staging folder in the same directory for human review — protecting against AI hallucinations.
-- **Self-Modification** — Hot-reload modules without restart, git-backed rollback on syntax errors.
 - **Guided Setup** — Wizard walks through persona, GitHub token, SSH credentials, and optional tool discovery.
 
 ## What It Replaces
@@ -44,31 +49,33 @@ SassyMCP replaces **75+ individual MCP servers** — including [Desktop Commande
 | OCR / screen reading | Vision | 7 OCR/vision MCP servers | [PaddleOCR MCP](https://paddlepaddle.github.io/PaddleOCR/) |
 | Web inspection | WebInspector, Utility | 7 web/fetch MCP servers | [Fetch](https://github.com/modelcontextprotocol/servers/tree/main/src/fetch) (Anthropic official) |
 | Windows system | Registry, ProcessManager, Clipboard, EventLog, Bluetooth | 13 Windows MCP servers | [Windows-MCP](https://github.com/CursorTouch/Windows-MCP) (5k stars) |
-| Hot reload | SelfMod | 3 reload MCP servers | [mcp-reloader](https://github.com/mizchi/mcp-reloader) |
 
 **Plus features with no MCP server equivalent:** phone pause/resume with sensitive context detection (auto-blocks on login/payment screens), operational hooks (14 expert playbooks), safe delete interception, Windows autorun forensics, Android+Windows clipboard sync, usage-weighted smart loading.
 
-## Licensing & Tiers
+## Licensing
 
-SassyMCP is sold through [LemonSqueezy](https://sassyconsultingllc.com/store) as a **one-time perpetual license** (no subscriptions). Free tier runs out of the box with no key required — paid tiers unlock additional tool groups. Buy once, own forever; refunds revoke automatically.
+**Free for personal use. Commercial use needs a license.** Everyone runs the same build with every tool group unlocked and no key required. There is no free/pro split, no gated groups, and no crippled demo; the 278 tools in the module table below are the product, out of the box. What a commercial license changes is your *right to use it for work*, not which features you get.
 
-| Tier | What unlocks | What you get |
-|---|---|---|
-| **Free** | core, meta, github_quick, persona, setup, infrastructure, utility, selfmod, memory, updater, prompts, combos | File ops, shell, desktop automation, daily-driver GitHub, persistent memory, surgical edit, audit log, multi-client install — enough to use SassyMCP as a daily driver, just without the heavy automation surfaces. |
-| **Pro** | Free + `github_full`, `android`, `v020`, `linux`, `system` | Full GitHub API (80 tools), Android phone control + dynamic vision, OCR, app launcher, web inspector, crosslink, remote Linux SSH, system monitoring, clipboard sync, event logs. |
-| **Forensics** *(add-on)* | `forensics` group: `security_audit`, `registry` | Stacks additively on top of Free or Pro. APK inspection, certificate validation, hash + permission audit, Defender / firewall status, registry read/write/export, autorun forensics. |
+| Your situation | What you need |
+|---|---|
+| Personal projects, learning, hobby automation, coursework | Free |
+| Trying it at work to decide | Free for 30 days |
+| Using it in your job, on client work, or across a team | [Commercial license](https://sassyconsultingllc.com/store), one seat per person |
 
-**Activation flow:**
+The full plain-English terms, including what counts as commercial use, are in [LICENSING.md](LICENSING.md). The binding text is [LICENSE](LICENSE).
+
+**It's not open source.** The source is public so you can read and audit what runs on your machine, but you may not redistribute it, sell it, or host it as a service for others.
+
+**Supporter licenses (optional):** individuals who want to fund development can buy a one-time supporter license through [LemonSqueezy](https://sassyconsultingllc.com/store). It records a supporter badge in the startup banner, control panel, and VS Code cockpit and unlocks nothing, because nothing is locked. **A supporter license does not cover commercial use.** Refunds revoke the badge automatically.
+
+**Activation flow (commercial and supporter keys):**
 1. Purchase at `https://sassyconsultingllc.com/store` — LemonSqueezy emails you a key (`XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX`).
 2. Activate from your AI agent: `sassy_setup_license action=activate key=...`
 3. Or from a terminal: `sassymcp.exe setup` opens the interactive menu.
-4. SassyMCP calls LS to register this machine as an instance, mints a local HMAC-signed payload, and unlocks the paid groups on the next server restart.
 
-**Offline operation:** Once activated, the local HMAC payload lets SassyMCP run fully offline. A weekly authoritative re-check against LS catches refunds and cancellations; a faster startup check against the SassyMCP billing oracle cuts refund-to-revocation latency to seconds.
+**Offline operation:** Once activated, a local HMAC-signed payload lets the license tier validate fully offline. A weekly re-check against LS catches refunds and cancellations; a faster startup check against the SassyMCP billing oracle cuts refund-to-revocation latency to seconds. Missing, expired, tampered, or corrupt license files just show the free label — tool availability is never affected.
 
-**Safe failure modes:** Missing, expired, tampered, or corrupt license files silently downgrade to free tier — the product never bricks. Network errors during activation or revalidation leave the local license intact.
-
-**Dev escape hatch:** Set `SASSYMCP_LICENSE_BYPASS=1` to unlock all groups regardless of license state. Intended for development on the upstream codebase, CI, and air-gapped support cases. Logged at WARNING level.
+**Back-compat:** `SASSYMCP_LICENSE_BYPASS=1` (the old dev escape hatch that unlocked gated groups) is accepted and ignored — there is nothing left to bypass.
 
 ## Running supervised (`sassymcp supervise`)
 
@@ -94,7 +101,8 @@ The supervisor owns the runtime tree and makes it self-healing and **orphan-proo
 
 | Module | Tools | Group | Description |
 |--------|-------|-------|-------------|
-| **Meta** | 9 | meta | Context estimation, tool usage analytics, group management |
+| **Meta** | 11 | meta | Context estimation, tool usage analytics, group management |
+| **Batch** | 1 | meta | Multi-tool batch fan-out in a single call |
 | **FileOps** | 10 | core | Read, write, search, move, copy, edit, mkdir, file info, safe delete |
 | **Shell** | 2 | core | PowerShell, CMD, WSL execution with syntax normalization and delete interception |
 | **UIAutomation** | 6 | core | Desktop state, click, type, hotkeys, screenshots, screen info |
@@ -102,33 +110,52 @@ The supervisor owns the runtime tree and makes it self-healing and **orphan-proo
 | **Audit** | 4 | core | Audit log read, search, clear, false-positive tracking |
 | **Session** | 6 | core | Persistent terminal sessions (start, read, send, stop) |
 | **GitHub Quick** | 6 | github_quick | Daily-driver: push_files, get_file, issue, PR, protect |
+| **GitHub Full** | 80 | github_full | Complete GitHub API: repos, issues, PRs, actions, security, gists |
 | **Persona** | 7 | persona | Expert-mode directives, decision framework, engineering standards |
 | **Utility** | 11 | utility | Env vars, toast, zip/tar/unzip/untar, HTTP requests, file diff |
-| **SelfMod** | 8 | selfmod | Self-edit, hot-reload, restart, rollback, status |
-| **Setup** | 8 | setup | Setup wizard, GitHub token guide, SSH setup, tool checker, license activation |
+| **SetupWizard** | 7 | setup | Setup wizard, GitHub token guide, SSH setup, tool checker, license activation |
 | **ToolsManager** | 1 | setup | External tool bootstrap and detection |
 | **Observability** | 3 | infrastructure | Health, metrics, tool stats |
 | **StateManager** | 3 | infrastructure | Persistent key-value state across sessions |
-| **RuntimeConfig** | 3 | infrastructure | Runtime config, recent tool calls |
+| **RuntimeConfig** | 5 | infrastructure | Permission modes, runtime config, recent tool calls |
+| **Offline** | 3 | infrastructure | Offline fallback status and local-model handoff |
 | **Memory** | 9 | memory | Persistent cross-session memory, milestones, task handoffs, pattern learning |
-| **Updater** | 4 | updater | Version checks, changelog, self-update (Kali-style) |
-| **GitHub Full** | 80 | github_full | Complete GitHub API: repos, issues, PRs, actions, security, gists |
+| **Updater** | 4 | updater | Version checks, changelog, self-update |
 | **ADB** | 10 | android | Android shell, packages, file transfer, logcat, screencap |
 | **PhoneScreen** | 14 | android | UI tree reader, phone glance/watch, tap/swipe/type/key, pause/resume, scrcpy |
+| **iPhone** | 6 | iphone | iOS device info, screenshot, syslog, apps, IPA install — experimental, needs libimobiledevice |
 | **NetworkAudit** | 7 | system | netstat, ARP, WiFi scan, port scan, DNS, traceroute |
-| **ProcessManager** | 5 | system | Windows + Android process list/kill, system info |
-| **SecurityAudit** | 7 | forensics | Hash, permissions, certs, APK, firewall, Defender — *requires Forensics add-on* |
-| **Registry** | 4 | forensics | Read, write, export, autorun forensics — *requires Forensics add-on* |
+| **ProcessManager** | 5 | system | Cross-platform process list/kill, system info |
 | **Bluetooth** | 3 | system | Windows + Android BT enumeration |
 | **EventLog** | 3 | system | Windows Event Log + Android logcat |
-| **Clipboard** | 4 | system | Windows + Android clipboard sync |
+| **Clipboard** | 4 | system | Cross-platform clipboard sync |
+| **SecurityAudit** | 7 | forensics | Hash, permissions, certs, APK, firewall, Defender |
+| **Registry** | 4 | forensics | Read, write, export, autorun forensics (Windows) |
 | **Vision** | 8 | v020 | Screen capture, OCR, dynamic glance/watch/diff |
 | **AppLauncher** | 6 | v020 | Launch apps, focus/close/resize/snap windows |
 | **WebInspector** | 5 | v020 | Security headers, URL screenshots, tech stack detection |
 | **Crosslink** | 7 | v020 | Cross-session messaging via HTTP API + SQLite |
-| **Linux** | 1 | linux | Remote SSH execution via plink |
-| **Combos** | 4 | combos | Multi-step workflows in one call: PR review, phone observe, codebase grep |
-| **Prompts** | 0 | prompts | MCP slash-menu shortcuts (pr-review, phone-status, resume, brain-status, setup-sassy) |
+| **Coordination** | 4 | v020 | Multi-agent coordination board and peer delegation |
+| **Linux** | 1 | linux | Remote SSH execution via plink/OpenSSH |
+| **Combos** | 3 | combos | Multi-step workflows in one call: PR review, phone observe, codebase grep |
+| **Prompts** | 0 | prompts | MCP slash-menu shortcuts (no tools — prompts only) |
+| **SelfMod** | 0 | — | Retired stub — self-modification removed (no tools) |
+
+*Counts generated from the registered tool set (278 tools across 39 modules, 18 groups; the `prompts` group exposes MCP prompts rather than tools).*
+
+*Full per-tool reference (generated): [docs/TOOLS.md](docs/TOOLS.md).*
+
+### iPhone support (experimental)
+
+SassyMCP can talk to iPhones over USB via [libimobiledevice](https://libimobiledevice.org/). This is new in v1.16.0 and experimental — Android-over-ADB remains the mature path.
+
+**Prerequisites**
+
+- Install libimobiledevice: `brew install libimobiledevice` (macOS) or `sudo apt install libimobiledevice-utils` (Linux). Windows hosts have limited support — use WSL2 or a macOS/Linux host.
+- Pair the device once: run `idevicepair pair` and tap **Trust** on the iPhone. iOS 17+ requires this pairing step before any tool will see the device.
+- If several iPhones are connected, pass the `udid` parameter (from `sassy_iphone_list`) to target one.
+
+**Tools:** `sassy_iphone_list`, `sassy_iphone_info`, `sassy_iphone_screenshot`, `sassy_iphone_syslog` (bounded capture), `sassy_iphone_apps`, `sassy_iphone_install` (requires `confirm='YES'`). Every tool degrades gracefully when the binaries or a trusted device are missing — you'll get an install hint or a pairing reminder, never a traceback.
 
 ## Dynamic Vision
 
@@ -188,8 +215,6 @@ AI agents can hallucinate destructive commands. SassyMCP intercepts **all** dele
 | `sassy_edit_block` / `sassy_edit_multi` | Refuses protected paths, snapshots existing content to `_DELETE_/<name>.pre-edit.<ts><ext>` before applying |
 | `sassy_copy` | Refuses existing destination (no silent overwrite), refuses protected src/dst |
 | `sassy_move` | Refuses silent destination overwrite, refuses protected src/dst |
-| `sassy_selfmod_edit` / `sassy_selfmod_write` | Bad-syntax writes rename to `<name>.bad.<ts>` (never unlink) |
-| `sassy_selfmod_rollback` | Requires `confirm='YES'` — discards uncommitted changes |
 | `sassy_audit_clear` | Rotates the audit log instead of deleting it; requires `confirm='YES'` |
 
 **Intercepted command keywords:** `rm`, `rmdir`, `unlink` (Unix/WSL), `del`, `erase`, `rd` (CMD), `Remove-Item`, `ri`, `rni` (PowerShell aliases), `sdelete` / `sdelete64` (Sysinternals).
@@ -264,6 +289,42 @@ binds `127.0.0.1` only and needs the per-install token in
 `panel.enabled` / `SASSYMCP_PANEL=1` to launch it at boot), then open the
 printed `http://127.0.0.1:8765/?token=…` URL.
 
+## Tool profiles
+
+Tool profiles gate which tools an MCP session can see (`tools/list`) and
+call (`tools/call`) — a per-session, human-controlled subset of the
+catalog, managed from the Control Panel (a **Profiles** tab, backed by
+`GET`/`POST /api/profile`). There is deliberately **no MCP tool** that can
+switch or widen the profile, so a session can never escalate itself out of
+a restrictive profile; fan-out through `sassy_batch` respects the same
+gate.
+
+| Profile | Tool groups |
+|---------|-------------|
+| `full` | All 18 groups (default on every start) |
+| `developer` | meta, core, infrastructure, utility, github_quick, github_full, v020, memory, persona, setup, updater |
+| `forensics` | meta, core, infrastructure, forensics, utility, system, memory |
+| `devices` | meta, core, infrastructure, android, iphone, utility, memory |
+| `sysadmin` | meta, core, infrastructure, system, linux, utility, memory, updater |
+| `readonly` | Every tool whose curated MCP annotation is `readOnlyHint=true` — computed per-tool, not from groups |
+| `custom` | An explicit group set you tick in the dashboard |
+
+Rules worth knowing:
+
+- **Session-scoped, never persisted.** A restart always comes back up on
+  `full`. Profiles are a runtime seatbelt, not access control — the panel
+  token is the trust boundary.
+- **`meta` stays on.** Its introspection tools (`sassy_tool_groups`,
+  `sassy_self_check`, …) are the session's only window into what it can
+  see; hiding them would strand the session with no way to inspect the
+  gate.
+- **Widening needs `confirm='YES'`.** Any switch that would expose a
+  currently-hidden tool is an audited escalation and requires explicit
+  confirmation (the panel UI sends it for you, mirroring the bypass-mode
+  convention). Narrowing never does.
+- A tool hidden from `tools/list` is also uncallable via `tools/call` — a
+  client cannot call what it cannot see.
+
 ## Guided Setup
 
 On first launch (no `~/.sassymcp/persona.md`), the wizard tools are prominently available and the AI is given an onboarding playbook via the registered hook. The flow is conversational — the AI asks, you answer, it calls the tools.
@@ -274,7 +335,7 @@ Each step is independent and skippable. Just tell the AI "set up SassyMCP" or "l
 
 | # | Step | Tool | What happens |
 |---|------|------|--------------|
-| 0 | **License** | `sassy_setup_license action="status"` then `action="activate" key=...` | Reports current tier. If you have a Pro/Forensics key, activates it and unlocks the gated tool groups. |
+| 0 | **License** *(optional)* | `sassy_setup_license action="status"` then `action="activate" key=...` | Reports supporter tier. All tools are unlocked regardless — a key just registers your seat and supporter status. |
 | 1 | **Persona** | `sassy_setup_wizard` | Asks the questionnaire below, generates `~/.sassymcp/persona.md`, hot-reloads the persona module. |
 | 2 | **GitHub** | `sassy_setup_github action="check"` → `action="open_browser"` → `action="save_token" token=...` | Validates an existing `GITHUB_TOKEN`, or opens [github.com/settings/tokens](https://github.com/settings/tokens?type=beta), walks you through scope selection, then saves and re-validates. |
 | 3 | **SSH / Linux** | `sassy_setup_ssh action="check"` → `action="save" host=... user=... password=...` → `action="test"` | Locates `plink`, stores creds in process env, runs an `echo` round-trip to verify. |
@@ -313,10 +374,10 @@ The onboarding hook fires on phrases like `"setup"`, `"first time"`, `"get start
 By default, SassyMCP only loads frequently-used tool groups. This keeps tool definitions under 5% of your context window.
 
 ```bash
-# Default: loads core, github_quick, persona, meta, utility, selfmod, setup, infrastructure
+# Default: loads core, github_quick, persona, meta, utility, setup, infrastructure
 uv run sassymcp
 
-# Load everything (270 tools, ~22K tokens of context)
+# Load everything (~22K tokens of context)
 SASSYMCP_LOAD_ALL=1 uv run sassymcp
 
 # Load specific groups
@@ -333,7 +394,6 @@ SASSYMCP_GROUPS=core,github_quick,android,v020 uv run sassymcp
 | `github_quick` | github_quick (6 lean tools) | Yes |
 | `persona` | persona | Yes |
 | `utility` | utility | Yes |
-| `selfmod` | selfmod | Yes |
 | `setup` | setup_wizard, tools_manager | Yes |
 | `memory` | memory | Yes |
 | `updater` | updater | Yes |
@@ -355,11 +415,11 @@ Download `sassymcp.dxt` from the [latest release](https://github.com/sassyconsul
 
 ### VS Code extension
 
-Install **[SassyMCP](https://marketplace.visualstudio.com/items?itemName=sassyconsultingllc.sassymcp)** from the VS Code marketplace. The extension locates `sassymcp.exe` (PATH or the `sassymcp.exePath` setting), runs the same auto-config CLI, and adds a status bar item showing your license tier and brain health. Five commands cover Setup Wizard, Reinstall Configs, Open Audit Log, Open `_DELETE_` Folder, Show Brain Status.
+Install the VS Code extension from the `.vsix` attached to the [latest release](https://github.com/sassyconsultingllc/SassyMCP/releases/latest) until the Visual Studio Marketplace listing is live. The extension locates `sassymcp.exe` (PATH or the `sassymcp.exePath` setting), runs the same auto-config CLI, and adds a status bar item showing supporter-tier label and brain health. Command palette: Open Sassy Brain Cockpit, Run Setup Wizard, Reinstall Client Configs, Open Audit Log, Open `_DELETE_` Folder, Show Brain Status.
 
 ### Manual auto-config CLI
 
-If you have `sassymcp.exe` already (from the portable zip or pip install) and want to register it with every MCP client without per-client JSON editing:
+If you have `sassymcp.exe` already (from a GitHub release or pip install) and want to register it with every MCP client without per-client JSON editing:
 
 ```
 sassymcp-install
@@ -367,15 +427,9 @@ sassymcp-install
 
 That detects Claude Desktop, VS Code Copilot, Cursor, Windsurf, Continue, Cline, Zed, and Grok Desktop and patches each one's config atomically. Re-running is a noop. Take a look first with `sassymcp-install --dry-run`. Remove with `sassymcp-install --uninstall`. The CLI takes a timestamped backup of any existing config before its first edit.
 
-### Portable bundle (manual config — older path)
+### Portable bundle
 
-**No installer required**, but you'll edit each client's JSON yourself unless you also run `sassymcp-install` after.
-
-1. Download `sassymcp-v1.3.1-portable.zip` from the [latest release](https://github.com/sassyconsultingllc/SassyMCP/releases/latest) (~123 MB — includes `sassymcp.exe`, `adb`, `nmap`, `plink`, `scrcpy`, `tesseract`, `cloudflared`, and the `start-*.bat` launchers).
-2. Extract anywhere — `D:\Tools\SassyMCP`, a thumb drive, your home folder, whatever.
-3. Run `start-local.bat` (Claude Desktop), `start-lan.bat` (LAN HTTP), or `start-tunnel.bat` (Cloudflare Tunnel).
-
-To uninstall: delete the folder. To upgrade: extract the new zip over the old folder, or to a new folder and delete the old one.
+The portable zip (`sassymcp-v*-portable.zip` with bundled `adb`, `nmap`, `plink`, `scrcpy`, `tesseract`, `cloudflared`, and the `start-*.bat` launchers) is **no longer published** — the release pipeline does not build it. Use the standalone executable below (and install any helper tools you need on PATH), or `pip install sassymcp` for the full Python install.
 
 ### Standalone executable (no tools bundled)
 
@@ -383,13 +437,36 @@ If you don't need the bundled `nmap` / `adb` / `cloudflared` (or you have them o
 
 **First-run wizard:** Double-click `sassymcp.exe` (or run it from a terminal with no flags) on a fresh machine and you'll get an interactive menu — auto-detect AI agents and register SassyMCP, activate a LemonSqueezy license key, generate / list bearer tokens, or start the HTTP server. Run `sassymcp.exe setup` anytime to re-open the menu. Once a persona is configured, bare invocation falls back to starting the HTTP server (the v1.5 behavior) so existing setups are unchanged.
 
-### Activating a paid tier
+### Linux (pip only)
 
-There is no separate "licensed download" — everyone runs the same binary from
-the [GitHub releases](https://github.com/sassyconsultingllc/SassyMCP/releases/latest).
-Buy a license at **[sassyconsultingllc.com/store](https://sassyconsultingllc.com/store)**,
-then activate it on top of the free install — paid groups unlock on the next
-server restart:
+CI publishes no Linux binary. On Linux/BSD, install the wheel: `pipx install sassymcp` (or `pip install --user sassymcp`). (The standalone executable is Windows-only; macOS ships a universal2 binary — see `sassymcp-macos` on the release page.) `./build.sh` builds a native binary on any of them.
+
+POSIX launchers mirror the `.bat` files and are plain `/bin/sh`, so they run on Debian/Kali/Ubuntu, Fedora/RHEL, Arch, openSUSE, Alpine, the BSDs and macOS:
+
+| Script | Purpose |
+|---|---|
+| `./start-local.sh` | stdio mode (point your MCP client here) |
+| `./start-lan.sh` | HTTP on localhost or LAN; prompts, or set `BIND_ADDR` / `PORT` / `SASSYMCP_AUTH_TOKEN` |
+| `./start-supervised.sh` | HTTP under `sassymcp supervise` (auto-restart) |
+| `./start-tunnel.sh [NAME]` | HTTP bridge + `cloudflared tunnel run` |
+| `./autostart-bridge.sh install` | start at login: systemd user unit (Linux), LaunchAgent (macOS), or an `@reboot` crontab line elsewhere |
+| `./deploy.sh` | package `dist/sassymcp` + launchers into `deploy-posix/` |
+
+Each launcher finds SassyMCP in this order: `./sassymcp`, `dist/sassymcp`, `.venv/bin/python -m sassymcp.server`, `sassymcp` on PATH, then `python3 -m sassymcp.server`.
+
+### MSI installer (manual builds only)
+
+No MSI is published by CI — `build-msi.ps1` exists for manual MSI builds (WiX 3.x) from a staged `sassymcp.exe`, and `installer.wxs` is a manual-build reference template, not a maintained installer.
+
+### Activating a license key
+
+There is no separate "licensed download" and nothing to unlock — everyone runs
+the same fully-unlocked binary from the
+[GitHub releases](https://github.com/sassyconsultingllc/SassyMCP/releases/latest).
+Personal use needs no key. If you use SassyMCP for work, buy a commercial
+license (or, as an individual, an optional supporter license) at
+**[sassyconsultingllc.com/store](https://sassyconsultingllc.com/store)** and
+activate it to register your seat ([what counts as commercial use](LICENSING.md)):
 
 ```powershell
 # from your AI agent:
@@ -415,7 +492,7 @@ playwright install chromium
 
 ### Cloudflare Tunnel (remote access)
 
-Want to drive SassyMCP from a remote MCP client (Claude Web, another machine)? The portable bundle ships a turnkey launcher. Full step-by-step is in [**docs/TUNNEL.md**](docs/TUNNEL.md); the short version:
+Want to drive SassyMCP from a remote MCP client (Claude Web, another machine)? Install `cloudflared`, then use the `start-tunnel.bat` launcher from this repo (`deploy/start-tunnel.bat` or the copy next to a standalone `sassymcp.exe`). Full step-by-step is in [**docs/TUNNEL.md**](docs/TUNNEL.md); the short version:
 
 ```powershell
 winget install Cloudflare.cloudflared          # one-time
@@ -439,7 +516,7 @@ For hosted-Claude clients that require OAuth 2.1 DCR/PKCE instead of a static be
 
 ## MCP Client Config
 
-SassyMCP speaks standard MCP. Anything that connects works — **no client-side modifications required**. The portable bundle ships ready-to-edit templates under `deploy/*_config.template.json`. Pick the row for your client, copy the template, replace `REPLACE_WITH_PATH` with the absolute path to `sassymcp.exe`, and save it where the client expects.
+SassyMCP speaks standard MCP. Anything that connects works — **no client-side modifications required**. Ready-to-edit templates live under `deploy/*_config.template.json` in this repo. Pick the row for your client, copy the template, replace `REPLACE_WITH_PATH` with the absolute path to `sassymcp.exe`, and save it where the client expects.
 
 | Client | Transport | Config file location | Template |
 |--------|-----------|----------------------|----------|
@@ -601,7 +678,7 @@ The legacy `personal/autostart-bridge.bat` + `personal/register-autostart.ps1` t
 
 | Variable | Purpose |
 |----------|---------|
-| `SASSYMCP_LOAD_ALL=1` | Load all 270 tools |
+| `SASSYMCP_LOAD_ALL=1` | Load every tool group |
 | `SASSYMCP_GROUPS=core,android` | Load specific groups |
 | `SASSYMCP_AUTH_TOKEN=xxx` | Bearer token for HTTP auth |
 | `SASSYMCP_DEV=1` | Enable live reload (dev mode) |
@@ -642,9 +719,24 @@ The same SassyMCP source runs on Windows, macOS, and Linux. The host OS is
 resolved once at import; every tool then routes to the host-appropriate
 command — shells (PowerShell / zsh|bash), clipboard (Get-Clipboard / pbpaste),
 event log (Get-WinEvent / `log show` / journald), firewall (netsh /
-socketfilterfw / ufw), Wi-Fi, Bluetooth, window control (pywinauto /
-AppleScript System Events / wmctrl), SSH (plink / native ssh), package
-installs (winget / brew / apt), and more.
+socketfilterfw / ufw, firewalld, nftables, iptables, pf), Wi-Fi, Bluetooth,
+window control (pywinauto / AppleScript System Events / wmctrl or xdotool),
+SSH (plink / native ssh), package installs, and more.
+
+On Linux and BSD, SassyMCP finds the native package manager (apt, dnf, yum,
+pacman, zypper, apk, xbps, emerge, pkg, pkg_add, pkgin, or Homebrew) and uses
+that distro's package names. When it isn't running as root it calls
+`sudo -n`, so a password prompt fails at once with a hint instead of
+hanging. When a tool is missing on a minimal install, SassyMCP uses
+another one: `ss` or `ip neigh` for net-tools, `dig`/`host`/`getent` for
+`nslookup`, `tracepath` for `traceroute`, and syslog files when there is no
+journald. The clipboard uses wl-clipboard on Wayland and xclip/xsel on X11.
+If `pwsh` is installed, `shell="powershell"` runs PowerShell 7 on Linux and macOS.
+
+- **Linux window control** works on X11 and on apps running under XWayland
+  (install `wmctrl` or `xdotool`, plus `xrandr`). Native Wayland compositors
+  don't let one app control another app's windows, so those tools give a
+  clear error there.
 
 - **Build:** `build.bat` (Windows) or `build.sh` (macOS/Linux). Build each
   binary on its own OS.
@@ -659,4 +751,6 @@ installs (winget / brew / apt), and more.
 
 ## License
 
-MIT License - Sassy Consulting LLC
+Free for personal and educational use; commercial use requires a license. Source-available, not open source. See [LICENSING.md](LICENSING.md) for the plain-English terms and [LICENSE](LICENSE) for the binding text.
+
+Copyright (c) 2026 Sassy Consulting LLC. All rights reserved.

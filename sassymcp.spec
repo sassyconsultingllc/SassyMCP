@@ -81,12 +81,16 @@ a = Analysis(
         'sassymcp.modules.app_launcher',
         'sassymcp.modules.web_inspector',
         'sassymcp.modules.crosslink',
+        'sassymcp.modules.coordination',
+        # `mesh` subcommand (v1.11) — lazy-imported like supervise; the frozen
+        # exe is the data backend the Sassy Brain desktop app shells out to.
+        'sassymcp._brain_status',
+        'sassymcp._phone_status',
         # Remote Linux SSH
         'sassymcp.modules.linux',
-        # Persona / Utility / Setup / Selfmod
+        # Persona / Utility / Setup
         'sassymcp.modules.persona',
         'sassymcp.modules.utility',
-        'sassymcp.modules.selfmod',
         'sassymcp.modules.setup_wizard',
         'sassymcp.modules.tools_manager',
         'sassymcp.modules.memory',

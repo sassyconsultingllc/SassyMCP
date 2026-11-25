@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-MIKZU6WCW3DX
 """Interactive CLI wizard for sassymcp.exe.
 
 Two entry points:
@@ -19,8 +22,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-from pathlib import Path
-
 
 # ── Terminal helpers ──────────────────────────────────────────────────
 
@@ -65,19 +66,24 @@ def _hr():
     print(_dim("─" * 60))
 
 
-def _prompt(msg: str, default: str = "") -> str:
+def _prompt(msg: str, default: str = "") -> str | None:
+    """Prompt for input. Returns None on EOF / Ctrl+C — the caller must treat
+    that as "exit now" (returning "" here is what sent the menu into an
+    infinite banner-print loop on closed stdin; audit C F8)."""
     hint = f" [{default}]" if default else ""
     try:
         v = input(f"{msg}{hint}: ").strip()
     except (EOFError, KeyboardInterrupt):
         print()
-        return ""
+        return None
     return v or default
 
 
-def _confirm(msg: str, default: bool = True) -> bool:
+def _confirm(msg: str, default: bool = True) -> bool | None:
     d = "Y/n" if default else "y/N"
     v = _prompt(f"{msg} ({d})")
+    if v is None:
+        return None
     if not v:
         return default
     return v.lower().startswith("y")
@@ -99,7 +105,10 @@ def _gather_status() -> dict:
     """
     from sassymcp import __version__
     from sassymcp._paths import (
-        PERSONA_FILE, LICENSE_FILE, TOKENS_FILE, CONFIG_FILE, HOME,
+        HOME,
+        LICENSE_FILE,
+        PERSONA_FILE,
+        TOKENS_FILE,
     )
 
     info: dict = {
@@ -152,7 +161,7 @@ def _print_banner(info: dict):
         print(f"  license      : {_dim(info['license_reason'])}")
     if info["license_email"]:
         print(f"  registered to: {info['license_email']}")
-    print(f"  persona      : "
+    print("  persona      : "
           + (_green('configured') if info['persona_exists'] else _yellow('not yet set up')))
     print(f"  auth tokens  : {info['tokens_count']}")
     print(f"  billing URL  : {info['billing_base']}")
@@ -189,7 +198,7 @@ def _action_install_specific(_info: dict):
         print(f"  {i:>2}) {c}")
     print()
     sel = _prompt("Pick a number (or blank to cancel)")
-    if not sel:
+    if sel is None or not sel:
         return
     try:
         client = choices[int(sel) - 1]
@@ -215,6 +224,8 @@ def _action_license(info: dict):
     print("  5) Open purchase page in browser")
     print("  6) Back")
     sel = _prompt("Pick a number")
+    if sel is None:
+        return
     if sel == "1":
         key = _prompt("Paste your LS license key")
         if not key:
@@ -234,6 +245,7 @@ def _action_license(info: dict):
         _pause()
     elif sel == "3":
         import asyncio
+
         from sassymcp.license import LICENSE_FILE, _ls_revalidate, validate_license
         if not LICENSE_FILE.exists():
             print(_yellow("No license file — nothing to validate."))
@@ -272,6 +284,8 @@ def _action_tokens(_info: dict):
     print("  2) Generate a new token")
     print("  3) Back")
     sel = _prompt("Pick a number")
+    if sel is None:
+        return
     if sel == "1":
         from sassymcp._paths import TOKENS_FILE
         if not TOKENS_FILE.exists():
@@ -287,6 +301,8 @@ def _action_tokens(_info: dict):
         if not client_id:
             return
         scopes = _prompt("scopes (comma-separated)", default="read,write")
+        if scopes is None:
+            return
         # Reuse the CLI subcommand instead of re-implementing token
         # generation — it already handles ACL lockdown + atomic write.
         from sassymcp.server import _cli_generate_token
@@ -298,13 +314,54 @@ def _action_tokens(_info: dict):
 
 
 def _action_run_server(_info: dict):
+    from sassymcp._httpbind import resolve_http_bind
+    _bind = resolve_http_bind()
     print()
-    print(_bold("Starting HTTP server on 127.0.0.1:21001"))
+    print(_bold(f"Starting HTTP server on {_bind.host}:{_bind.port}"))
     print(_dim("Press Ctrl+C to stop."))
     # Returning a sentinel lets main() know to start the server. We
     # don't start it from inside the wizard so the wizard's stdout
     # banners don't tangle with the server's startup log.
     return "run_server"
+
+
+def _action_check_updates(info: dict):
+    print()
+    print(_bold("Checking for updates (GitHub Releases & PyPI)..."))
+    print()
+    from sassymcp.modules.updater import Updater
+    upd = Updater()
+    result = upd.check(force=True)
+
+    current = result.get("current", info["version"])
+    latest = result.get("latest", current)
+    upgradable = result.get("upgradable", False)
+
+    # Status breakdown
+    gh_ver = result.get("latest")
+    pypi_ver = result.get("pypi_latest")
+    pypi_err = result.get("pypi_error")
+
+    print(f"  Installed : {_dim(current)}")
+    if gh_ver:
+        print(f"  GitHub    : {gh_ver} {_dim(result.get('release_url') or '')}")
+    if pypi_ver:
+        print(f"  PyPI      : {pypi_ver} {_dim(result.get('pypi_url') or '')}")
+    elif pypi_err:
+        print(f"  PyPI      : {_yellow('unavailable')} ({pypi_err})")
+
+    print()
+    if upgradable:
+        print(_bold(_green(f"  Update available: {current} → {latest}")))
+        hint = result.get("upgrade_hint", "")
+        if hint:
+            print()
+            print(_bold("  To upgrade:"))
+            print(f"    {_green(hint)}")
+    else:
+        print(_green(f"  You are running the latest version (v{current})."))
+    print()
+    _pause()
 
 
 # ── Menu loop ─────────────────────────────────────────────────────────
@@ -315,13 +372,14 @@ _MENU = [
     ("License (activate / status / re-check / deactivate)", _action_license),
     ("Auth tokens (list / generate)", _action_tokens),
     ("Run as HTTP server", _action_run_server),
+    ("Check for updates", _action_check_updates),
     ("Exit", None),
 ]
 
 
 def run_wizard() -> str | None:
     """Drive the interactive wizard. Returns one of:
-      - "run_server" if the user picked option 5
+      - "run_server" if the user picked the HTTP server option
       - None on any other exit (clean quit / Ctrl+C)
     The caller (server.py main) decides what to do with that signal.
     """
@@ -332,6 +390,10 @@ def run_wizard() -> str | None:
             print(f"  {i}) {label}")
         print()
         sel = _prompt("Choose an option")
+        if sel is None:
+            # EOF / Ctrl+C on stdin — exit the wizard cleanly instead of
+            # spinning the banner forever (audit C F8).
+            return None
         if not sel:
             continue
         try:

@@ -1,11 +1,861 @@
+<!--
+   Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+   Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+   CodeMark: SCLLC1-SassyMCP-4TMBKYZGMQTB
+-->
 # Changelog
 
 All notable changes to SassyMCP. Newest first. Versions follow semver:
 `MAJOR.MINOR.PATCH` — MAJOR for breaking config / API changes, MINOR
-for new tier-visible features, PATCH for fixes that don't move buyer-
+for new user-visible features, PATCH for fixes that don't move buyer-
 facing surfaces.
 
-## [Unreleased] — Cross-platform (macOS / Linux) + Control Panel
+## [1.21.0] — 2026-11-22 — Hot-swappable Host allowlist (no-restart tunnel hostnames)
+
+A Cloudflare *quick* tunnel mints a random `*.trycloudflare.com`
+hostname that is only known *after* the tunnel starts — but
+`SASSYMCP_ALLOWED_HOSTS` had to list it *before* the server started.
+That catch-22 is gone: the allowlist is now file-backed and live.
+
+- **`sassymcp allow-host <hostname>`** appends to
+  `~/.sassymcp/allowed_hosts` and takes effect on the running server's
+  very next request — no restart, no re-exec. `sassymcp list-hosts`
+  shows the effective list; `sassymcp deny-host <hostname>` removes one
+  (also live). Loopback (`localhost`, `127.0.0.1`) is always allowed and
+  can't be removed.
+- The file is the runtime source of truth; `SASSYMCP_ALLOWED_HOSTS`
+  remains the initial seed (the first `allow-host` write carries the
+  env-var hosts into the file, so nothing already allowed stops being
+  allowed). The file also seeds the next boot.
+- Enforcement is unchanged: the MCP SDK's per-request check still
+  returns HTTP 421 for unknown Hosts (and 403 for bad Origins). Only the
+  list contents are live — the check itself was not reimplemented. The
+  sync is mtime-cached, so an unchanged file costs one `stat()` per
+  request; a corrupt/unreadable file fails safe on the last-known list.
+- **`sassymcp tunnel`** — one-command quick tunnel: starts
+  `cloudflared tunnel --url http://127.0.0.1:21001`, reads the minted
+  `*.trycloudflare.com` hostname from cloudflared's output, and
+  allow-lists it automatically. Runs in the foreground until Ctrl-C.
+  Warns if nothing is listening on the bridge port yet.
+- **Opt-in suffix wildcards**: `sassymcp allow-host *.trycloudflare.com`
+  admits any hostname under that suffix, provisioned live per request.
+  Explicit opt-in only, never default-on; a bare `*` is rejected. With
+  a wildcard the bearer token is the only gate for hosts under that
+  suffix — DNS-rebinding protection is effectively off there, so never
+  combine a wildcard with auth disabled (the server logs a loud warning
+  if you do). Prefer the exact hostname when you can.
+- See `docs/TUNNEL.md` ("Quick tunnels") for the new flow: start tunnel
+  → `sassymcp allow-host <new-name>` → requests pass.
+
+## [1.20.0] — 2026-11-09 — Update checker & setup wizard improvements
+
+### Features
+
+* **Multi-source update checking**: `sassy_update_check` and the CLI wizard
+  now query both GitHub Releases and PyPI concurrently, reporting the
+  newest version found across all sources along with the right upgrade
+  command for the current installation method (`pipx`, `pip`, or binary).
+* **CLI wizard Menu Option 6 ("Check for updates")**: added an explicit
+  menu item in the interactive setup wizard (`sassymcp setup`) to check for
+  available updates across GitHub and PyPI, displaying installed version,
+  remote versions, and tailored upgrade instructions.
+
+### Tests
+
+* **Portable intercept test suite**: `tests/test_intercept.py` dynamically
+  resolves paths against the running host's filesystem and repository root
+  instead of hardcoded Windows drive paths (`V:\...`, `C:\...`), passing all
+  152 checks identically on Linux, macOS, and Windows.
+
+## [1.19.0] — 2026-11-09 — Linux/BSD/macOS compatibility pass
+
+### Cross-platform
+
+Commands now work across Linux distros (Debian/Kali/Ubuntu, Fedora/RHEL,
+Arch, openSUSE, Alpine, Void, Gentoo), the BSDs and macOS.
+
+* `sassy_setup_tools` detects the native package manager (apt, dnf, yum,
+  pacman, zypper, apk, xbps, emerge, pkg, pkg_add, pkgin, brew) and uses
+  that distro's package names. Non-root installs use `sudo -n`, so a
+  password prompt fails fast with a hint instead of hanging.
+* Linux window control (new `_linuxwm.py`, wmctrl/xdotool/xrandr): window
+  list, focus, close, move/resize, maximize/minimize/restore, snap, and
+  monitor layout. Resize no longer moves the window to 0,0 when x/y is -1.
+* Fallbacks for minimal installs: `ss` / `ip neigh`, `dig` / `host` /
+  `getent` for `nslookup`, `tracepath` / `mtr`, syslog files without
+  journald, Wi-Fi scan without assuming `wlan0` (iwd supported).
+* Firewall status checks ufw, firewalld, nftables/iptables, and pf/ipfw.
+  Endpoint status reports ClamAV per distro plus SELinux/AppArmor.
+* Wayland clipboard (wl-clipboard); BlueZ >= 5.65 paired-device syntax.
+* `shell="powershell"` runs `pwsh` on Linux/macOS when installed; the
+  default shell is host-appropriate and verified to exist.
+* POSIX `/bin/sh` launchers matching the `.bat` scripts: `start-local.sh`,
+  `start-lan.sh`, `start-supervised.sh`, `start-tunnel.sh`, `deploy.sh`,
+  and `autostart-bridge.sh` (systemd user unit / LaunchAgent / crontab).
+
+### License
+
+* Free for personal and educational use; commercial use requires a
+  license (see `LICENSE` and `LICENSING.md`).
+
+### Post-1.16 work also shipping in this release
+
+Written on 2026-09-23/24 as part of a v1.16.0 respin, but v1.16.0 was tagged
+and published on 2026-09-22 without it, and v1.17.0/v1.18.0 shipped without it
+too. References to "v1.16.0" below mean this work.
+
+### Split architecture scaffold (remote policy worker)
+
+Scaffold for the split architecture: the local agent keeps executing
+tools (open, auditable), while vendor policy — license enforcement,
+revocation, per-customer tier gating, usage metering — moves to a remote
+Cloudflare Worker the vendor operates.
+
+* New `sassymcp/remote_policy/` package (opt-in, default-off): async
+  worker client (protocol v1), HMAC-signed decision cache, redacted
+  argument summaries (full args never leave the machine), fail-closed by
+  default with `fail_open` config escape hatch. Auth failures (key
+  rejected) always fail closed. Every decision is audit-logged.
+* `server._wrap_remote_policy()` wires the gate after the audit
+  middleware; no-op unless `remote_policy.enabled` + endpoint + license
+  key are all present, so default behavior is unchanged.
+* New `workers/policy-worker/` (TypeScript): `POST /v1/policy/evaluate`
+  and `GET /v1/policy/status`, LemonSqueezy key validation with KV
+  caching, per-key rate limiting (429 + retry-after), per-day usage
+  metering, owner-editable `TIER_GROUPS` / `VARIANT_TIER` tables.
+  15 vitest tests pass; `tsc --noEmit` clean.
+* New `docs/POLICY_SPLIT_ARCHITECTURE.md`: protocol, local behavior,
+  threat model, deployment, and a privacy checklist — the legal pack was
+  written for a local-first product and must be updated (with attorney
+  review) before any customer build enables the gate.
+* New `tests/test_remote_policy.py`: 27 tests (client, cache, redaction,
+  enforcement, fail-open/closed, auth-always-denies).
+
+Pre-tag MCP spec gap fixes (2026-09-23 review):
+* Policy `deny`/`ask` and audit-wrapper refusals (offline gate, rate
+  limit, exception path) now **raise** `ToolError` instead of returning
+  the envelope as a string — the MCP layer serves them with
+  `isError=true`. Previously a license denial arrived as a *successful*
+  tool result.
+* The server now advertises `tools.listChanged` and profile switches
+  fire `notifications/tools/list_changed` on the best available channel
+  (SDK 1.30.0 exposes no public broadcast API; dashboard-initiated
+  switches outside any MCP request are logged).
+* Tests: `tests/test_remote_policy.py` 28 (+1 regression asserting the
+  raise through a real `ToolManager`), `tests/test_tool_profiles.py`
+  26 (+2 for the notify contract).
+
+Pre-tag MCP spec gap fixes, continued (full review work-through):
+
+* Annotation accuracy: `sassy_untar`/`sassy_unzip`/`sassy_zip`/`sassy_tar`
+  are now `destructiveHint=true` (`extractall()` has no overwrite guard;
+  `ZipFile(output, "w")` truncates a pre-existing archive), and
+  `sassy_scrcpy_record` is now `destructiveHint=false` (a caller-requested
+  export file, like `sassy_iphone_screenshot`). `sassy_crosslink_status`,
+  `sassy_coordination_board`, and `sassy_peer_list` are `readOnlyHint=true`
+  (pure DB reads); `sassy_clipboard_to_android` and `sassy_screenshot` are
+  `idempotentHint=true` (repeat set is a no-op; matches
+  `sassy_screen_capture`). New curated totals: 157 read-only, 43
+  destructive, 214 idempotent, 146 open-world.
+* `sassy_tool_group_toggle`: removed the dead `server._session`
+  `tools/list_changed` send path (can never fire under FastMCP 1.30) and
+  rewrote the docstring + tool description to state the true semantics —
+  the toggle sets `always_load` for the **next server start**; it cannot
+  add or remove tools from a running session.
+* Remote-policy `ask` now has a documented client contract
+  (`docs/POLICY_SPLIT_ARCHITECTURE.md`): exact deny/ask JSON envelopes,
+  `retryable: false` semantics, and the advisory nature of
+  `confirm_required: true` (no confirm-token flow in v1.16.0).
+* `--sse` is deprecated (warning at startup): legacy SSE is not part of
+  MCP 2025-11-25; the flag will be removed in a future release.
+* Hardening nits: fail-closed refusals log the raw worker exception
+  server-side and return a generic reason to clients; `summarize_args`
+  filters kwargs to the wrapped function's declared parameters; the
+  single-wrap guard moved into public `wrap_fn`; `_apply_tool_metadata`
+  logs warnings instead of silently swallowing failures and defaults
+  missing `destructiveHint` to `true` (the spec's cautious default).
+
+### MCP spec roadmap (post-v1.16.0)
+
+Reviewed against MCP 2025-11-25 (the latest Final revision the installed
+SDK, mcp 1.30.0, implements) with MCP 2026-07-28 as the forward-looking
+delta. These are deliberately **not** in v1.16.0 — implementing them
+today would mean hand-rolled JSON-RPC outside the SDK with no client
+interop to test against:
+
+* `server/discover` (2026-07-28) — no SDK support yet.
+* Per-request capabilities / `logLevel` in `_meta` (2026-07-28) — no SDK
+  support yet.
+* Progress-token support — no SDK plumbing to hang it on yet.
+* Required `resultType` (2026-07-28) — no SDK support yet.
+* Optional tool `title` coverage (0/278) — spec-optional; clients fall
+  back to the tool name. Enhancement candidate.
+* Pagination of `tools/list` — spec-compliant as-is (`tools/list` MAY
+  paginate); revisit only if tool count grows past client comfort.
+* Protocol revision: stay on 2025-11-25 until the SDK ships a newer Final
+  revision; 2026-07-28 deltas above are the adoption list when it does.
+
+No new MCP tools; the tool count is unchanged. Not production: owner
+TODOs (real variant IDs, KV namespace, attorney-reviewed legal pack,
+CodeMarks) are listed in the architecture doc.
+
+### Post-candidate hardening (2026-09-24 publish audit)
+
+* SSH guard covers PuTTY `plink`/`pscp`/`psftp`/`putty` and refuses
+  `-proxycmd` (local-exec sibling of OpenSSH ProxyCommand).
+* Linux `sassy_launch_app` execs a PATH command as argv; no `/bin/sh -c`.
+* `sassy_update_apply` fail-closed unless a SHA-256 sidecar verifies.
+* `sassy_reg_write` requires `confirm='YES'`.
+* `sassy_list_dir` honors the sensitive-read floor.
+* Overlay "open VS Code" no longer uses `shell=True`.
+* Version stamps: mcpb/vscode/server.json mcpb URL are 1.16.0; CI publishes
+  `SHA256SUMS` next to release assets.
+
+## [1.18.0] — 2026-10-01 — Built-in OAuth 2.1 authorization server
+
+SassyMCP's HTTP server can now act as its own OAuth 2.1 authorization
+server — no Cloudflare Worker required. On loopback-HTTP or any-HTTPS
+binds it serves authorization-server metadata
+(`/.well-known/oauth-authorization-server`), dynamic client
+registration (`POST /register`), the authorization endpoint
+(`GET|POST /authorize`, PKCE S256 required), token exchange and
+refresh rotation (`POST /token`), and RFC 7009 revocation
+(`POST /revoke`).
+
+- `/authorize` never auto-approves: it stages the request and redirects
+  to an operator consent page (`GET|POST /oauth/consent`), bound to a
+  per-flow `HttpOnly`/`SameSite=Lax` CSRF cookie. On non-loopback binds
+  the consent form additionally requires an `admin`-scoped bearer token.
+- Authorization codes are single-use, 10-minute expiry; access tokens
+  live 1 hour and plug into the existing `tokens.json` system;
+  refresh tokens live 30 days, are stored only as hashes, and rotate
+  on use (sweeping the old grant's access tokens).
+- OAuth state persists in `~/.sassymcp/oauth.json`; the store fails
+  closed on corruption or unsafe permissions.
+- Disabled automatically when `SASSYMCP_OAUTH_ISSUER` is set (pure
+  resource server behind an external issuer) or on wildcard plain-HTTP
+  binds such as `0.0.0.0` (warning logged).
+- SDK quirk to know: `/revoke` requires the `client_secret` form field
+  even for public clients — send it empty.
+
+## [1.17.0] — 2026-10-01 — Configurable HTTP port and live config reload
+
+The HTTP server's bind is no longer hardcoded to `127.0.0.1:21001`.
+
+- **Port (and host) resolution order**: `--port` / `--host` CLI flags >
+  `SASSYMCP_PORT` / `SASSYMCP_HOST` env vars > `config.json`
+  `http.port` / `http.host` > built-in defaults. New
+  `sassymcp/_httpbind.py` is the single source of truth; the setup wizard,
+  `supervise start`, and the Grok Desktop install entry all resolve through
+  it instead of hardcoding 21001.
+- **OAuth metadata fix**: the protected-resource metadata /
+  `WWW-Authenticate` responses now advertise the *effective* bind URL
+  (`http://<host>:<port>`) instead of a hardcoded
+  `http://localhost:21001`. Fixes exact-match address-check failures in
+  clients (e.g. Claude Code) when connecting via `127.0.0.1`.
+- **Live config reload**: a watcher thread (HTTP mode only) reloads
+  `config.json` on change — no manual restart. Ordinary settings apply on
+  next read; changes to `http.host` / `http.port` / `http.ssl` trigger an
+  automatic restart (graceful re-exec standalone, SIGTERM handoff under
+  `sassymcp supervise`) so a port change takes effect immediately. Opt out
+  with `SASSYMCP_NO_CONFIG_WATCH=1` or `http.liveReload: false`.
+- New config keys: `http.host`, `http.port`, `http.ssl`, `http.liveReload`.
+  New tests: `tests/test_httpbind.py` (20 tests).
+
+## [1.16.0] — 2026-09-21 — Tool description and annotation overhaul
+
+All 278 tool descriptions rewritten from per-tool implementation analysis:
+explicit read-only/mutating/destructive disclosure, defined vague terms with
+ordering and result caps, parameter semantics with defaults and interactions
+(compensating for 0% schema parameter-description coverage), and named
+sibling guidance ("use X instead of Y when Z"). MCP `ToolAnnotations`
+(`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) now
+set explicitly on every tool: 157 read-only, 43 destructive, 214 idempotent,
+146 open-world. Metadata lives in generated `sassymcp/tool_descriptions.py`
+and `sassymcp/tool_annotations.py`, applied at registration in
+`server._apply_tool_metadata()`; per-tool source untouched.
+
+### Tool profiles
+
+Per-session gating of the MCP tool set, controlled from the Control Panel
+(new **Profiles** tab; `GET`/`POST /api/profile`). Seven profiles — `full`
+(default), `developer`, `forensics`, `devices`, `sysadmin`, `readonly`
+(computed per-tool from the curated `readOnlyHint` annotations: 157
+tools), and `custom` (an explicit group set ticked in the dashboard).
+Activation swaps the FastMCP tool manager's registry to the allowed subset,
+so a tool hidden from `tools/list` is also uncallable via `tools/call`
+(including fan-out through `sassy_batch`, which dispatches through the
+same manager). Privilege boundary: no MCP tool can switch profiles, so a
+session can never widen its own tool set; `meta` stays on in every profile
+(introspection); any switch that would expose a currently-hidden tool
+requires `confirm='YES'` and is audit-logged old→new. State is
+runtime-only and resets to `full` on restart. See README "Tool profiles".
+
+### Pre-release security audit fixes
+
+A source-code audit of the release candidate found and fixed, before tagging:
+
+- **SSH guard bypass (residual from 1.15.2):** the exec-option regex missed
+  `` `ssh -o ProxyCommand=...` `` inside backticks; the boundary class now
+  covers command substitution. Guard test battery extended (29 cases).
+- **Sensitive-read denylist enforced:** `is_sensitive_read_path()` (`~/.ssh`,
+  tokens, SAM hives, `/etc/shadow`, …) is now called by every file-content
+  read path (`sassy_read_file`, `sassy_read_multiple`, `sassy_search_files`,
+  `sassy_file_info`, `sassy_diff`, `sassy_edit_block`, `sassy_edit_multi`);
+  refusals are enforced in all permission modes and audit-logged.
+- **Privilege-escalation gating:** `sassy_permission` switching to
+  `mode=bypass` now requires `confirm='YES'`; control-panel settings/rules
+  mutations now write audit events with actor and old→new values.
+- **Annotation coherence:** adopted one `destructiveHint` policy (destructive
+  only for data deletion, silent overwrites of non-designated output, or
+  system/device/registry mutation — not for writing requested export files)
+  and corrected 13 contradictions (`sassy_reg_write`, `sassy_reg_export`,
+  `sassy_audit_clear`, `sassy_gh_protect_branch`, screenshot/archive tools…).
+- **Zip-slip:** `sassy_unzip` now validates with `os.path.commonpath`.
+- **Transport hardening:** crosslink no longer reflects
+  `Access-Control-Allow-Origin: null`; `server.key` and the panel token get
+  `0600` + Windows ACL lockdown; `SASSYMCP_AUTH_TOKEN` charset is validated
+  at startup (fail closed).
+- **Android failure contracts:** `phone_screen` tools now report explicit
+  missing-adb/timeout errors instead of silent empty strings.
+
+### Experimental iPhone support
+
+New `iphone` tool group (6 tools) backed by
+[libimobiledevice](https://libimobiledevice.org/): `sassy_iphone_list`,
+`sassy_iphone_info`, `sassy_iphone_screenshot`, `sassy_iphone_syslog`
+(bounded capture), `sassy_iphone_apps`, `sassy_iphone_install`
+(`confirm='YES'`). Per-host-OS install hints, `udid` targeting for multiple
+devices, and iOS 17+ pairing notes throughout; graceful degradation when the
+binaries or a trusted device are absent. See README "iPhone support
+(experimental)".
+
+### Medium/low hardening (~60 fixes from the same audit)
+
+- **SSH guard:** command substitution in the `-o` option-name position is now
+  refused at high tier; `_WRAPPER_CMDS` extended (`dash`/`ksh`/`fish`/`ash`,
+  `iex`/`Invoke-Expression`); env-var indirection documented as accepted
+  residual risk; bypass-mode forfeiting safe-delete staging documented.
+- **File safety:** `sassy_copy`/`sassy_move` now refuse sources on the
+  sensitive-read denylist (read-equivalent exfiltration); `sassy_zip`/
+  `sassy_tar` warn in the result and audit-log when archives include
+  denylist members (operation proceeds so legitimate backups keep working).
+- **Privilege/panel:** `add_rule`/`add_root`/`clear_rules` now require
+  `confirm='YES'`; panel `POST /api/settings` requires `confirm:"YES"` to
+  set `mode=bypass` (panel UI updated); `sassy_panel` `status` no longer
+  reveals the bearer token (explicit `url` action only); new `rotate` action
+  for panel token rotation; `?token=` query form deprecated but still
+  accepted (header preferred); `sandboxRoots` must be absolute paths;
+  `sassy_state_clear` requires `confirm='YES'`; wizard EOF/Ctrl+C exits
+  cleanly; closed-stdin startup falls back to HTTP instead of crashing;
+  `persona.md` gets a one-deep `.bak` backup; panel tokenized URLs no longer
+  logged at startup.
+- **Transports/auth:** opt-in `SASSYMCP_STRICT_RATE_LIMIT=1` fail-closed mode;
+  offline-gate and rate-limit refusals are now audit-logged; self-signed cert
+  SAN includes the bind host; token preview reduced to 4 chars;
+  `SASSYMCP_NO_AUTH=1` + non-loopback logs a warning; token-file check also
+  rejects group/world write bits; crosslink validates `Origin` against
+  loopback when tokenless; PowerShell launch quoting in offline handoff;
+  `start-tunnel.bat`/`autostart-bridge.bat` check process ownership before
+  killing `:21001`; tunnel docs gained a token rotation cadence.
+- **Tools:** `sassy_adb_install` annotation corrected to destructive;
+  `SASSYMCP_ADB` honored via shared `_platform.resolve_adb()`;
+  `sassy_android_logcat` validation unified with `sassy_adb_logcat`; GitHub
+  `owner`/`repo` validated centrally; `sassy_screenshot` errors on malformed
+  `region`; `sassy_update_apply` next-steps branch per OS; adb
+  unauthorized/offline remediation hints; hook-registration failures now log
+  warnings; `sassy_memory_handoff` reports `crosslink_posted`; audit
+  error-text masking extended (Slack `xoxp-`/`xoxe-`, Google `AIza`).
+- **Docs/packaging:** `docs/releases/v1.16.0.md` added; README VSIX filename,
+  tier wording, and exe size staleness fixed; MSI documented as manual-only;
+  Linux install documented as pip-only; new `docs/ERROR_ENVELOPES.md` and
+  `docs/SUPPLY_CHAIN.md`; VSIX README bumped to 1.16.0.
+
+Deferred (documented, non-blocking): offline signature trust anchor for
+updates, macOS code signing/notarization (needs an Apple Developer
+identity), moving 5 android-adjacent tools from `system` to `android`,
+`github_quick`→`github_full` thin-wrapper refactor, full error-envelope
+normalization at the wrapper layer.
+
+### Pre-tag additions
+
+Final additions before tagging v1.16.0 (verified against source, tests
+passing):
+
+- **`UPGRADING-1.16.md` (repo root):** version-upgrade guide documenting
+  the ten behavior changes in this release (confirm gates, panel token
+  hygiene, `?token=` deprecation, copy/move denylist refusals, zip/tar
+  warnings, state-clear gating, screenshot region validation,
+  tokens.json fail-closed permissions, strict rate-limit opt-in). Note:
+  `MIGRATION.md` remains a competitor-switching guide (from v1.4.1), not
+  a version-upgrade guide — the upgrade guide says so explicitly.
+- **`tests/test_tool_metadata.py`:** regression tripwire asserting
+  278/278 description and annotation coverage for every registered tool,
+  all-four-boolean annotations, at-least-one-destructive policy check, a
+  curated known-read-only list (`sassy_read_file`, `sassy_iphone_list`,
+  …), and destructive-disclosure wording in descriptions. Adding a tool
+  without curated metadata now fails the suite.
+- **`scripts/generate_tools_doc.py` + `docs/TOOLS.md`:** generated
+  per-group tool reference (278 tools, 18 groups, curated descriptions),
+  re-runnable via the script (`--check` fails CI on a stale doc).
+- **`SECURITY.md` (repo root):** disclosure policy, supported-versions
+  table (1.16.x supported, earlier best-effort), scope notes stating
+  plainly that authenticated command execution is the product and not a
+  bug, response-time targets, and what-not-to-report. Contact address is a
+  `security@[yourdomain]` placeholder pending owner assignment.
+
+## [1.15.2] — 2026-09-20 — Security: SSH local-execution options bypassed the interceptor
+
+Security release. Upgrade immediately. Affects every version that shipped
+`sassy_shell`. Reported externally on 2026-09-19 by 23W-8H (GitHub), ref
+issue #38.
+
+### Security
+
+- **`ssh -o ProxyCommand="<anything>" host` executed `<anything>` locally and
+  passed the command interceptor as clean.** OpenSSH runs `ProxyCommand`,
+  `LocalCommand` (armed by `PermitLocalCommand`) and `KnownHostsCommand` on the
+  local machine through the local shell; the remote host never has to exist,
+  because `ProxyCommand` runs before the connection does. Two gaps composed
+  into it: `detect_delete_intent()` only recurses into the shells in
+  `_WRAPPER_CMDS` and `ssh` is not one of them, so option values were never
+  scanned; and `validate_command_tiered()` downgrades block-list hits inside
+  quoted strings to tier `low`, which `sassy_shell` logs and then runs — and an
+  ssh option value is always quoted. Net effect: `ssh -o ProxyCommand="rm -rf
+  /" u@h` was the payload the gate was most confident about.
+
+  Fixed by `detect_ssh_exec_option()` in `sassymcp/modules/_security.py`, called
+  at the top of `validate_command_tiered()` — ahead of the block-list loops and
+  ahead of the permission-policy engine, returning tier `high` so neither the
+  string-literal downgrade nor `permission.mode=bypass` nor an `allow` rule can
+  reach past it. It scans raw text rather than the quote-stripped view, and
+  requires an ssh-family binary *as well as* the option so that commands merely
+  mentioning the words still run. `-F` and `-o Include=` are refused only when
+  the config file sits outside `~/.ssh`. Refusals point at ProxyJump
+  (`ssh -J jumphost target`), which spawns no shell.
+
+  The guard lives at the shared validator, so it covers all five command
+  surfaces: `sassy_shell`, `sassy_linux_exec`, `sassy_session_start`,
+  `sassy_session_send`, `sassy_adb_shell`. The report attributed the bypass to
+  `harden_ssh()` in `hermes_node.py`, which is an ergonomics shim that forces
+  `BatchMode=yes` and was never a sanitiser — its docstring now says so.
+
+  Breaking only for commands that relied on the bypass. Known gap, tracked for
+  follow-up: `git -c core.sshCommand=`, `GIT_SSH_COMMAND` and `rsync -e` reach
+  the same channel and are not yet covered.
+
+  Coverage: `tests/test_ssh_exec_guard.py`, 26 cases, including a
+  false-positive set (`ssh -J`, `ssh -f`, `ssh -i`, `grep -o proxycommand`)
+  that must keep running.
+
+## [1.15.1] — 2026-09-14 — Release pipeline repair
+
+No functional change to the server. 1.15.0 reached PyPI but its GitHub Release
+and MCP Registry listing never happened, for the same reason 1.14.3 and 1.14.4
+never did.
+
+### Fixed
+
+- **The release workflow could not complete.** `build-macos` requested the
+  `macos-13` runner, which GitHub has retired — it is no longer in the hosted
+  image list, so the job queued indefinitely and was never scheduled. Both
+  `release` and `publish-registry` declare `needs:` on it, so every tagged
+  release since 1.14.3 published to PyPI (ubuntu runners) and then stalled,
+  producing no GitHub Release and no registry entry. The v1.14.3 and v1.14.4
+  runs both ended `cancelled` for this reason, which is why `/releases/latest`
+  reported v1.14.2. Now `macos-15-intel`.
+- **`macos-14` moved to `macos-15`** — macos-14 is itself now marked deprecated
+  in the same image list.
+- **PyPI publish is now `skip-existing: true`.** Without it, re-running a
+  release whose upload already succeeded fails on a duplicate file, and since
+  `publish-registry` needs `publish-pypi`, that failure also blocks the registry
+  listing — making a partially-published release unrecoverable without a version
+  bump. That is exactly what happened to 1.15.0.
+
+## [1.15.0] — 2026-09-14 — Batch fan-out, structured output, event-loop hygiene
+
+Tool results stop arriving double-encoded, blocking work stops running on the
+event loop, and a single call can now fan out across many tools. MINOR, not
+PATCH: the output shape of 93 tools changed.
+
+### Added
+
+- **`sassy_batch`** — run many tools from one call. Takes a JSON array of
+  `{tool, args}`, executes them concurrently under a semaphore, returns one
+  typed result per operation with `ok` / `elapsed_ms` / `result` / `error`.
+  Dispatches through the normal `ToolManager.call_tool` path, so every
+  operation still passes argument validation, the audit wrapper, the security
+  layer and the per-group rate limiter — it changes *when* calls happen, never
+  whether they are allowed. Guards: 50-operation ceiling, concurrency capped at
+  16, no nesting, per-operation timeout, optional `stop_on_error`.
+  Measured: six 0.4s blocking operations at width 6 run in 0.41s vs 2.40s
+  serially.
+
+### Changed — BREAKING for anything parsing tool output
+
+- **93 tools now emit real `structuredContent`** instead of a
+  `{"result": "<json string>"}` envelope. A tool annotated `-> str` returning
+  `json.dumps(...)` reaches the caller double-encoded; these now declare
+  `dict[str, Any]` (83) or a `TypedDict` (10, with field-level `outputSchema`).
+  Clients that parsed the `result` string must read the object directly.
+- **`sassy_memory_recall`** nests the record under `memory` alongside `found`,
+  instead of returning the record flat.
+- **`sassy_memory_forget`** returns `forgotten` as a bool with the key in `key`,
+  instead of `{"forgotten": "<key>"}`.
+- Tools that legitimately return prose (17, e.g. `sassy_write_file`) keep
+  `-> str` — their string really is a string.
+
+### Fixed
+
+- **`sassy_combo_pr_review` never worked.** `pr_data` was read inside the same
+  `asyncio.gather` that binds it, raising `UnboundLocalError` on every call.
+- **`sassy_update_apply` raised `NameError` on every successful download** —
+  `via_gated_url` referenced a `license_key` deleted when the gated mirror was
+  retired.
+- **`sassy_setup_status` served a stale implementation.** A second, richer copy
+  reporting GitHub/SSH integration status was registered after the first;
+  FastMCP keeps the first and only logs "Tool already exists", so the
+  integration fields were unreachable dead code.
+- **70 event-loop blockers removed.** Functions declared `async` with no `await`
+  ran blocking bodies directly on the loop, stalling every other session —
+  the exact failure `_wrap_all_tools` exists to prevent for sync tools. 64 were
+  converted to `def` (so the audit wrapper offloads them to a thread) and 6
+  helpers kept blocking bodies behind `asyncio.to_thread` at the call site.
+  Blocking HTTP, file and subprocess calls inside genuinely-async tools were
+  moved to worker threads.
+- **`vision.py` closure bug** — `_would_overflow` was redefined every frame and
+  closed over a reassigned counter.
+- **Background licence tasks were being garbage-collected mid-flight.** asyncio
+  holds only a weak reference to a running task; they now keep a strong one.
+- **`pytest tests` could not run at all.** `tests/test_intercept.py` is a script
+  (assertions at import, ends in `sys.exit`) named `test_*.py`, so collection
+  aborted with an INTERNALERROR before any test executed.
+
+### Known issue
+
+- **Licence revocation checks do not run.** `fast_revocation_check()` and
+  `weekly_validation_check()` are scheduled from `_load_modules()`, which runs
+  synchronously before any event loop exists — `mcp.run()` / `uvicorn.run()`
+  start later and uvicorn builds its own loop. This is their only scheduling
+  site, and nothing retries. A revoked or refunded licence is therefore not
+  detected at runtime. Fixing it changes when enforcement fires, so it is
+  deliberately deferred rather than patched inside this release. See the
+  KNOWN GAP note at the scheduling site in `server.py`.
+
+### Tooling
+
+- **ruff was configured but never installed**, so it had never run. 695 findings
+  triaged to zero: 239 auto-fixed, the rest fixed by hand, and three
+  defensive-exception rules (`BLE001`, `S110`, `S112` — ~390 findings) ignored
+  with rationale, because degrading a failing tool into a structured error
+  rather than crashing the process is this server's deliberate architecture.
+
+## [1.14.4] — 2026-08-14 — Offline fallback + dependency security
+
+When the link drops, the server now probes honestly, refuses internet-only
+tools with a local substitute, and can hand the session to a loopback model
+(Hermes / Ollama) against the same gated tool surface.
+
+### Added
+
+- **Offline degradation** — `sassy_offline_status`, `sassy_offline_commands`,
+  `sassy_offline_handoff`, plus a fail-open netstate gate in `audit_tool`.
+- **Hermes native tool calls** against the offline-safe SassyMCP surface
+  (`HERMES_TOOLS=1`).
+
+### Fixed
+
+- **Dependabot (30 alerts)** — `pillow` 12.3.0, `cryptography` 50.0.0,
+  `mcp` 1.29.0; vscode transitives pinned (`brace-expansion` 5.0.9,
+  `fast-uri` 3.1.5, `js-yaml` 4.3.1, `linkify-it` 5.0.2, `nanoid` 3.3.18,
+  `postcss` 8.5.23, `undici` 7.29.0).
+
+### Changed
+
+- README header version/licensing line matches the all-or-nothing 1.13+ model.
+
+## [1.14.3] — 2026-08-11 — Agent-guidance accuracy fixes
+
+Every tool name the shipped guidance hands to an AI client now resolves to
+a real tool. Previously six names did not exist, so a model following the
+playbook would emit failing tool calls.
+
+### Fixed
+
+- **Six non-existent tool names corrected** across the shipped skill file,
+  the setup-wizard-generated persona doc, and two runtime hook playbooks:
+  `sassy_github_quick_pr` → `sassy_combo_pr_review`, `sassy_arp` →
+  `sassy_arp_table`, `sassy_reg_autoruns` → `sassy_autorun_entries`,
+  `sassy_wifi_scan` → `sassy_wifi_networks`, `sassy_security_audit_certs`
+  → `sassy_cert_check`, `sassy_url_security_headers` → `sassy_url_headers`.
+- **PR-review guidance pointed at a tool that creates PRs.** `sassy_ghq_pr`
+  opens a pull request; it has no `action="show"` mode. The row now points
+  at `sassy_combo_pr_review`, which is what the `pr-review` prompt uses.
+- **Two false capability claims removed.** `sassy_linux_exec` has no
+  `allow_destructive` parameter (deletes are a hard block with no
+  override), and `sassy_autorun_entries` covers Run/RunOnce only — not
+  Services, Scheduled Tasks, or IFEO as the forensics playbook claimed.
+- **Phantom `madame_*` aliases** no longer advertised; no such tools are
+  registered.
+
+### Changed
+
+- Personal/internal references scrubbed from user-facing surfaces: the
+  `yomama` SSH example trigger phrase, and `MadameClaude` in the `resume`
+  prompt description shown in client slash-command pickers.
+
+## [1.14.2] — 2026-07-29 — Release-audit follow-ups
+
+Closes remaining distribution-audit items after SelfMod removal and
+proprietary relicensing.
+
+### Changed
+
+- **`sassy_update_apply` refused in frozen/packaged builds** so marketplace
+  installs stay a fixed graded version (check/list/changelog still work).
+- Stale "all 257/270 tools" copy scrubbed from setup wizard, skills, README.
+- `MIGRATION.md` license footer matches Proprietary (no MIT).
+- VS Code extension package version aligned to `1.14.2`.
+
+## [1.14.1] — 2026-07-28 — SelfMod removed entirely (no gate)
+
+Marketplace graders require a fixed version. Opt-in gating was not
+enough — SelfMod is gone: no `selfmod` tool group, no `sassy_selfmod_*`
+tools, no `SASSYMCP_ENABLE_SELFMOD` escape hatch. The module file remains
+as an importable no-op so older packaging lists do not break.
+
+### Removed
+
+- `selfmod` entry from `TOOL_GROUPS`
+- `is_selfmod_enabled` / `exclude_gated_modules`
+- All `sassy_selfmod_*` tool registrations and the `self_modify` hook
+- README / persona / setup / skills copy that marketed hot-reload SelfMod
+
+### Changed
+
+- Protected-path edit refusals point at checkout/PR workflow instead of
+  `sassy_selfmod_edit`
+- License metadata remains Proprietary (from the 1.14.0 packaging patch)
+
+## [1.14.0] — 2026-07-28 — Marketplace compliance: SelfMod gated, token banner hardened
+
+CuratedMCP / MCP directory review rejected the prior listing because
+SelfMod let an installed binary rewrite/hot-reload after install
+(incompatible with grading a fixed version), and the mercury core
+audit still called out full bearer tokens on stdout plus packaging
+concerns. This release closes those gates for public/packaged installs.
+
+### Changed
+
+- **SelfMod is opt-in and omitted from packaged builds.** Frozen /
+  `.mcpb` / marketplace installs never register `sassy_selfmod_*`
+  tools (no stubs). From a source checkout set
+  `SASSYMCP_ENABLE_SELFMOD=1` to restore the developer workflow.
+  `always_load` for the `selfmod` group is now `False`;
+  `SASSYMCP_LOAD_ALL=1` still skips it unless the opt-in is set.
+- **Startup banner never prints the raw bearer token.** Snippets use
+  `<token-from-sassymcp-show-token>`; retrieve via `sassymcp show-token`.
+- **Listing copy** prefers the SHA256-pinned `.mcpb` from GitHub
+  Releases (and `pip install sassymcp`); drop unverified exe/curl
+  install instructions from directory submissions.
+- MSI `Version` bumped to `1.14.0` (already `perUser` + relative
+  `ExtractRoot` from earlier hardening).
+
+### Security
+
+- Token file Windows ACL lockdown / permission checks retained from
+  prior hardening; banner leak path closed.
+
+### Tests
+
+- `test_discovery.py` — frozen builds register zero selfmod tools;
+  source requires opt-in.
+- `test_tool_loader_boost.py` — selfmod absent from cold-start defaults.
+- `test_intercept.py` — enables SelfMod only for the rollback unit test.
+
+## [1.13.0] — 2026-07-15 — All or nothing: tier gating removed, everything unlocked
+
+The pro/forensics gate locked 5 tool groups (`github_full`, `android`,
+`v020`, `linux`, `system`) plus `forensics` behind a license that could
+not actually be purchased (checkout unwired, entitlement map empty). That
+subtracted value from every user and produced revenue from none. The gate
+is gone: the release model is now all-or-nothing — every tool group ships
+unlocked, for everyone, with no key.
+
+### Changed
+
+- **`get_allowed_groups()` returns every known group unconditionally.**
+  License state (missing, expired, tampered, corrupt, revoked) affects
+  only the displayed tier label, never which groups load. The function
+  survives as the single reintroduction point should a real buy→own loop
+  ever ship.
+- **`_resolve_modules()` no longer consults the license.** `SASSYMCP_GROUPS`
+  loads any known group; the "requires Pro license — skipped" path is gone.
+- **Licenses are now supporter keys.** `sassy_setup_license` still
+  activates/validates/deactivates against LemonSqueezy and the tier label
+  still shows in the startup banner, control panel, CLI wizard, and VS Code
+  cockpit — as supporter recognition. Refunds still revoke the label via
+  the weekly LS check and the fast billing-oracle check.
+- **`SASSYMCP_LICENSE_BYPASS` is accepted and ignored** — there is nothing
+  left to bypass. Old dev/CI environments that set it keep working.
+
+### Removed
+
+- `FREE_GROUPS` / `PRO_ONLY_GROUPS` / `ADDON_GROUPS` / `TIER_GROUPS` /
+  `ALWAYS_ALLOWED` from `sassymcp.license` (nothing outside the module
+  imported them). Tier vocabulary lives on as informational
+  `KNOWN_TIERS` / `KNOWN_ADDONS`.
+- The "BYPASS" startup-banner label and the upsell block in
+  `sassy_setup_license action=status` (replaced by a supporter note).
+
+### Tests
+
+- `test_license_gating.py` rewritten to pin the new contract: every
+  license state → all groups, exactly; failure modes never crash; the
+  supporter-label machinery (generate/parse/validate) still round-trips.
+  LemonSqueezy activation tests unchanged and passing.
+
+## [1.12.0] — 2026-07-15 — The board becomes truthful: server-side auto-record + every continuity plane visible
+
+The cockpit's feasibility problem was that its data plane was voluntary: an
+LLM had to *choose* to call `sassy_peer_announce`, so the board showed
+memories of demos. This release moves the recording into the server itself
+and widens the board from one plane (crosslink) to all of them.
+
+### Added
+
+- **Server-side client auto-record.** The audit wrapper reads the MCP
+  `initialize` handshake's `clientInfo` from the request context and upserts
+  the calling client as a peer on every tool call (throttled to one SQLite
+  touch per 15s per client). Claude Desktop, Cursor, Windsurf — any client
+  that does work appears on the board as `client-<name>`, alive, with zero
+  LLM cooperation. Clean shutdown flips this process's auto-recorded peers
+  offline immediately (atexit backdates their session rows).
+- **Brain board carries every continuity plane.** `board_snapshot()` (and so
+  `sassy_coordination_board`, `sassymcp mesh board`, and the cockpit poll)
+  now returns, alongside peers/channels/handoffs/sessions:
+  - `memory` — entry/milestone counts, recent keys, active `task_*_state` /
+    `task-active` / `blocker_*` rows with value snippets, recent milestones
+    (read directly from memory.db; works even when the memory tool group
+    isn't loaded).
+  - `recent_calls` — tail of audit.jsonl (last 128KB, newest first): the
+    MCP's live pulse.
+  - `hooks` — every registered playbook with triggers and active state,
+    continuity playbooks (session_startup, session_handoff, coordination,
+    crosslink) sorted first. Planes degrade to an error marker; the core
+    board never breaks.
+- **Continuity playbooks always active.** The server activates
+  session_startup / session_handoff / coordination / crosslink hooks at
+  boot, so `sassy_hooks_list` shows any connecting agent the startup and
+  handoff protocol without the agent knowing to activate anything.
+- **Cockpit webview**: Memory card (active task state + milestones),
+  Continuity playbooks card (Coordination tab), and a Live activity feed
+  (Dashboard tab) rendering the audit tail.
+- **Control Panel "Brain" tab**: agents-on-the-mesh, memory stats,
+  milestones, and live tool calls as generic-renderer views
+  (`sassy_peer_list`, `sassy_memory_stats`, `sassy_memory_milestones` join
+  the read-only cockpit allowlist).
+
+### Changed
+
+- **Announce heartbeats no longer flood the channel.** `sassy_peer_announce`
+  refreshes the sessions row on every call, but posts a peer-announce
+  MESSAGE only when the peer is new, its identity/capabilities changed, or
+  the newest announce went stale. Liveness now reads the sessions row
+  (which heartbeats and auto-record refresh) instead of message age, so
+  channel counts mean something again.
+
+## [1.11.0] — 2026-07-14 — Sassy Brain cockpit: the tabbed coordination UI
+
+The `feat/sassy-brain-cockpit` branch (all four phases of the 2026-06-06
+design spec) lands on main. One feature, three surfaces, one data plane.
+
+### Added
+
+- **Sassy Brain Cockpit (VS Code).** `SassyMCP: Open Sassy Brain Cockpit`
+  (also a click on the status-bar item) opens a branded React webview with
+  three tabs:
+  - **Coordination** — the hero: live peer board (Claude / Cursor / Hermes /
+    remote nodes), crosslink channels with message counts, handoff timeline,
+    Start-Hermes button, Android tile.
+  - **Dashboard** — brain status: license tier, memory/audit/persona
+    counts, per-group tool availability, version.
+  - **Actions** — card launcher with fuzzy filter (announce, observe/mirror
+    phone, wizard, audit log, brain folder).
+  Built from `sassymcp-vscode/webview/` (Vite + React, self-contained IIFE —
+  no CDN, CSP-nonced; `media/cockpit/` is gitignored build output). The
+  webview never touches the filesystem: it posts intents to the extension
+  host, which talks to the already-running server.
+- **Coordination module** (`sassy_peer_announce`, `sassy_peer_list`,
+  `sassy_peer_delegate`, `sassy_coordination_board`) — multi-AI peer mesh
+  riding the existing `crosslink.db`; joins the `v020` (Pro) group. 274
+  tools across 36 modules.
+- **Standalone desktop app** (`python -m sassymcp.desktop`) — the same
+  cockpit outside VS Code (pywebview host + JS bridge).
+- **Overlay quick-launcher** (`python -m sassymcp.overlay`) — tray icon +
+  global hotkey for reach when no editor is open.
+- **`sassymcp mesh` subcommand** — `board | brain | phone | peers |
+  announce | delegate` as one JSON line, for external UIs shelling out to a
+  bundled exe.
+
+### Fixed
+
+- `sassymcp install` skill deployment strips the repo's leading CodeMark/CMI
+  HTML comment, so deployed SKILL.md / rules files start at the YAML
+  frontmatter or H1 as each client requires.
+
+## [1.10.2] — 2026-06-30 — Control Panel cockpit: read-only tool visualizers
+
+### Added
+
+- **Full-stack visibility in the server-served Control Panel.** Five new tabs
+  turn the operational tools an LLM rarely calls into a live dashboard:
+  - **Server** — health, live metrics, tool usage/stats, recent tool calls
+    (visible on every tier, no license needed).
+  - **Network** — `sassy_netstat`, `sassy_open_ports`, `sassy_arp_table`.
+  - **Processes** — `sassy_system_info`, `sassy_processes`, `sassy_autorun_entries`.
+  - **Security** — `sassy_defender_status`, `sassy_firewall_status`, `sassy_eventlog`.
+  - **Screen** — `sassy_screen_glance` (image), `sassy_list_windows`, `sassy_screen_ocr`.
+- **Generic result renderer.** One endpoint runs a view's tool and the backend
+  auto-detects how to draw it — table (process list), image (screenshot),
+  key/value card (system info), or text (netstat) — so new read-only tools are a
+  one-line `_COCKPIT_VIEWS` entry with no bespoke UI.
+- The catalog reports per-view availability, so tools gated behind the
+  `system` / `v020` / `forensics` groups show "not in this tier" instead of
+  failing when they aren't loaded.
+
+### Security
+
+- The cockpit can invoke only a hard allowlist of **read-only** tools
+  (`_COCKPIT_TOOLS`). There is no code path from a panel request to `sassy_shell`,
+  fileops writes, selfmod, or any mutating tool. Calls reuse the registered
+  tools, so each one is still recorded in the audit trail.
+
+## [1.10.1] — 2026-06-25 — Fix: concurrent clients no longer wedge each other
+
+### Fixed
+
+- **Two MCP clients calling tools at the same time no longer freeze each
+  other.** Claude Desktop multiplexes every chat onto a *single* stdio server
+  process (one asyncio event loop) — it does not spawn a process per chat. Yet
+  nearly every tool body did synchronous blocking work (SQLite, file I/O,
+  screenshots/OCR) directly on that loop. With one chat this was invisible
+  (calls are sequential anyway); with two, any in-flight blocking call starved
+  the loop and froze the other chat until it timed out.
+  - The audit wrapper now runs synchronous tools via `asyncio.to_thread`, and
+    `_wrap_all_tools` forces `tool.is_async = True` so FastMCP awaits the
+    (always-async) wrapper even for `def`-declared tools. Net effect: **a
+    blocking tool written as a plain `def` is automatically offloaded to a
+    worker thread and can never block the event loop.**
+  - Converted the confirmed loop-blockers to plain `def`: `state_manager`,
+    `memory`, `fileops`, `vision` (single-shot capture/OCR), `crosslink`,
+    `editor`, `audit`. SQLite-backed modules (`state_manager`, `memory`) now
+    open a fresh per-call connection (`with closing(open_db(...))`) instead of
+    sharing one connection, which is required once calls run on worker threads.
+  - Registry / eventlog / web_inspector were already non-blocking (they offload
+    via `create_subprocess_exec` / `httpx.AsyncClient`) and were left as-is.
+
+## [1.10.0] — 2026-06-25 — Cross-platform (macOS / Linux) + Control Panel + tool discovery
 
 ### Added — Cross-platform support (one source, routed at the head)
 
@@ -65,6 +915,12 @@ facing surfaces.
   `SASSYMCP_PANEL=1`), so stdio installs never open a port unasked. Binds
   `127.0.0.1` and requires the per-install token in
   `~/.sassymcp/control_panel.token`.
+
+### Added — tool discovery (see docs/releases/v1.10.0.md)
+
+- `sassy_self_check` (manifest vs live-registry reconciliation, BROKEN-module
+  detection) and `sassy_tool_catalog` (live name/purpose/group map), plus
+  frozen-safe selfmod stubs and the `/sassymcp:discover` prompt.
 
 ## [1.9.0] — 2026-06-23 — Permission engine (modes + sandbox jail + rules)
 

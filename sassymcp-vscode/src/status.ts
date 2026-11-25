@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+// Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+// CodeMark: SCLLC1-SassyMCP-25JAFPM52KBR
 // Status bar item showing tier and brain health. Polls every 30s.
 
 import * as vscode from "vscode";
@@ -9,7 +12,7 @@ export class StatusManager implements vscode.Disposable {
 
     constructor(private exePath: string | undefined, private brain: Brain) {
         this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-        this.item.command = "sassymcp.showBrainStatus";
+        this.item.command = "sassymcp.openCockpit";
     }
 
     start(): void {

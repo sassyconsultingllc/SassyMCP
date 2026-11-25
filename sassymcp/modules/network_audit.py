@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-7W5M3Q7NFJ2Y
 """NetworkAudit - Network scanning and monitoring (cross-platform)."""
 
 import asyncio
@@ -12,6 +15,16 @@ _SAFE_PROFILE = re.compile(r'^[A-Za-z0-9 _\-\.]+$')
 
 # macOS Wi-Fi scan: the legacy `airport -s` was removed in recent macOS, so
 # try it first and fall back to system_profiler (lists visible + known nets).
+# No NetworkManager (e.g. iwd/wpa_supplicant-only Arch/Void/Alpine): find the
+# wireless interface instead of assuming "wlan0" (predictable names are wlp*).
+_LINUX_WIFI_SCAN = (
+    'if command -v iwctl >/dev/null 2>&1; then '
+    'for d in $(iwctl device list 2>/dev/null | awk \'/station/{print $1}\'); do '
+    'iwctl station "$d" get-networks; done; exit 0; fi; '
+    'for d in /sys/class/net/*/wireless; do i=$(basename "$(dirname "$d")"); '
+    '(iw dev "$i" scan 2>&1 || iwlist "$i" scanning 2>&1) | head -200; done'
+)
+
 _MAC_WIFI_SCAN = (
     'A=/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport; '
     'if [ -x "$A" ] && "$A" -s 2>/dev/null | grep -q .; then "$A" -s; '
@@ -37,9 +50,9 @@ def _register_hooks():
 ### Local-host posture (default starting point)
 1. `sassy_netstat` — what's bound to which port. Filter the output by
    listening sockets, note any 0.0.0.0 binds (LAN-exposed) vs 127.0.0.1.
-2. `sassy_arp` — who's on the local segment right now (devices the host
+2. `sassy_arp_table` — who's on the local segment right now (devices the host
    has talked to recently).
-3. `sassy_wifi_scan` — visible SSIDs + signal strength when on Wi-Fi.
+3. `sassy_wifi_networks` — visible SSIDs + signal strength when on Wi-Fi.
 
 ### Remote target scan
 1. `sassy_port_scan target="<host>" ports="<range>"` — wraps nmap (Pro tier).
@@ -57,8 +70,8 @@ def _register_hooks():
   no extra logging needed.
 
 ### Combine with
-- `sassy_security_audit_certs` for cert-chain inspection on TLS ports you find.
-- `sassy_url_security_headers` for HTTP responses on web ports.
+- `sassy_cert_check` for cert-chain inspection on TLS ports you find.
+- `sassy_url_headers` for HTTP responses on web ports.
 """,
     )
 
@@ -90,7 +103,7 @@ async def _run_exec(*args, timeout=30):
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         out = stdout.decode("utf-8", errors="replace").strip()
         return out or stderr.decode("utf-8", errors="replace").strip()
-    except asyncio.TimeoutError:
+    except TimeoutError:
         proc.kill()
         return f"Timed out after {timeout}s"
     except FileNotFoundError:
@@ -122,7 +135,7 @@ async def _py_port_scan(target: str, ports_spec: str, connect_timeout: float = 0
             writer = None
             try:
                 fut = asyncio.open_connection(target, port)
-                reader, writer = await asyncio.wait_for(fut, timeout=connect_timeout)
+                _reader, writer = await asyncio.wait_for(fut, timeout=connect_timeout)
                 open_ports.append(port)
             except Exception:
                 pass
@@ -147,7 +160,8 @@ def register(server):
         argv = _platform.pick(
             windows=["netstat", "-ano"],
             macos=["netstat", "-an"],
-            linux=(["ss", "-tunap"] if _platform.which("ss") else ["netstat", "-an"]),
+            linux=_platform.first_available(["ss", "-tunap"], ["netstat", "-an"]),
+            posix=["netstat", "-an"],
         )
         out = await _run_exec(*argv)
         if filter_str:
@@ -157,8 +171,13 @@ def register(server):
 
     @server.tool()
     async def sassy_arp_table() -> str:
-        """Show ARP table (arp -a; cross-platform)."""
-        return await _run_exec("arp", "-a")
+        """Show ARP/neighbour table (arp -a; `ip neigh` on Linux without net-tools)."""
+        argv = _platform.pick(
+            windows=["arp", "-a"],
+            posix=["arp", "-an"],
+            linux=_platform.first_available(["ip", "neigh", "show"], ["arp", "-an"]),
+        )
+        return await _run_exec(*argv)
 
     @server.tool()
     async def sassy_wifi_networks() -> str:
@@ -168,7 +187,8 @@ def register(server):
             windows=["netsh", "wlan", "show", "networks", "mode=bssid"],
             macos=["/bin/sh", "-c", _MAC_WIFI_SCAN],
             linux=(["nmcli", "dev", "wifi", "list"] if _platform.which("nmcli")
-                   else ["/bin/sh", "-c", "iwlist scanning 2>&1 || iw dev wlan0 scan 2>&1"]),
+                   else ["/bin/sh", "-c", _LINUX_WIFI_SCAN]),
+            posix=["/bin/sh", "-c", "ifconfig -a 2>&1; echo '(use ifconfig <wlan> list scan on BSD)'"],
         )
         return await _run_exec(*argv, timeout=45)
 
@@ -184,9 +204,19 @@ def register(server):
 
     @server.tool()
     async def sassy_dns_lookup(hostname: str) -> str:
-        """DNS lookup (nslookup; cross-platform)."""
+        """DNS lookup: nslookup, else dig / host / getent, else Python resolver
+        (minimal Fedora/Kali/Alpine images often ship without bind-utils)."""
         hostname = _validate_host(hostname)
-        return await _run_exec("nslookup", hostname)
+        for argv in (["nslookup", hostname], ["dig", "+noall", "+answer", hostname],
+                     ["host", hostname], ["getent", "ahosts", hostname]):
+            if shutil.which(argv[0]):
+                return await _run_exec(*argv)
+        try:
+            infos = await asyncio.get_running_loop().getaddrinfo(hostname, None)
+        except OSError as e:
+            return f"Error: {e}"
+        addrs = sorted({i[4][0] for i in infos})
+        return f"{hostname}:\n" + "\n".join(f"  {a}" for a in addrs)
 
     @server.tool()
     async def sassy_traceroute(target: str) -> str:
@@ -194,7 +224,9 @@ def register(server):
         target = _validate_host(target)
         argv = _platform.pick(
             windows=["tracert", "-d", target],
-            posix=["traceroute", "-n", target],
+            posix=_platform.first_available(
+                ["traceroute", "-n", target], ["tracepath", "-n", target],
+                ["mtr", "-r", "-n", "-c", "1", target]),
         )
         return await _run_exec(*argv, timeout=60)
 
@@ -210,12 +242,16 @@ def register(server):
                 windows=["netsh", "wlan", "show", "profile", f"name={profile}", "key=clear"],
                 macos=["security", "find-generic-password", "-wa", profile],
                 linux=["nmcli", "-s", "connection", "show", profile],
+                feature="WiFi profile details",
             )
             return await _run_exec(*argv)
         argv = _platform.pick(
             windows=["netsh", "wlan", "show", "profiles"],
             macos=["system_profiler", "SPAirPortDataType"],
             linux=(["nmcli", "connection", "show"] if _platform.which("nmcli")
-                   else ["/bin/sh", "-c", "ls /etc/NetworkManager/system-connections/ 2>&1"]),
+                   else ["/bin/sh", "-c",
+                         ("ls /etc/NetworkManager/system-connections/ /var/lib/iwd/ "
+                          "/etc/netctl/ 2>/dev/null; grep -h ssid= /etc/wpa_supplicant/*.conf 2>/dev/null")]),
+            feature="WiFi profiles",
         )
         return await _run_exec(*argv)

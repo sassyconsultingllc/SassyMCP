@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-K4PW45HCJUJA
 """Shared pytest fixtures + a safety net against leaked child processes.
 
 Several tests spawn real OS subprocesses (terminal sessions, supervisor
@@ -18,6 +21,18 @@ try:
     import psutil
 except Exception:  # pragma: no cover - psutil is a hard dep, but stay safe
     psutil = None
+
+
+# `test_intercept.py` is a standalone assertion script, not a pytest module: its
+# checks run at import time and it ends in `sys.exit()`. Collecting it aborts the
+# whole run with an INTERNALERROR before any real test executes, because pytest
+# imports a module to collect it and the SystemExit escapes collection.
+#
+# It is not dead code and must not be renamed — `python tests/test_intercept.py`
+# is the documented way to run it (docs/releases/_template.md, v1.5.0.md), so the
+# path is part of the release process. Excluding it here keeps `pytest tests`
+# working without changing how the script is invoked.
+collect_ignore = ["test_intercept.py"]
 
 
 @pytest.fixture(autouse=True)

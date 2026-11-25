@@ -1,3 +1,8 @@
+<!--
+   Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+   Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+   CodeMark: SCLLC1-SassyMCP-6UBJCJW2J45L
+-->
 # Install CLI + DXT + VS Code Extension Design
 
 **Date:** 2026-05-03

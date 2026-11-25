@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+// Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+// CodeMark: SCLLC1-SassyMCP-22GNF3FD3SX4
 // SassyMCP VS Code extension entry point.
 //
 // On activation:
@@ -12,6 +15,7 @@ import { Installer } from "./installer";
 import { StatusManager } from "./status";
 import { Brain } from "./brain";
 import { SetupWizardPanel } from "./setupWizard";
+import { BrainCockpitPanel } from "./cockpit";
 
 let statusManager: StatusManager | undefined;
 
@@ -63,6 +67,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     // Commands
     context.subscriptions.push(
+        vscode.commands.registerCommand("sassymcp.openCockpit", () => {
+            BrainCockpitPanel.createOrShow(context.extensionUri);
+        }),
         vscode.commands.registerCommand("sassymcp.runSetupWizard", () => {
             if (!exePath) {
                 vscode.window.showErrorMessage("SassyMCP: sassymcp.exe not found.");

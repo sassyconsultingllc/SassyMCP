@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-IIL3BP3NRJOJ
 """SassyMCP Security — Input validation for paths, commands, and network targets.
 
 Enforces:
@@ -18,7 +21,6 @@ import re
 import socket
 import sys
 from pathlib import Path
-from typing import Optional
 from urllib.parse import urlparse
 
 logger = logging.getLogger("sassymcp.security")
@@ -35,7 +37,7 @@ def _get_config_value(key: str, default=None):
 
 # ── Path Validation ──────────────────────────────────────────────────
 
-def validate_path(path: str) -> tuple[bool, Optional[str]]:
+def validate_path(path: str) -> tuple[bool, str | None]:
     """Check if a path is within allowedDirectories.
 
     If allowedDirectories is empty or not configured, all paths are allowed
@@ -108,7 +110,174 @@ def _word_boundary_pattern(needle: str):
     return pat
 
 
-def validate_command(command: str) -> tuple[bool, Optional[str]]:
+# ── SSH local-execution option guard ─────────────────────────────────
+#
+# OpenSSH runs the VALUE of a handful of options on the LOCAL machine,
+# through the local shell, while setting up a connection. They turn a
+# benign-looking `ssh user@host` into an arbitrary local command runner.
+#
+# This is a complete bypass of every other gate in this module, because:
+#   - the payload lives inside a quoted option value, and
+#     validate_command_tiered() downgrades block-list hits inside string
+#     literals to "low" — which sassy_shell logs and then RUNS; and
+#   - detect_delete_intent() only recurses into the shells listed in
+#     _WRAPPER_CMDS, and `ssh` is not one of them, so nothing inside the
+#     option value is ever scanned at all.
+#
+# Net effect before this guard: `ssh -o ProxyCommand="rm -rf /" u@h`
+# passed the interceptor as a clean command and executed. Reported as
+# RCE against the sassy_shell gate, 2026-09-19.
+#
+# ProxyJump (-J host) is the safe replacement for jump hosts — ssh wires
+# the hop internally and spawns no shell — so the refusal below always
+# has somewhere to send the caller.
+
+_SSH_BINARIES = frozenset({
+    "ssh", "scp", "sftp", "slogin", "sshpass", "autossh", "ssh-copy-id",
+    # PuTTY family — first-class SSH client on Windows (sassy_linux_exec,
+    # setup wizard). -proxycmd is the local-exec sibling of OpenSSH
+    # ProxyCommand; omitting these binaries left the same RCE class open
+    # on the default Windows path.
+    "plink", "pscp", "psftp", "putty",
+})
+
+# Options whose value ssh executes locally. PermitLocalCommand is the
+# switch that arms LocalCommand; it is useless on its own but always part
+# of that chain, so refusing it keeps the diagnostic honest.
+_SSH_EXEC_OPTIONS = frozenset({
+    "proxycommand", "localcommand", "permitlocalcommand", "knownhostscommand",
+})
+
+# Accepts every spelling ssh does: `-o Name=v`, `-oName=v`, `-o "Name v"`.
+_SSH_EXEC_OPTION_RE = re.compile(
+    r"-o\s*[\"']?\s*(" + "|".join(sorted(_SSH_EXEC_OPTIONS)) + r")\b",
+    re.IGNORECASE,
+)
+
+# Command substitution in the -o OPTION-NAME position:
+#   `ssh -o `echo ProxyCommand=id` u@h`
+#   `ssh -o $(echo ProxyCommand=id) u@h`
+# The substitution is executed by the CALLER's shell before ssh ever parses
+# its options, so the guard can never see the option name the attacker
+# produced (e.g. ProxyCommand=...) — refusing the pattern itself is the
+# only static fix. Legitimate -o spellings never need substitution:
+# option names are static words, so this has no effect on real workflows.
+#
+# This is deliberately NARROWER than "any substitution in an ssh command":
+# `ssh user@host "echo $(hostname)"` must keep working, so substitution
+# anywhere except the -o option-name position is untouched. Known residual
+# false-positive shape: `-o` inside the REMOTE command colliding with the
+# pattern, e.g. `ssh u@h 'grep -o "$(cmd)" f'` — refused with a clear
+# diagnostic; erring toward refusal is the right default for a local-RCE
+# shape.
+_SSH_SUBST_OPTION_RE = re.compile(r"-o\s*[\"']?\s*(?:`|\$\()")
+
+# PuTTY: `plink -proxycmd <local command>` (also -ProxyCmd). The value is
+# executed on the local host before any remote connection — identical class
+# to OpenSSH ProxyCommand. Glued forms (`-proxycmdcalc`) are not valid
+# PuTTY syntax; require a delimiter so we do not false-positive on an
+# unrelated flag prefix.
+_PLINK_PROXYCMD_RE = re.compile(
+    r"(?:^|[\s\"'])-proxycmd(?:\s+|=)",
+    re.IGNORECASE,
+)
+
+# `-F path` / `-Fpath` and `-o Include=path` both pull in a client config
+# that can itself carry ProxyCommand — the same RCE, one hop removed.
+# Refused only when the file is outside the user's own ~/.ssh, so real
+# multi-config workflows (`ssh -F ~/.ssh/config.work`) keep working.
+#
+# -F is deliberately CASE-SENSITIVE: lowercase `-f` is "go to background",
+# an ordinary flag whose next token is the destination, not a config file.
+# Matching it case-insensitively would refuse every `ssh -f user@host cmd`.
+_SSH_CONFIG_FLAG_RE = re.compile(r"(?:^|\s)-F\s*([^\s\"';|&]+)")
+_SSH_INCLUDE_OPT_RE = re.compile(
+    r"-o\s*[\"']?\s*include\s*[=\s]\s*([^\s\"';|&]+)",
+    re.IGNORECASE,
+)
+
+# A bare `ssh` token, not `sshd` and not a substring of some other word.
+# The boundary class includes the backtick: on POSIX, `` `ssh -o
+# ProxyCommand=... u@h` `` is command substitution, so a backtick-wrapped
+# invocation still runs the payload locally (F1, 2026-09-21).
+_SSH_BINARY_RE = re.compile(
+    r"(?:^|[\s\"'/\\=(;|&`])(" + "|".join(sorted(_SSH_BINARIES)) + r")(?:\.exe)?\b",
+    re.IGNORECASE,
+)
+
+
+def _is_trusted_ssh_config(path: str) -> bool:
+    """True when `path` resolves inside the user's own ~/.ssh directory.
+
+    Expands %VARS%/$VARS and `~` first so `%USERPROFILE%\\.ssh\\config` and
+    `$HOME/.ssh/config` are recognised, and resolves so that
+    `~/.ssh/../../tmp/evil` cannot pose as trusted.
+    """
+    try:
+        p = Path(os.path.expandvars(path)).expanduser()
+        if not p.is_absolute():
+            p = Path.cwd() / p
+        p = p.resolve(strict=False)
+        ssh_dir = (Path.home() / ".ssh").resolve(strict=False)
+    except (OSError, ValueError):
+        return False
+    return p == ssh_dir or ssh_dir in p.parents
+
+
+def detect_ssh_exec_option(command: str) -> tuple[bool, str, str]:
+    """Detect an ssh-family invocation that would run a LOCAL command.
+
+    Returns (is_hit, label, detail). Scans the RAW command — not the
+    quoted-string-stripped view the block list uses — because the whole
+    point of this attack is that the payload sits inside a quoted value.
+
+    Requires an ssh-family binary to be present as well as the option, so
+    that unrelated commands which merely mention these words (for example
+    `grep -o proxycommand ~/.ssh/config`) are not refused.
+    """
+    if not command:
+        return False, "", ""
+    if not _SSH_BINARY_RE.search(command):
+        return False, "", ""
+
+    if _PLINK_PROXYCMD_RE.search(command):
+        return True, "ssh-exec-option:proxycmd", (
+            "PuTTY -proxycmd runs its value as a local command, the same "
+            "class as OpenSSH ProxyCommand, and that value is invisible "
+            "to the command interceptor"
+        )
+
+    m = _SSH_EXEC_OPTION_RE.search(command)
+    if m:
+        opt = m.group(1).lower()
+        return True, f"ssh-exec-option:{opt}", (
+            f"ssh option '{m.group(1)}' runs its value as a local command, "
+            "and that value is invisible to the command interceptor"
+        )
+
+    # Option NAME built by command substitution — executes locally before
+    # ssh parses options, so the named-option check above cannot see it.
+    if _SSH_SUBST_OPTION_RE.search(command):
+        return True, "ssh-exec-option:substitution", (
+            "ssh -o option name is built by command substitution (backtick "
+            "or $()), which the local shell executes before ssh parses its "
+            "options — the resulting option (e.g. ProxyCommand) is invisible "
+            "to this guard. Spell option names literally."
+        )
+
+    for pattern in (_SSH_CONFIG_FLAG_RE, _SSH_INCLUDE_OPT_RE):
+        for cm in pattern.finditer(command):
+            cfg_path = cm.group(1).strip("\"'")
+            if not _is_trusted_ssh_config(cfg_path):
+                return True, "ssh-exec-option:config-file", (
+                    f"ssh would load client config from '{cfg_path}', which is "
+                    f"outside {Path.home() / '.ssh'} and can set ProxyCommand"
+                )
+
+    return False, "", ""
+
+
+def validate_command(command: str) -> tuple[bool, str | None]:
     """Check if a shell command is blocked.
 
     Matches against the hardcoded block list and the user-configurable
@@ -121,7 +290,7 @@ def validate_command(command: str) -> tuple[bool, Optional[str]]:
     return ok, err
 
 
-def validate_command_tiered(command: str) -> tuple[bool, str, Optional[str]]:
+def validate_command_tiered(command: str) -> tuple[bool, str, str | None]:
     """Block-list scan that distinguishes real matches from string-literal hits.
 
     Returns (ok, tier, error_message).
@@ -135,13 +304,28 @@ def validate_command_tiered(command: str) -> tuple[bool, str, Optional[str]]:
     The strict raw-text scan can be re-enabled via the
     `interceptor.scanStringLiterals` config key — when true, a "low" hit
     is reported as "high" so existing strict callers see no behavior change.
+
+    Structural check first: ssh options that execute a local command are
+    refused at "high" unconditionally. They must not be subject to the
+    string-literal downgrade below, because their payload is ALWAYS a
+    quoted value — downgrading it to "low" is exactly what let
+    `ssh -o ProxyCommand="rm -rf /" u@h` through. See
+    detect_ssh_exec_option().
     """
+    ssh_hit, _ssh_label, ssh_detail = detect_ssh_exec_option(command)
+    if ssh_hit:
+        return False, "high", (
+            f"Command blocked (safety): {ssh_detail}. Use ProxyJump "
+            "('ssh -J jumphost target') for jump hosts, or run this ssh "
+            "invocation outside the MCP tool surface."
+        )
+
     cmd_raw = command.strip().lower()
     cmd_stripped = _strip_quoted_strings(cmd_raw)
 
     scan_literals = bool(_get_config_value("interceptor.scanStringLiterals", False))
 
-    def _classify(needle: str, label: str) -> tuple[bool, str, Optional[str]]:
+    def _classify(needle: str, label: str) -> tuple[bool, str, str | None]:
         # Single-word entries get standalone-token matching so PowerShell
         # verb-Noun pairs ("Format-Table", "-Format", "Format-List") and
         # English prose ("the format of the file") don't trip the block.
@@ -185,7 +369,7 @@ _ADB_DEVICE_PATTERN = re.compile(r"^[A-Za-z0-9.:_\-]+$")
 _ADB_PACKAGE_PATTERN = re.compile(r"^[A-Za-z0-9._\-]+$")
 
 
-def validate_adb_device(device: str) -> tuple[bool, Optional[str]]:
+def validate_adb_device(device: str) -> tuple[bool, str | None]:
     """Validate ADB device identifier."""
     if not device:
         return True, None  # empty = default device
@@ -194,7 +378,7 @@ def validate_adb_device(device: str) -> tuple[bool, Optional[str]]:
     return True, None
 
 
-def validate_adb_package(package: str) -> tuple[bool, Optional[str]]:
+def validate_adb_package(package: str) -> tuple[bool, str | None]:
     """Validate Android package name."""
     if not _ADB_PACKAGE_PATTERN.match(package):
         return False, f"Invalid package name: {package}"
@@ -222,7 +406,7 @@ def _is_private_ip(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     return any(addr in net for net in _PRIVATE_RANGES)
 
 
-def validate_url(url: str, allow_private: bool = False) -> tuple[bool, Optional[str]]:
+def validate_url(url: str, allow_private: bool = False) -> tuple[bool, str | None]:
     """Validate a URL for SSRF protection.
 
     Blocks: private IPs (literal or via DNS resolution), link-local, cloud
@@ -317,6 +501,19 @@ _WRAPPER_CMDS = {
     "bash":          {"-c"},
     "sh":            {"-c"},
     "zsh":           {"-c"},
+    # Other common POSIX shells — same -c "command string" contract.
+    "dash":          {"-c"},
+    "ksh":           {"-c"},
+    "fish":          {"-c"},
+    "ash":           {"-c"},
+    # Invoke-Expression: the first POSITIONAL argument is the nested
+    # command (`iex "Remove-Item /tmp/x"`). Empty flag set — _scan_segment's
+    # "first positional token" path handles the recursion. (On systems
+    # with Elixir installed, `iex` is also the interactive REPL; a bare
+    # `iex` with no args recurses into nothing, so this only fires when
+    # a delete keyword actually appears in its arguments.)
+    "iex":                  set(),
+    "invoke-expression":    set(),
 }
 
 # Flags that carry a base64-encoded PowerShell command payload.
@@ -434,7 +631,7 @@ def _strip_quoted_strings(s: str) -> str:
     return _QUOTED_RUN.sub(replacer, s)
 
 
-def _decode_powershell_base64(payload: str) -> Optional[str]:
+def _decode_powershell_base64(payload: str) -> str | None:
     """Best-effort decode of a PowerShell -EncodedCommand argument.
 
     PowerShell encodes with UTF-16-LE then base64. Returns decoded text
@@ -456,6 +653,19 @@ def _scan_segment(seg_lower: str, seg_orig: str) -> tuple[bool, str]:
 
     Takes BOTH the lowered segment (for keyword/pattern matching) and the
     original-case segment (for base64 payloads that must not be lowercased).
+
+    ACCEPTED RESIDUAL (2026-09-21): environment-variable indirection cannot
+    be detected statically. `X=rm -rf /tmp/x; $X` defeats this scan because
+    the delete keyword only exists inside the variable's VALUE at runtime —
+    the segment `$X` carries no literal keyword, and expanding assignments
+    statically is unreliable (values can be built across segments, quoted,
+    exported, or read from files). Shell wrapper recursion (_WRAPPER_CMDS)
+    covers the cases where the payload is literally visible; indirection
+    where the payload is NOT literally visible is out of scope by design.
+    Mitigation remains defense-in-depth: the catastrophic block list in
+    validate_command_tiered() still sees the literal `rm -rf /tmp/x` in
+    the assignment segment (flagged there), and the audit trail records
+    the executed command.
     """
     stripped_lower = seg_lower.strip()
     stripped_orig = seg_orig.strip()
@@ -509,7 +719,7 @@ def _scan_segment(seg_lower: str, seg_orig: str) -> tuple[bool, str]:
                 if len(inner) >= 2 and inner[0] == inner[-1] and inner[0] in ("'", '"'):
                     inner = inner[1:-1]
                 return detect_delete_intent(inner)
-            if tok.startswith("-") or tok.startswith("/"):
+            if tok.startswith(("-", "/")):
                 i += 1
                 continue
             # First positional token after a shell name — treat as command.
@@ -560,7 +770,7 @@ def _protected_roots() -> list[Path]:
     return roots
 
 
-def is_protected_path(path: str | Path) -> tuple[bool, Optional[str]]:
+def is_protected_path(path: str | Path) -> tuple[bool, str | None]:
     """Check if a path is protected from deletion/overwrite.
 
     Uses resolve() for the check so that:
@@ -615,7 +825,7 @@ def is_protected_path(path: str | Path) -> tuple[bool, Optional[str]]:
 
 # ── Input Size Validation ────────────────────────────────────────────
 
-def validate_input_size(value: str, max_bytes: int = 10_000_000, label: str = "input") -> tuple[bool, Optional[str]]:
+def validate_input_size(value: str, max_bytes: int = 10_000_000, label: str = "input") -> tuple[bool, str | None]:
     """Reject inputs that exceed a size threshold."""
     if len(value) > max_bytes:
         return False, f"{label} exceeds maximum size ({len(value)} > {max_bytes} bytes)"
@@ -652,7 +862,7 @@ def _sensitive_read_roots() -> list[Path]:
     ]
     # SassyMCP's own token store — even read access here is a credential leak
     try:
-        from sassymcp._paths import TOKENS_FILE, LICENSE_FILE
+        from sassymcp._paths import LICENSE_FILE, TOKENS_FILE
         roots += [TOKENS_FILE, LICENSE_FILE]
     except Exception:
         pass
@@ -698,7 +908,7 @@ def _sensitive_read_roots() -> list[Path]:
     return roots
 
 
-def is_sensitive_read_path(path: str | Path) -> tuple[bool, Optional[str]]:
+def is_sensitive_read_path(path: str | Path) -> tuple[bool, str | None]:
     """Return (True, reason) if `path` is in a sensitive-read denylist.
 
     Tools that take an LLM-supplied path and surface its bytes (hash,

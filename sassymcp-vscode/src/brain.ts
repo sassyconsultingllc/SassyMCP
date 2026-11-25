@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+// Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+// CodeMark: SCLLC1-SassyMCP-XMSA6BW4WK5J
 // Read-only view of ~/.sassymcp/ for the status bar and the Show Brain Status
 // command. We never write here — all mutation goes through sassymcp's tools.
 

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-4UN4H7B4CT62
 """Tests for usage-score-driven default module loading.
 
 The promise of `get_default_modules()` is: static `always_load=True` groups
@@ -13,11 +16,8 @@ These tests verify the contract under three conditions:
 from __future__ import annotations
 
 import json
-import os
 import time
 from pathlib import Path
-
-import pytest
 
 
 def _seed_tool_usage(home: Path, tool_invocations: dict[str, int]) -> None:
@@ -42,6 +42,7 @@ def _fresh_loader(monkeypatch, sassy_home: Path):
     """
     monkeypatch.setenv("SASSYMCP_HOME", str(sassy_home))
     import importlib
+
     import sassymcp._paths
     importlib.reload(sassymcp._paths)
     import sassymcp.modules._tool_loader as loader

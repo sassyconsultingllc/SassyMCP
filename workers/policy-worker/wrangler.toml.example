@@ -1,0 +1,19 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-POLWRANGLER1
+#
+# SassyMCP Policy Worker — copy this file to wrangler.toml and paste the
+# real KV namespace id. The working wrangler.toml is gitignored so a
+# production id never lands in a public tree.
+#
+#   wrangler kv:namespace create POLICY_KV
+#   copy wrangler.toml.example wrangler.toml
+#   # paste the returned id below, then: npx wrangler deploy
+
+name = "sassymcp-policy-worker"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+[[kv_namespaces]]
+binding = "POLICY_KV"
+id = "<POLICY_KV_NAMESPACE_ID>"

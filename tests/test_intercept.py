@@ -1,22 +1,33 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-TJV46I6FKKYT
 """Sandbox tests for the delete interceptor and related guards.
 
 Run with the project's Python interpreter:
     V:\\tools\\python\\python.exe V:\\Projects\\SassyMCP\\_test_intercept.py
 """
 import asyncio
+import json
 import os
-import shutil
 import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, r"V:\Projects\SassyMCP")
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
+
+# Real paths on the local filesystem for protected-path testing
+SHELL_PY = REPO_ROOT / "sassymcp" / "modules" / "shell.py"
+SECURITY_PY = REPO_ROOT / "sassymcp" / "modules" / "_security.py"
+CLOBBER_PY = REPO_ROOT / "sassymcp" / "modules" / "clobber.py"
+STAGING_DIR = REPO_ROOT / "_DELETE_"
+OUTSIDE_PATH = Path.home() / "nonexistent_sassy_test_file.txt"
 
 from sassymcp.modules._security import detect_delete_intent, is_protected_path
 from sassymcp.modules.shell import (
+    _STAGING_FOLDER,
     _parse_delete_targets,
     _safe_move_to_staging,
-    _STAGING_FOLDER,
 )
 
 # Avoid literal 'Remove-Item' / 'del' as the first-word of any run command,
@@ -28,6 +39,20 @@ NETD = "[System.IO.File]::D" + "elete"
 
 PASS = 0
 FAIL = 0
+
+
+def _text(r):
+    """Searchable text for a tool result, whatever shape it is.
+
+    Tool bodies are migrating from `-> str` (returning json.dumps(...)) to
+    `-> dict[str, Any]` (returning the object), so FastMCP emits real
+    structuredContent instead of a {"result": "<json string>"} envelope.
+
+    A substring test against a dict is a silent trap: `"foo" in some_dict`
+    checks KEYS, never raises, and simply answers False. Normalise here so an
+    assertion keeps meaning the same thing on both sides of that migration.
+    """
+    return r if isinstance(r, str) else json.dumps(r, default=str)
 
 
 def check(label, ok, extra=""):
@@ -98,35 +123,43 @@ for cmd, expected in cases:
 # ── is_protected_path ────────────────────────────────────────────────
 print("\n[2] is_protected_path")
 protected_cases = [
-    (r"V:\Projects\SassyMCP\sassymcp\modules\shell.py", True),
-    (r"V:\Projects\SassyMCP\_DELETE_", True),
-    (r"V:\Projects\SassyMCP\_DELETE_\old.txt", False),       # inside staging is OK
-    (r"C:\Users\Admin\foo.txt", False),
+    (str(SHELL_PY), True),
+    (str(STAGING_DIR), True),
+    (str(STAGING_DIR / "old.txt"), False),       # inside staging is OK
+    (str(OUTSIDE_PATH), False),
     (str(Path.home() / ".sassymcp" / "audit.log"), True),
 
-    # v1.1.2 NEW: traversal bypasses must be caught by resolve()
-    (r"V:\Projects\SassyMCP\sassymcp\modules\..\modules\shell.py", True),       # R0 dot-traversal inside
-    (r"V:\Projects\SassyMCP\_DELETE_\..\sassymcp\modules\shell.py", True),      # R1 _DELETE_ escape
-    (r"V:\Projects\SassyMCP\..\SassyMCP\sassymcp\modules\shell.py", True),      # R2 sibling traversal
+    # traversal bypasses must be caught by resolve()
+    (str(REPO_ROOT / "sassymcp" / "modules" / ".." / "modules" / "shell.py"), True),       # R0 dot-traversal inside
+    (str(STAGING_DIR / ".." / "sassymcp" / "modules" / "shell.py"), True),                 # R1 _DELETE_ escape
+    (str(REPO_ROOT / ".." / REPO_ROOT.name / "sassymcp" / "modules" / "shell.py"), True),  # R2 sibling traversal
     # Legit staging subfolder (must stay unprotected)
-    (r"V:\Projects\SassyMCP\sassymcp\modules\_DELETE_\old.py", False),          # module-level staging ok
+    (str(REPO_ROOT / "sassymcp" / "modules" / "_DELETE_" / "old.py"), False),              # module-level staging ok
 ]
 for path, expected in protected_cases:
     got, reason = is_protected_path(path)
     check(f"protected={expected} <- {path}", got == expected, f"got=({got},{reason!r})")
 
 
-# ── _parse_delete_targets: Windows path preservation ────────────────
-print("\n[3] _parse_delete_targets — Windows paths & flags")
+# ── _parse_delete_targets: path preservation ─────────────────────────
+print("\n[3] _parse_delete_targets — paths & flags")
 parse_cases = [
-    ("del C:\\Users\\foo\\bar.txt",       ["C:\\Users\\foo\\bar.txt"]),
     ("del foo.txt bar.txt",               ["foo.txt", "bar.txt"]),
     ("rm -rf foo",                        ["foo"]),
-    ("rd /s /q C:\\temp\\garbage",        ["C:\\temp\\garbage"]),
     ("Remove-Item -Path foo -Recurse",    ["foo"]),
     # POSIX absolute path must NOT be classified as a CMD flag.
     ("rm /tmp/foo",                       ["/tmp/foo"]),
 ]
+if os.name == "nt":
+    parse_cases.extend([
+        ("del C:\\Users\\foo\\bar.txt",       ["C:\\Users\\foo\\bar.txt"]),
+        ("rd /s /q C:\\temp\\garbage",        ["C:\\temp\\garbage"]),
+    ])
+else:
+    parse_cases.extend([
+        ("rm /var/log/app.log",               ["/var/log/app.log"]),
+        ("rm -rf /tmp/garbage",               ["/tmp/garbage"]),
+    ])
 for cmd, expected in parse_cases:
     got = _parse_delete_targets(cmd)
     check(f"parse {cmd!r} -> {expected}", got == expected, f"got={got}")
@@ -142,7 +175,7 @@ async def test_staging():
         # (a) ordinary file -> staged
         victim = td_path / "victim.txt"
         victim.write_text("hello")
-        out = await _safe_move_to_staging([str(victim)], "rm", f"rm {victim}")
+        out = _safe_move_to_staging([str(victim)], "rm", f"rm {victim}")
         staged = td_path / _STAGING_FOLDER / "victim.txt"
         check("sandbox: victim.txt moved to _DELETE_/",
               staged.exists() and not victim.exists(),
@@ -151,24 +184,24 @@ async def test_staging():
         # (b) collision handling
         second = td_path / "victim.txt"
         second.write_text("v2")
-        await _safe_move_to_staging([str(second)], "rm", f"rm {second}")
+        _safe_move_to_staging([str(second)], "rm", f"rm {second}")
         collided = td_path / _STAGING_FOLDER / "victim_1.txt"
         check("sandbox: collision -> victim_1.txt", collided.exists())
 
         # (c) protected path refused — sassymcp module file
-        protected = Path(r"V:\Projects\SassyMCP\sassymcp\modules\shell.py")
-        out = await _safe_move_to_staging([str(protected)], "rm", f"rm {protected}")
+        protected = SHELL_PY
+        out = _safe_move_to_staging([str(protected)], "rm", f"rm {protected}")
         check("sandbox: protected source refused",
-              "REFUSED" in out and protected.exists(),
-              f"out={out[:200]}")
+              "REFUSED" in _text(out) and protected.exists(),
+              f"out={_text(out)[:200]}")
 
         # (d) staging folder itself refused
-        out = await _safe_move_to_staging([str(td_path / "_DELETE_")], "rm", "rm _DELETE_")
-        check("sandbox: _DELETE_ folder refused", "REFUSED" in out, f"out={out[:200]}")
+        out = _safe_move_to_staging([str(td_path / "_DELETE_")], "rm", "rm _DELETE_")
+        check("sandbox: _DELETE_ folder refused", "REFUSED" in _text(out), f"out={_text(out)[:200]}")
 
         # (e) missing target reported, not crashed
-        out = await _safe_move_to_staging([str(td_path / "nope.txt")], "rm", "rm nope.txt")
-        check("sandbox: missing target graceful", "not found" in out, f"out={out[:200]}")
+        out = _safe_move_to_staging([str(td_path / "nope.txt")], "rm", "rm nope.txt")
+        check("sandbox: missing target graceful", "not found" in _text(out), f"out={_text(out)[:200]}")
 
 asyncio.run(test_staging())
 
@@ -187,13 +220,32 @@ class _FakeServer:
             return fn
         return deco
 
+import inspect as _inspect
+
+
+def _aw(fn):
+    """Adapt a captured tool so `await fn(...)` works whether the tool is
+    declared `def` or `async def`. fileops tools are now plain `def` (the
+    server's audit wrapper offloads them to a thread); the raw functions
+    captured here aren't wrapped, so awaiting them directly would fail.
+    """
+    if _inspect.iscoroutinefunction(fn):
+        return fn
+
+    async def _wrapped(*a, **k):
+        return fn(*a, **k)
+
+    return _wrapped
+
+
 from sassymcp.modules import fileops as fo
+
 _fake = _FakeServer()
 fo.register(_fake)
-sassy_safe_delete = _fake.tools["sassy_safe_delete"]
-sassy_write_file  = _fake.tools["sassy_write_file"]
-sassy_move        = _fake.tools["sassy_move"]
-sassy_copy        = _fake.tools["sassy_copy"]
+sassy_safe_delete = _aw(_fake.tools["sassy_safe_delete"])
+sassy_write_file  = _aw(_fake.tools["sassy_write_file"])
+sassy_move        = _aw(_fake.tools["sassy_move"])
+sassy_copy        = _aw(_fake.tools["sassy_copy"])
 
 async def test_fileops():
     with tempfile.TemporaryDirectory(prefix="sassy_fo_") as td:
@@ -210,7 +262,7 @@ async def test_fileops():
         check("safe_delete: refuses staging folder", "Refused" in msg, f"msg={msg}")
 
         # sassy_safe_delete: refuses protected (sassymcp source)
-        msg = await sassy_safe_delete(r"V:\Projects\SassyMCP\sassymcp\modules\shell.py")
+        msg = await sassy_safe_delete(str(SHELL_PY))
         check("safe_delete: refuses protected source", "Refused" in msg, f"msg={msg}")
 
         # sassy_write_file: rewrite snapshots existing content
@@ -223,7 +275,7 @@ async def test_fileops():
               f"snaps={snaps}")
 
         # sassy_write_file: refuses protected source
-        msg = await sassy_write_file(r"V:\Projects\SassyMCP\sassymcp\modules\shell.py", "junk", "rewrite")
+        msg = await sassy_write_file(str(SHELL_PY), "junk", "rewrite")
         check("write_file: refuses protected", "Refused" in msg, f"msg={msg}")
 
         # sassy_move: refuses overwrite of existing destination
@@ -235,7 +287,7 @@ async def test_fileops():
         check("move: dst not touched on refusal", b.read_text() == "b")
 
         # sassy_move: refuses protected source
-        msg = await sassy_move(r"V:\Projects\SassyMCP\sassymcp\modules\shell.py", str(td_path / "out.py"))
+        msg = await sassy_move(str(SHELL_PY), str(td_path / "out.py"))
         check("move: refuses protected source", "Refused" in msg, f"msg={msg}")
 
         # v1.1.2: sassy_copy refuses existing destination (no silent overwrite)
@@ -246,11 +298,11 @@ async def test_fileops():
         check("copy: dst unchanged on refusal", c2.read_text() == "two")
 
         # v1.1.2: sassy_copy refuses protected source
-        msg = await sassy_copy(r"V:\Projects\SassyMCP\sassymcp\modules\shell.py", str(td_path / "stolen.py"))
+        msg = await sassy_copy(str(SHELL_PY), str(td_path / "stolen.py"))
         check("copy: refuses protected source", "Refused" in msg, f"msg={msg}")
 
         # v1.1.2: sassy_copy refuses protected destination
-        msg = await sassy_copy(str(c1), r"V:\Projects\SassyMCP\sassymcp\modules\clobber.py")
+        msg = await sassy_copy(str(c1), str(CLOBBER_PY))
         check("copy: refuses protected dest", "Refused" in msg, f"msg={msg}")
 
         # v1.1.2: sassy_copy normal happy path still works
@@ -264,10 +316,11 @@ asyncio.run(test_fileops())
 # ── editor.py guards — v1.1.2 ────────────────────────────────────────
 print("\n[5b] editor.py guards — sandbox")
 from sassymcp.modules import editor as ed
+
 _fake = _FakeServer()
 ed.register(_fake)
-sassy_edit_block = _fake.tools["sassy_edit_block"]
-sassy_edit_multi = _fake.tools["sassy_edit_multi"]
+sassy_edit_block = _aw(_fake.tools["sassy_edit_block"])
+sassy_edit_multi = _aw(_fake.tools["sassy_edit_multi"])
 
 async def test_editor():
     with tempfile.TemporaryDirectory(prefix="sassy_ed_") as td:
@@ -276,7 +329,7 @@ async def test_editor():
         # edit_block: refuses protected file — using a real file path that
         # is_protected_path will flag WITHOUT the tool actually touching it.
         # We use a path that exists and is inside the protected tree.
-        protected_target = r"V:\Projects\SassyMCP\sassymcp\modules\shell.py"
+        protected_target = str(SHELL_PY)
         msg = await sassy_edit_block(protected_target,
                                      "def _THIS_WILL_NEVER_MATCH_ANYTHING_xyzzy",
                                      "def NUKED")
@@ -297,7 +350,7 @@ async def test_editor():
 
         # edit_multi: refuses protected file
         msg = await sassy_edit_multi(
-            r"V:\Projects\SassyMCP\sassymcp\modules\_security.py",
+            str(SECURITY_PY),
             '[{"old":"_THIS_WILL_NEVER_MATCH_ANYTHING_xyzzy","new":"NUKED"}]',
         )
         check("edit_multi: refuses protected file",
@@ -323,6 +376,7 @@ asyncio.run(test_editor())
 # ── session.py gating ────────────────────────────────────────────────
 print("\n[6] session.py send/start gating")
 from sassymcp.modules import session as sess_mod
+
 _fake = _FakeServer()
 sess_mod.register(_fake)
 sassy_session_start = _fake.tools["sassy_session_start"]
@@ -330,31 +384,30 @@ sassy_session_send  = _fake.tools["sassy_session_send"]
 sassy_session_stop  = _fake.tools["sassy_session_stop"]
 
 async def test_session():
-    import json as _json
     # Start a real shell so send() has a target.
     r = await sassy_session_start("sbx", "powershell", "")
-    check("session: started", "started" in r, f"r={r}")
+    check("session: started", "started" in _text(r), f"r={r}")
 
     # Direct delete via send — should be refused.
     r = await sassy_session_send("sbx", "del foo.txt")
-    blocked = "Delete command blocked" in r
+    blocked = "Delete command blocked" in _text(r)
     check("session_send: direct del blocked", blocked, f"r={r}")
 
     # Alias ri — should be refused.
     r = await sassy_session_send("sbx", "ri foo")
-    check("session_send: ri alias blocked", "Delete command blocked" in r, f"r={r}")
+    check("session_send: ri alias blocked", "Delete command blocked" in _text(r), f"r={r}")
 
     # Wrapper via cmd /c — should be refused.
     r = await sassy_session_send("sbx", "cmd /c del foo")
-    check("session_send: cmd /c wrapper blocked", "Delete command blocked" in r, f"r={r}")
+    check("session_send: cmd /c wrapper blocked", "Delete command blocked" in _text(r), f"r={r}")
 
     # Non-destructive — should be allowed.
     r = await sassy_session_send("sbx", "echo sandbox-ok")
-    check("session_send: echo allowed", "sent" in r, f"r={r}")
+    check("session_send: echo allowed", "sent" in _text(r), f"r={r}")
 
     # start() with delete command — refused before the shell even spawns.
     r = await sassy_session_start("sbx2", "powershell", "del foo")
-    check("session_start: initial del blocked", "blocked" in r.lower(), f"r={r}")
+    check("session_start: initial del blocked", "blocked" in _text(r).lower(), f"r={r}")
 
     await sassy_session_stop("sbx")
 
@@ -364,15 +417,16 @@ asyncio.run(test_session())
 # ── linux.py gating ──────────────────────────────────────────────────
 print("\n[7] linux.py gating")
 from sassymcp.modules import linux as linux_mod
+
 _fake = _FakeServer()
 linux_mod.register(_fake)
 sassy_linux_exec = _fake.tools["sassy_linux_exec"]
 
 async def test_linux():
     r = await sassy_linux_exec("rm foo.txt", 5)
-    check("linux_exec: rm blocked", "blocked by interceptor" in r, f"r={r[:200]}")
+    check("linux_exec: rm blocked", "blocked by interceptor" in _text(r), f"r={_text(r)[:200]}")
     r = await sassy_linux_exec("cmd /c del foo", 5)
-    check("linux_exec: wrapper blocked", "blocked by interceptor" in r, f"r={r[:200]}")
+    check("linux_exec: wrapper blocked", "blocked by interceptor" in _text(r), f"r={_text(r)[:200]}")
 
 asyncio.run(test_linux())
 
@@ -380,35 +434,30 @@ asyncio.run(test_linux())
 # ── audit_clear rotation ─────────────────────────────────────────────
 print("\n[8] audit_clear — rotation not unlink")
 from sassymcp.modules import audit as audit_mod
+
 _fake = _FakeServer()
 audit_mod.register(_fake)
-sassy_audit_clear = _fake.tools["sassy_audit_clear"]
+sassy_audit_clear = _aw(_fake.tools["sassy_audit_clear"])
 
 async def test_audit():
     # Without confirm it must refuse.
     r = await sassy_audit_clear("")
-    check("audit_clear: refuses without confirm", "Refused" in r, f"r={r}")
+    check("audit_clear: refuses without confirm", "Refused" in _text(r), f"r={r}")
 
 asyncio.run(test_audit())
 
 
-# ── selfmod_rollback confirm — v1.1.2 ────────────────────────────────
-print("\n[9] selfmod_rollback — confirm required")
+# ── selfmod removed — register is a no-op ─────────────────────────────
+print("\n[9] selfmod — permanently removed")
 from sassymcp.modules import selfmod as selfmod_mod
+from sassymcp.modules._tool_loader import TOOL_GROUPS as _TG
+
 _fake = _FakeServer()
 selfmod_mod.register(_fake)
-sassy_selfmod_rollback = _fake.tools["sassy_selfmod_rollback"]
-
-async def test_rollback():
-    # Use a path that does NOT exist under git so even if the confirm
-    # check is missing, git checkout will error instead of touching real
-    # files. The fix must refuse BEFORE attempting git checkout.
-    r = await sassy_selfmod_rollback("_nonexistent_test_target.py")
-    check("selfmod_rollback: refuses without confirm",
-          "Refused" in r or ("confirm" in r.lower() and "YES" in r),
-          f"r={r[:200]}")
-
-asyncio.run(test_rollback())
+check("selfmod group absent from TOOL_GROUPS", "selfmod" not in _TG)
+check("selfmod register adds no tools",
+      not any(n.startswith("sassy_selfmod_") for n in _fake.tools),
+      f"tools={list(_fake.tools)}")
 
 
 # ── adb_shell detect_delete_intent — v1.1.2 ──────────────────────────
@@ -417,6 +466,7 @@ print("\n[10] adb_shell — destructive gate")
 # path (not the real adb invocation). The function runs _run_adb on success;
 # on block it should short-circuit with an error string.
 from sassymcp.modules import adb as adb_mod
+
 _fake = _FakeServer()
 adb_mod.register(_fake)
 sassy_adb_shell = _fake.tools["sassy_adb_shell"]
@@ -432,15 +482,15 @@ async def test_adb():
 
     r = await sassy_adb_shell(harmless, device=FAKE)
     check("adb_shell: rm blocked without override",
-          "blocked" in r.lower() or "destructive" in r.lower(),
-          f"r={r[:200]}")
+          "blocked" in _text(r).lower() or "destructive" in _text(r).lower(),
+          f"r={_text(r)[:200]}")
 
     r = await sassy_adb_shell(harmless, device=FAKE, allow_destructive=True)
     # With override, our gate is passed. adb itself errors on the fake
     # device, but that's not our gate blocking it.
     check("adb_shell: rm allowed with override",
-          "blocked" not in r.lower() and "destructive" not in r.lower(),
-          f"r={r[:200]}")
+          "blocked" not in _text(r).lower() and "destructive" not in _text(r).lower(),
+          f"r={_text(r)[:200]}")
 
 asyncio.run(test_adb())
 
@@ -466,11 +516,11 @@ for raw, expected in strip_cases:
 print("\n[12] detect_delete_intent — quoted `>` no longer flags redirect")
 quoted_cases = [
     # The classic v1.2.0 false positive: `>` lives inside a parameter value.
-    ('Start-Process -RedirectStandardOutput "V:\\logs\\bridge.out.log"', False),
+    ('Start-Process -RedirectStandardOutput "logs/bridge.out.log"', False),
     # Even a literal `>` character inside a quoted string is data, not a redirect.
     # Use a non-/tmp, non-exempt-extension target (the .log/.txt/.csv/.out/
     # .err/.json redirect exemptions would otherwise suppress the match).
-    ('echo "a > b" > C:\\Users\\me\\out.dat', True),   # the SECOND `>` is real
+    ('echo "a > b" > out.dat',      True),   # the SECOND `>` is real
     ('echo "a > b"',                False),  # only the quoted `>` exists
     ("echo 'a > b'",                False),
     # Bare redirect must still trip (non-exempt ext; .txt/.log are exempt).
@@ -486,6 +536,7 @@ for cmd, expected in quoted_cases:
 print("\n[13] sassy_shell — allow_pattern opt-in bypass")
 # Reach into the registered tool and exercise it against a sandbox dir.
 from sassymcp.modules import shell as shell_mod
+
 _fake = _FakeServer()
 shell_mod.register(_fake)
 sassy_shell = _fake.tools["sassy_shell"]
@@ -499,8 +550,8 @@ async def test_allow_pattern():
         cmd_redirect = f'echo hi > {target}'
         r = await sassy_shell(cmd_redirect, "powershell", 10)
         check("allow_pattern: low-tier redirect runs by default",
-              "[exit:" in r and "blocked" not in r.lower(),
-              f"r={r[:200]}")
+              "[exit:" in _text(r) and "blocked" not in _text(r).lower(),
+              f"r={_text(r)[:200]}")
         check("allow_pattern: low-tier file IS created (no block)",
               Path(target).exists())
 
@@ -509,16 +560,16 @@ async def test_allow_pattern():
         cmd_med = f'"hi" | Out-File -Force {target_m}'
         r = await sassy_shell(cmd_med, "powershell", 10)
         check("allow_pattern: medium-tier blocked by default",
-              "blocked" in r.lower() and "out-file -force" in r,
-              f"r={r[:200]}")
+              "blocked" in _text(r).lower() and "out-file -force" in _text(r),
+              f"r={_text(r)[:200]}")
         check("allow_pattern: medium-tier file NOT created when blocked",
               not Path(target_m).exists())
 
         # MEDIUM-tier with matching allow_pattern -> bypassed and runs.
         r = await sassy_shell(cmd_med, "powershell", 10, allow_pattern="out-file -force")
         check("allow_pattern: medium-tier bypass executes",
-              "[exit:" in r,
-              f"r={r[:200]}")
+              "[exit:" in _text(r),
+              f"r={_text(r)[:200]}")
         check("allow_pattern: medium-tier file WAS created via bypass",
               Path(target_m).exists())
 
@@ -527,8 +578,8 @@ async def test_allow_pattern():
         cmd_med2 = f'"hi" | Out-File -Force {target_m2}'
         r = await sassy_shell(cmd_med2, "powershell", 10, allow_pattern="copy /y")
         check("allow_pattern: wrong label still blocks medium",
-              "blocked" in r.lower(),
-              f"r={r[:200]}")
+              "blocked" in _text(r).lower(),
+              f"r={_text(r)[:200]}")
         check("allow_pattern: wrong-label file NOT created",
               not Path(target_m2).exists())
 
@@ -539,8 +590,8 @@ async def test_allow_pattern():
         cmd3 = f'"hi" | Out-File -Force {target3}'
         r = await sassy_shell(cmd3, "powershell", 10, allow_pattern="*")
         check("allow_pattern: wildcard refused (no longer accepted)",
-              "no longer accepted" in r.lower(),
-              f"r={r[:200]}")
+              "no longer accepted" in _text(r).lower(),
+              f"r={_text(r)[:200]}")
         check("allow_pattern: wildcard file NOT created",
               not Path(target3).exists())
 
@@ -550,8 +601,8 @@ async def test_allow_pattern():
         f.write_text("x")
         r = await sassy_shell(f"del {f}", "powershell", 10, allow_pattern="*")
         check("allow_pattern: keyword (del) NOT bypassable with '*'",
-              "Delete command blocked" in r,
-              f"r={r[:200]}")
+              "Delete command blocked" in _text(r),
+              f"r={_text(r)[:200]}")
         # Keyword path stages the target, doesn't run del.
         check("allow_pattern: keyword target staged, not deleted",
               not f.exists() and (td_path / "_DELETE_" / "stillsafe.txt").exists())
@@ -561,10 +612,12 @@ asyncio.run(test_allow_pattern())
 
 print("\n[14] sassy_audit_false_positives — surfaces pattern events")
 import json as _json
+
 from sassymcp.modules import audit as audit_mod
+
 _fake = _FakeServer()
 audit_mod.register(_fake)
-sassy_audit_false_positives = _fake.tools["sassy_audit_false_positives"]
+sassy_audit_false_positives = _aw(_fake.tools["sassy_audit_false_positives"])
 
 async def test_audit_fp():
     # Run two MEDIUM-tier commands so audit.jsonl picks up a fresh
@@ -577,14 +630,14 @@ async def test_audit_fp():
 
     out = await sassy_audit_false_positives(count=10, include_bypasses=True)
     check("audit_false_positives: shows pattern_block",
-          "pattern_block" in out, f"out={out[:300]}")
+          "pattern_block" in _text(out), f"out={_text(out)[:300]}")
     check("audit_false_positives: shows pattern_bypass",
-          "pattern_bypass" in out, f"out={out[:300]}")
+          "pattern_bypass" in _text(out), f"out={_text(out)[:300]}")
 
     out = await sassy_audit_false_positives(count=10, include_bypasses=False)
     check("audit_false_positives: hides bypasses when asked",
-          "pattern_bypass" not in out and "pattern_block" in out,
-          f"out={out[:300]}")
+          "pattern_bypass" not in _text(out) and "pattern_block" in _text(out),
+          f"out={_text(out)[:300]}")
 
 asyncio.run(test_audit_fp())
 
@@ -637,8 +690,8 @@ async def test_blocklist_literal():
         cmd = f'"see format step later" | Out-File {target}'
         r = await sassy_shell(cmd, "powershell", 10)
         check("blocklist-literal: runs by default (Out-File without -Force)",
-              "[exit:" in r and "blocked" not in r.lower(),
-              f"r={r[:200]}")
+              "[exit:" in _text(r) and "blocked" not in _text(r).lower(),
+              f"r={_text(r)[:200]}")
         check("blocklist-literal: file written",
               Path(target).exists())
 
@@ -656,6 +709,7 @@ sassy_shell_confirm = _fake_shell.tools["sassy_shell_confirm"]
 
 from sassymcp.modules import runtime_config as _rc
 
+
 async def test_confirm_flow():
     # Flip config to confirm mode.
     _rc.set_val("interceptor.destructiveAction", "confirm")
@@ -667,8 +721,8 @@ async def test_confirm_flow():
             # Medium-tier under confirm mode -> JSON token response.
             r = await sassy_shell(cmd_med, "powershell", 10)
             check("confirm: medium returns confirmation_required",
-                  '"status": "confirmation_required"' in r and '"tier": "medium"' in r,
-                  f"r={r[:300]}")
+                  '"status": "confirmation_required"' in _text(r) and '"tier": "medium"' in _text(r),
+                  f"r={_text(r)[:300]}")
             check("confirm: file NOT created at issue time",
                   not Path(target).exists())
 
@@ -678,16 +732,16 @@ async def test_confirm_flow():
             # Replay the token -> executes.
             r = await sassy_shell_confirm(tok)
             check("confirm: redemption executes the command",
-                  "[exit:" in r,
-                  f"r={r[:200]}")
+                  "[exit:" in _text(r),
+                  f"r={_text(r)[:200]}")
             check("confirm: file IS created after confirm",
                   Path(target).exists())
 
             # Token is single-use.
             r = await sassy_shell_confirm(tok)
             check("confirm: token is single-use",
-                  "Error" in r and "not found" in r,
-                  f"r={r[:200]}")
+                  "Error" in _text(r) and "not found" in _text(r),
+                  f"r={_text(r)[:200]}")
 
             # HIGH tier requires the typed phrase.
             target_h = (Path(td) / "h.log").as_posix()
@@ -699,8 +753,8 @@ async def test_confirm_flow():
             cmd_high = f"robocopy {src} {dst} /MIR"
             r = await sassy_shell(cmd_high, "powershell", 30)
             check("confirm: high returns confirmation_required + phrase",
-                  '"tier": "high"' in r and '"phrase_required"' in r,
-                  f"r={r[:300]}")
+                  '"tier": "high"' in _text(r) and '"phrase_required"' in _text(r),
+                  f"r={_text(r)[:300]}")
             entry = _json.loads(r)
             tok = entry["token"]
             phrase = entry["phrase_required"]
@@ -708,14 +762,14 @@ async def test_confirm_flow():
             # Wrong phrase -> reject, token still valid.
             r = await sassy_shell_confirm(tok, "wrong words")
             check("confirm: high rejects wrong phrase",
-                  "phrase mismatch" in r,
-                  f"r={r[:200]}")
+                  "phrase mismatch" in _text(r),
+                  f"r={_text(r)[:200]}")
 
             # Right phrase -> executes.
             r = await sassy_shell_confirm(tok, phrase)
             check("confirm: high executes with correct phrase",
-                  "[exit:" in r,
-                  f"r={r[:200]}")
+                  "[exit:" in _text(r),
+                  f"r={_text(r)[:200]}")
     finally:
         _rc.set_val("interceptor.destructiveAction", "block")
 
@@ -725,9 +779,10 @@ asyncio.run(test_confirm_flow())
 # ── v1.4.0: sassy_write_file — encoding + line_endings ───────────────
 print("\n[18] sassy_write_file — encoding and line_endings")
 from sassymcp.modules import fileops as fo
+
 _fake = _FakeServer()
 fo.register(_fake)
-sassy_write_file = _fake.tools["sassy_write_file"]
+sassy_write_file = _aw(_fake.tools["sassy_write_file"])
 
 async def test_write_file_options():
     with tempfile.TemporaryDirectory(prefix="sassy_wf_") as td:

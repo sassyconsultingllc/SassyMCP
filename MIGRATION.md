@@ -1,3 +1,8 @@
+<!--
+   Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+   Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+   CodeMark: SCLLC1-SassyMCP-CTPPSSXQUS7R
+-->
 # Migrating to SassyMCP
 
 *Last updated: 2026-05-15 — v1.4.1*
@@ -14,7 +19,7 @@
 | **~35K+ tokens overhead** | **~10K tokens overhead** |
 
 - **~25K fewer tokens** consumed by tool definitions
-- **270 tools** across 35 modules in 17 groups (more than the 3 servers combined)
+- **274 tools** across 36 modules in 18 groups (more than the 3 servers combined)
 - **Syntax normalization** — no more PowerShell `&&` crashes
 - **Android integration** — ADB, scrcpy, logcat built in
 - **Security tools** — hash, certs, firewall, Defender, APK analysis
@@ -183,4 +188,4 @@ To add a new module:
 
 ## License
 
-MIT License (c) 2026
+Proprietary — Copyright (c) 2026 Sassy Consulting LLC. All rights reserved.

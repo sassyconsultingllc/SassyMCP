@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-EZ25ZZUKOK6V
 """SassyMCP Server v1.0 — Production entry point.
 
 Unified MCP server combining Windows desktop automation, Android device
@@ -25,6 +28,7 @@ import logging
 import os
 import signal
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -39,40 +43,50 @@ logging.basicConfig(
 logger = logging.getLogger("sassymcp")
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 
+from sassymcp.license import (
+    fast_revocation_check,
+    get_allowed_groups,
+    validate_license,
+    weekly_validation_check,
+)
 from sassymcp.modules._tool_loader import (
-    get_tracker,
+    TOOL_GROUPS,
+    compute_schema_version,
+    enable_live_reload,
     get_default_modules,
-    get_all_modules,
     get_group_for_tool,
-    get_group_for_module,
+    get_tracker,
     register_tool_group,
     resolve_dependencies,
     validate_tool,
-    enable_live_reload,
-    compute_schema_version,
-    TOOL_GROUPS,
 )
-
-from sassymcp.license import (
-    fast_revocation_check, get_allowed_groups, validate_license, weekly_validation_check,
-)
-
 
 # ── Self-Signed Cert Generation ──────────────────────────────────────
 
-def _generate_self_signed_cert():
-    """Generate a self-signed SSL cert for HTTPS mode. Zero external deps."""
-    from sassymcp._paths import HOME as cert_dir, SSL_CERT as cert_path, SSL_KEY as key_path
+def _generate_self_signed_cert(host: str = "localhost"):
+    """Generate a self-signed SSL cert for HTTPS mode. Zero external deps.
+
+    host: the bind host the cert is generated for. It is added to the SAN
+    alongside the loopback entries because auto-TLS fires exactly on
+    non-loopback binds — without the bind host in the SAN every client
+    would fail hostname verification for the address it actually connects
+    to, pushing users toward disabling verification (re-opening MITM).
+    """
+    from sassymcp._paths import HOME as cert_dir
+    from sassymcp._paths import SSL_CERT as cert_path
+    from sassymcp._paths import SSL_KEY as key_path
     cert_dir.mkdir(parents=True, exist_ok=True)
 
     try:
+        import datetime
+
         from cryptography import x509
-        from cryptography.x509.oid import NameOID
         from cryptography.hazmat.primitives import hashes, serialization
         from cryptography.hazmat.primitives.asymmetric import rsa
-        import datetime
+        from cryptography.x509.oid import NameOID
 
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         subject = issuer = x509.Name([
@@ -80,19 +94,28 @@ def _generate_self_signed_cert():
             x509.NameAttribute(NameOID.ORGANIZATION_NAME, "SassyMCP"),
         ])
         import ipaddress as _ip
+        _san_names: list = [
+            x509.DNSName("localhost"),
+            x509.IPAddress(_ip.IPv4Address("127.0.0.1")),
+        ]
+        # The bind host must verify too: add it to the SAN so clients
+        # connecting to the actual address (LAN IP / hostname) get a
+        # name match instead of a verification error.
+        try:
+            _san_names.append(x509.IPAddress(_ip.ip_address(host)))
+        except ValueError:
+            if host not in ("localhost", "127.0.0.1"):
+                _san_names.append(x509.DNSName(host))
         cert = (
             x509.CertificateBuilder()
             .subject_name(subject)
             .issuer_name(issuer)
             .public_key(key.public_key())
             .serial_number(x509.random_serial_number())
-            .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
-            .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=365 * 5))
+            .not_valid_before(datetime.datetime.now(datetime.UTC))
+            .not_valid_after(datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=365 * 5))
             .add_extension(
-                x509.SubjectAlternativeName([
-                    x509.DNSName("localhost"),
-                    x509.IPAddress(_ip.IPv4Address("127.0.0.1")),
-                ]),
+                x509.SubjectAlternativeName(_san_names),
                 critical=False,
             )
             .sign(key, hashes.SHA256())
@@ -102,6 +125,20 @@ def _generate_self_signed_cert():
             serialization.PrivateFormat.TraditionalOpenSSL,
             serialization.NoEncryption(),
         ))
+        # The private key must not be group/world-readable (P0 #7).
+        # Best-effort: chmod 600 on POSIX, Windows ACL lockdown mirroring
+        # the tokens.json pattern in sassymcp/auth.py.
+        if os.name == "nt":
+            try:
+                from sassymcp.auth import _lockdown_windows_acl
+                _lockdown_windows_acl(key_path)
+            except Exception as e:
+                logger.warning(f"server.key ACL lockdown failed: {e}")
+        else:
+            try:
+                os.chmod(key_path, 0o600)
+            except OSError as e:
+                logger.warning(f"Could not chmod 600 {key_path}: {e}")
         cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
         logger.info(f"Self-signed cert generated: {cert_path}")
     except ImportError:
@@ -116,6 +153,12 @@ def _generate_self_signed_cert():
 # means auth is off (SASSYMCP_NO_AUTH=1, or token bootstrap failed and
 # the user has not configured anything).
 _ACTIVE_AUTH_TOKEN: str | None = None
+
+# Holds the OAuth authorization-server provider when run_http enables it
+# (see _maybe_enable_oauth_server). None means the local OAuth endpoints
+# are off -- either auth itself is off, an external AS is configured, or
+# the effective issuer is not a valid OAuth issuer.
+_OAUTH_PROVIDER = None  # SassyOAuthProvider | None
 
 
 def _ensure_default_token() -> str | None:
@@ -138,9 +181,10 @@ def _ensure_default_token() -> str | None:
     if env_token:
         return env_token
 
-    from sassymcp._paths import TOKENS_FILE
     import secrets
+
     from sassymcp._atomic import atomic_write_json
+    from sassymcp._paths import TOKENS_FILE
 
     tokens_data: dict = {"tokens": []}
     if TOKENS_FILE.exists():
@@ -184,6 +228,22 @@ def _ensure_default_token() -> str | None:
 
 # ── Server Construction ───────────────────────────────────────────────
 
+# Effective HTTP bind, resolved once at import time:
+#   CLI --host/--port/--ssl > SASSYMCP_HOST/_PORT/_SSL env
+#   > config.json http.host/http.port/http.ssl > built-in defaults.
+# Resolving here (before the full argparse in main()) lets the OAuth
+# protected-resource metadata below advertise the exact URL clients must
+# match — previously the metadata hardcoded http://localhost:21001 while
+# the server bound 127.0.0.1, failing clients' exact-match address checks.
+from sassymcp._httpbind import BindConfigError as _BindConfigError
+from sassymcp._httpbind import resolve_http_bind as _resolve_http_bind
+
+try:
+    _BIND = _resolve_http_bind()
+except _BindConfigError as _bind_err:
+    sys.exit(f"sassymcp: invalid HTTP bind configuration: {_bind_err}")
+
+
 def _build_server() -> FastMCP:
     """Construct FastMCP with optional auth."""
     global _ACTIVE_AUTH_TOKEN
@@ -194,22 +254,26 @@ def _build_server() -> FastMCP:
     # loopback-only, since the product runs locally on first boot.
     #
     # The MCP SDK's TransportSecurityMiddleware does **exact-match** on the
-    # full Host header (including port). Clients send `Host: localhost:21001`,
-    # so a bare `localhost` entry never matches. We use the SDK's `:*`
-    # wildcard-port syntax to accept any port on each loopback host, while
-    # still keeping the entries port-less as a defense-in-depth fallback.
+    # full Host header (including port). Clients send `Host: <bind-host>:<port>`
+    # (e.g. `Host: 127.0.0.1:21001`), so a bare hostname entry never matches.
+    # We use the SDK's `:*` wildcard-port syntax to accept any port on each
+    # loopback host, while still keeping the entries port-less as a
+    # defense-in-depth fallback. The bind itself (host/port) is resolved once
+    # at import time into `_BIND` (see above); the OAuth metadata below
+    # advertises that exact bind so clients' address checks pass.
     #
-    # To expose this server over a tunnel or LAN, add your hostname via the
-    # SASSYMCP_ALLOWED_HOSTS env var (comma-separated). Use `host:*` to
-    # allow any port, or `host:port` for an exact port. E.g.:
-    #     setx SASSYMCP_ALLOWED_HOSTS "mcp.your-domain.tld,localhost:*,127.0.0.1:*"
-    # See docs/TUNNEL.md for the full Cloudflare Tunnel walk-through.
-    default_hosts = "localhost:*,127.0.0.1:*,localhost,127.0.0.1"
-    allowed_hosts = [
-        h.strip()
-        for h in os.environ.get("SASSYMCP_ALLOWED_HOSTS", default_hosts).split(",")
-        if h.strip()
-    ]
+    # HOT-SWAP (v1.21.0): the allowlist is no longer frozen at startup.
+    # The initial list below comes from `sassymcp._allowed_hosts`
+    # (allowlist file if it exists, else SASSYMCP_ALLOWED_HOSTS, else the
+    # loopback defaults), and `main()` wraps the HTTP/SSE app so the SDK
+    # settings object is re-synced from that file on every request
+    # (mtime-cached: one stat() when unchanged). Enforcement stays 100%
+    # the SDK's per-request check — only the list contents are live. Add
+    # a host with `sassymcp allow-host <hostname>`; it takes effect on the
+    # next request with no restart. See docs/TUNNEL.md ("Quick tunnels").
+    from sassymcp._allowed_hosts import initial_allowed_hosts
+
+    allowed_hosts = initial_allowed_hosts()
     kwargs = {
         "name": "sassymcp",
         "transport_security": TransportSecuritySettings(
@@ -227,7 +291,11 @@ def _build_server() -> FastMCP:
 
     # FAIL CLOSED: if auth is configured but broken, refuse to start.
     from sassymcp.auth import get_auth_config
-    auth_config = get_auth_config()
+    # Advertise the effective bind URL in the OAuth protected-resource
+    # metadata / WWW-Authenticate responses. Clients (e.g. Claude Code)
+    # exact-match this against the URL they were configured with, so it
+    # must be the real bind — not a hardcoded default.
+    auth_config = get_auth_config(server_url=_BIND.url)
     if auth_config:
         kwargs.update(auth_config)
         logger.info("Auth enabled (bearer token verification)")
@@ -237,28 +305,67 @@ def _build_server() -> FastMCP:
     return FastMCP(**kwargs)
 
 
+def _maybe_enable_oauth_server(args):
+    """Enable this server as its own OAuth authorization server, if appropriate.
+
+    Returns the SassyOAuthProvider, or None when the local OAuth endpoints
+    should stay off:
+
+    * SASSYMCP_OAUTH_ISSUER is set -> an external authorization server
+      handles OAuth (e.g. the sassymcp-oauth Cloudflare worker); we stay a
+      pure resource server.
+    * auth is disabled (no token verifier) -> minting OAuth tokens would be
+      meaningless.
+    * the bind host is a wildcard (0.0.0.0/::) -> no valid issuer address.
+    * the effective issuer is not https/loopback -> the SDK refuses it
+      (RFC 8414); warn instead of crashing.
+
+    Called from run_http after the TLS policy is final, because the
+    effective issuer scheme (http vs https) is only known then.
+    """
+    if os.environ.get("SASSYMCP_OAUTH_ISSUER"):
+        logger.info(
+            "SASSYMCP_OAUTH_ISSUER is set -- OAuth is served by that external "
+            "authorization server; local OAuth endpoints stay off."
+        )
+        return None
+    if mcp._token_verifier is None:
+        return None
+    if args.host in ("0.0.0.0", "::"):
+        logger.warning(
+            "OAuth authorization server disabled: bound to wildcard host "
+            f"{args.host}, which cannot serve as an OAuth issuer address. "
+            "Bind a concrete host/IP to enable it."
+        )
+        return None
+    scheme = "https" if args.ssl else "http"
+    issuer = f"{scheme}://{args.host}:{args.port}"
+    from sassymcp._oauth import enable_oauth_server
+
+    return enable_oauth_server(mcp, issuer)
+
+
 mcp = _build_server()
 
 
 # ── Module Resolution ─────────────────────────────────────────────────
 
 def _resolve_modules() -> list[str]:
-    """Determine which modules to load based on license tier + env vars.
+    """Determine which modules to load from env vars.
     Priority:
-    1. License tier gates which groups are available
-    2. SASSYMCP_LOAD_ALL=1 -> load all ALLOWED modules
-    3. SASSYMCP_GROUPS=core,github_quick -> load specific ALLOWED groups
-    4. Default: load always_load=True groups (intersected with allowed)
+    1. SASSYMCP_LOAD_ALL=1 -> load every group's modules
+    2. SASSYMCP_GROUPS=core,github_quick -> load specific groups
+    3. Default: load always_load=True groups
+    Tier gating was removed in v1.13.0 — every group is available to
+    everyone; a license only sets the displayed supporter tier.
+    Self-modification was removed entirely (no tools, no opt-in gate).
     """
-    allowed_groups = get_allowed_groups()
-
     if os.environ.get("SASSYMCP_LOAD_ALL", "").strip() == "1":
         modules = []
-        for group_name, group_info in TOOL_GROUPS.items():
-            if group_name in allowed_groups:
-                modules.extend(group_info["modules"])
+        for group_info in TOOL_GROUPS.values():
+            modules.extend(group_info["modules"])
         if modules:
-            logger.info(f"SASSYMCP_LOAD_ALL=1 — loading allowed modules: {modules}")
+            logger.info(f"SASSYMCP_LOAD_ALL=1 — loading all modules: {modules}")
             return resolve_dependencies(modules)
         return get_default_modules()
 
@@ -267,10 +374,8 @@ def _resolve_modules() -> list[str]:
         requested = [g.strip() for g in groups_env.split(",") if g.strip()]
         modules = []
         for g in requested:
-            if g in TOOL_GROUPS and g in allowed_groups:
+            if g in TOOL_GROUPS:
                 modules.extend(TOOL_GROUPS[g]["modules"])
-            elif g in TOOL_GROUPS and g not in allowed_groups:
-                logger.warning(f"Group '{g}' requires Pro license — skipped")
             else:
                 logger.warning(f"Unknown group: {g}")
         logger.info(f"SASSYMCP_GROUPS={groups_env} — loading: {modules}")
@@ -288,13 +393,31 @@ def _import_module(name: str):
 
 # ── Rate Limiter Setup ────────────────────────────────────────────────
 
+def _strict_rate_limit() -> bool:
+    """True when the operator opted into fail-closed rate limiting.
+
+    SASSYMCP_STRICT_RATE_LIMIT=1 is opt-in; when unset the server keeps
+    today's fail-open behavior (a broken limiter logs loudly but lets
+    calls through). When set:
+      - a rate-limiter setup failure aborts startup instead of running
+        unthrottled;
+      - a limiter error during acquire() refuses the call instead of
+        letting it through.
+    Read per call (a cheap env lookup) so tests can toggle it without
+    restarting the process.
+    """
+    return os.environ.get("SASSYMCP_STRICT_RATE_LIMIT", "").strip() == "1"
+
+
 def _setup_rate_limiter():
     """Configure per-group rate limits from TOOL_GROUPS.
 
     Logs at error level if setup fails so an operator noticing the
     miss in the logs knows there's no concurrency cap any more. The
     server still starts (rate limiting is a defense-in-depth layer,
-    not the auth boundary), but the failure is loud rather than silent.
+    not the auth boundary), but the failure is loud rather than silent —
+    unless SASSYMCP_STRICT_RATE_LIMIT=1, in which case a setup failure
+    aborts startup instead.
     """
     try:
         from sassymcp.modules._rate_limiter import get_limiter
@@ -307,6 +430,14 @@ def _setup_rate_limiter():
             )
         return limiter
     except Exception as e:
+        if _strict_rate_limit():
+            # Strict mode (opt-in): a broken limiter is a hard startup
+            # failure, not a silent downgrade to unthrottled.
+            logger.error(
+                "Rate limiter setup failed and SASSYMCP_STRICT_RATE_LIMIT=1 "
+                f"— aborting startup: {e}"
+            )
+            raise
         logger.error(
             f"Rate limiter setup failed; tools will run UNTHROTTLED: {e}. "
             "Investigate before exposing this instance over a tunnel or LAN."
@@ -325,6 +456,49 @@ def _get_audit_logger():
         return None
 
 
+def _audit_refusal(log_fn, tool_name: str, reason: str) -> None:
+    """Emit an explicit audit entry for a pre-execution refusal.
+
+    The offline gate and rate limiter return before the wrapper's logging
+    try/finally, so without this their refusals would be invisible in the
+    audit trail. Follows the codebase's log_tool_call(tool_name, args,
+    elapsed_ms, error) convention: actor="server" plus the refusal reason
+    in args, the reason as the error text. Never raises — audit must not
+    break tools.
+    """
+    if log_fn is None:
+        return
+    try:
+        log_fn(
+            tool_name=tool_name,
+            args={"actor": "server", "refused": True, "reason": reason},
+            elapsed_ms=0,
+            error=f"refused: {reason}",
+        )
+    except Exception:
+        pass  # never let audit break tools
+
+
+# Tools whose missing group mapping we've already warned about
+# (process-local), so the warning fires once per tool instead of on
+# every call of an ungrouped tool.
+_warned_ungrouped: set[str] = set()
+
+
+def _warn_ungrouped_once(tool_name: str) -> None:
+    """Warn when a tool skips the rate limiter for lack of a group mapping.
+
+    Ungrouped tools otherwise bypass the limiter silently. The warning is
+    once-per-tool-per-process to avoid flooding the log from a hot path.
+    """
+    if tool_name not in _warned_ungrouped:
+        _warned_ungrouped.add(tool_name)
+        logger.warning(
+            f"Tool '{tool_name}' has no group mapping — skipping rate "
+            "limiter. Check register_tool_group for the owning module."
+        )
+
+
 def _is_retryable(exc: Exception) -> bool:
     """Classify whether an exception is worth retrying."""
     retryable_types = (
@@ -338,9 +512,7 @@ def _is_retryable(exc: Exception) -> bool:
         return True
     # sqlite locked
     exc_str = str(exc).lower()
-    if "locked" in exc_str or "busy" in exc_str:
-        return True
-    return False
+    return bool("locked" in exc_str or "busy" in exc_str)
 
 
 def _get_retry_hint(exc: Exception) -> str:
@@ -362,6 +534,26 @@ def _get_retry_hint(exc: Exception) -> str:
 _rate_limiter = None
 
 
+def _touch_peer_from_ctx():
+    """Auto-record the calling MCP client on the coordination board.
+
+    Reads clientInfo from the initialize handshake via the request context —
+    works for stdio and HTTP alike, and for every client product, with zero
+    LLM cooperation. Throttled inside touch_client_peer; must never raise
+    (runs in the audit path of every tool call).
+    """
+    try:
+        from mcp.server.lowlevel.server import request_ctx
+        ctx = request_ctx.get()
+        params = getattr(ctx.session, "client_params", None)
+        info = getattr(params, "clientInfo", None)
+        if info is not None and getattr(info, "name", ""):
+            from sassymcp.modules.coordination import touch_client_peer
+            touch_client_peer(str(info.name), str(getattr(info, "version", "") or ""))
+    except Exception:
+        pass
+
+
 def audit_tool(fn):
     """Decorator: audit logging, rate limiting, error recovery for every tool."""
     @functools.wraps(fn)
@@ -372,19 +564,59 @@ def audit_tool(fn):
 
         # Rate limiting
         group = get_group_for_tool(tool_name)
+
+        # Offline gate. Fires ONLY on a confirmed-offline probe and only for
+        # tools that genuinely need egress — a fast, accurate refusal naming
+        # the local substitute beats a 30s DNS timeout the model then has to
+        # interpret. Never blocks LAN or local tools; SASSYMCP_OFFLINE_GATE=off
+        # disables it entirely. Any failure here falls through to the call.
+        try:
+            from sassymcp import _netstate
+            refusal = _netstate.gate(tool_name, group, kwargs)
+            if refusal is not None:
+                _audit_refusal(log_tool_call, tool_name,
+                               f"offline gate: {refusal.get('error', 'offline')}")
+                # Raised (not returned): refusals must reach the client
+                # with isError=true, never as successful results.
+                raise ToolError(json.dumps(refusal, indent=2))
+        except Exception:
+            pass
+
         acquired = False
         if _rate_limiter and group:
             try:
                 acquired = await _rate_limiter.acquire(group)
                 if not acquired:
-                    return json.dumps({
+                    _audit_refusal(log_tool_call, tool_name,
+                                   f"rate limit hit (group: {group})")
+                    raise ToolError(json.dumps({
                         "error": f"Rate limited (group: {group})",
                         "retryable": True,
                         "retry_after_seconds": 5,
                         "retry_hint": f"Group '{group}' is at capacity. Wait a moment.",
-                    })
-            except Exception:
+                    }))
+            except Exception as e:
+                if _strict_rate_limit():
+                    # Strict mode (opt-in): fail CLOSED. A limiter that
+                    # throws is indistinguishable from no limiter at all,
+                    # so refuse the call instead of letting it through
+                    # unthrottled.
+                    _audit_refusal(log_tool_call, tool_name,
+                                   f"rate limiter errored in strict mode "
+                                   f"(group: {group}): {e}")
+                    raise ToolError(json.dumps({
+                        "error": f"Rate limited (group: {group})",
+                        "retryable": True,
+                        "retry_after_seconds": 5,
+                        "retry_hint": "Rate limiter errored and "
+                                      "SASSYMCP_STRICT_RATE_LIMIT=1 fails "
+                                      "closed. Wait a moment and retry.",
+                    }))
                 acquired = False  # limiter failure = allow through
+        elif _rate_limiter:
+            # Limiter is up but this tool has no group mapping — it would
+            # otherwise bypass rate limiting silently.
+            _warn_ungrouped_once(tool_name)
 
         # Usage tracking
         tracker = get_tracker()
@@ -396,7 +628,14 @@ def audit_tool(fn):
             if asyncio.iscoroutinefunction(fn):
                 result = await fn(*args, **kwargs)
             else:
-                result = fn(*args, **kwargs)
+                # Sync tool bodies must never run inline on the event loop —
+                # one blocking call (SQLite, file I/O, screenshot/OCR) would
+                # freeze every other connected client's in-flight tool call,
+                # which is exactly the "two chats wedge each other" symptom.
+                # Offload to a worker thread so concurrent sessions interleave.
+                # _wrap_all_tools forces tool.is_async=True so FastMCP always
+                # awaits this (always-async) wrapper, even for def-declared tools.
+                result = await asyncio.to_thread(fn, *args, **kwargs)
             if obs:
                 obs.record_call(success=True)
             return result
@@ -404,16 +643,35 @@ def audit_tool(fn):
             error = str(e)
             if obs:
                 obs.record_call(success=False)
-            # Structured error recovery
-            return json.dumps({
+            # Reactive half of the offline detector: a DNS/refused/unreachable
+            # failure expires the link cache so the NEXT call gets a fresh
+            # verdict instead of a stale "online" for up to 30s. Cheap, and it
+            # means the first casualty of a dropped link is also the last.
+            payload = {
                 "error": error,
                 "tool": tool_name,
                 "retryable": _is_retryable(e),
                 "retry_hint": _get_retry_hint(e),
                 "retry_after_seconds": 5 if _is_retryable(e) else None,
-            })
+            }
+            try:
+                from sassymcp import _netstate
+                _netstate.note_tool_failure(tool_name, e)
+                if _netstate.classify_tool(tool_name, group) == "internet":
+                    alt = _netstate.offline_alternative(tool_name)
+                    if alt:
+                        payload["offline_alternative"] = alt
+                        payload["hint"] = "Call sassy_offline_status if the link is down."
+            except Exception:
+                pass
+            # Structured error recovery: the envelope is raised, not
+            # returned, so the MCP layer serves it with isError=true.
+            raise ToolError(json.dumps(payload))
         finally:
             elapsed_ms = int((time.monotonic() - start) * 1000)
+            # Auto-record the calling client as a live peer (throttled to one
+            # SQLite touch per 15s per client; a no-op the rest of the time).
+            _touch_peer_from_ctx()
             if log_tool_call:
                 try:
                     _SENSITIVE_KEYS = {"password", "token", "secret", "key", "auth",
@@ -450,15 +708,149 @@ def _wrap_all_tools():
     """
     try:
         tools = mcp._tool_manager._tools
-        for name, tool in tools.items():
+        for tool in tools.values():
             if hasattr(tool, "fn") and not getattr(tool.fn, "_audit_wrapped", False):
                 # Validate before wrapping
                 validate_tool(tool.fn)
                 tool.fn = audit_tool(tool.fn)
                 tool.fn._audit_wrapped = True
+                # audit_tool's wrapper is ALWAYS a coroutine. FastMCP froze
+                # tool.is_async at registration from the original fn and uses
+                # it to decide whether to await (func_metadata: `if fn_is_async:
+                # await fn(...) else: fn(...)`). Force it True so a sync-declared
+                # tool (def, not async def) is still awaited — and therefore
+                # offloaded to a thread by the wrapper — instead of returning an
+                # un-awaited coroutine. Lets any blocking tool be written as a
+                # plain def and stay off the event loop.
+                tool.is_async = True
         logger.info(f"Audit middleware applied to {len(tools)} tools")
     except Exception as e:
         logger.warning(f"Audit middleware wiring failed (non-fatal): {e}")
+
+
+def _wrap_remote_policy():
+    """Apply the remote-policy gate (split-architecture vendor half).
+
+    Opt-in and default-off: no-op unless ``remote_policy.enabled`` is set
+    with an endpoint and a LemonSqueezy license key present. Non-fatal —
+    wiring failures must never prevent the server from starting.
+    Runs outside the audit wrap so allowed calls flow through normal audit
+    logging while denials are audit-logged by the gate itself.
+    """
+    try:
+        from sassymcp import remote_policy
+        result = remote_policy.wrap_all_tools(
+            mcp._tool_manager, audit_log=_get_audit_logger())
+        if result.get("enabled"):
+            logger.info(
+                f"Remote policy gate active: {result['wrapped']} tools gated")
+    except Exception as e:
+        logger.warning(f"Remote policy wiring failed (non-fatal): {e}")
+
+
+def _advertise_tools_list_changed():
+    """Advertise tools.listChanged on the lowlevel MCP server.
+
+    SDK 1.30.0's FastMCP has no notification_options passthrough, so patch
+    the bound create_initialization_options: every transport path (stdio,
+    SSE, streamable HTTP) calls it with no arguments. Spec: a server that
+    changes its tool list at runtime MUST declare tools.listChanged and
+    MUST send notifications/tools/list_changed when it does (see
+    tool_profiles.activate_profile).
+    """
+    try:
+        from mcp.server.lowlevel.server import NotificationOptions
+        low = mcp._mcp_server
+        _orig = low.create_initialization_options
+        _opts = NotificationOptions(tools_changed=True)
+
+        def _patched(notification_options=None, experimental_capabilities=None):
+            return _orig(notification_options or _opts,
+                         experimental_capabilities)
+
+        low.create_initialization_options = _patched
+        logger.info("Advertised tools.listChanged capability")
+    except Exception as e:
+        logger.warning(f"Could not advertise tools.listChanged (non-fatal): {e}")
+
+
+async def _notify_tools_list_changed() -> None:
+    """Best-effort push of notifications/tools/list_changed.
+
+    Works when the profile switch happens inside an MCP request (the
+    lowlevel request context carries the session). Dashboard-initiated
+    switches run outside any MCP request — SDK 1.30.0 exposes no public
+    broadcast API, so those are logged; the advertised capability still
+    tells clients to expect the notification and re-list accordingly.
+    """
+    try:
+        from mcp.server.lowlevel.server import request_ctx
+        ctx = request_ctx.get(None)
+        session = getattr(ctx, "session", None) if ctx is not None else None
+        send = getattr(session, "send_tool_list_changed", None)
+        if send is None:
+            logger.info("Profile changed: no MCP session in context; "
+                        "list_changed not pushed (clients should re-list)")
+            return
+        await send()
+        logger.info("Sent notifications/tools/list_changed")
+    except Exception as e:
+        logger.warning(f"list_changed send failed (non-fatal): {e}")
+
+
+def _apply_tool_metadata():
+    """Apply curated descriptions and MCP annotations to registered tools.
+
+    The metadata lives in generated modules (tool_descriptions.py,
+    tool_annotations.py) so per-tool source stays untouched. Applied here,
+    after registration, so tools/list serves the curated metadata to clients.
+    Non-fatal: if the generated modules are missing, tools keep their
+    decorator-provided descriptions.
+    """
+    try:
+        from sassymcp import tool_annotations as _ta_mod
+        from sassymcp import tool_descriptions as _td_mod
+    except Exception as e:
+        logger.warning(f"Tool metadata modules unavailable (non-fatal): {e}")
+        return
+    try:
+        from mcp.types import ToolAnnotations as _ToolAnnotations
+    except Exception:
+        _ToolAnnotations = None  # type: ignore
+    applied_desc = 0
+    applied_ann = 0
+    try:
+        tools = mcp._tool_manager._tools
+        for name, tool in tools.items():
+            desc = _td_mod.TOOL_DESCRIPTIONS.get(name)
+            if desc:
+                tool.description = desc
+                applied_desc += 1
+            ann = _ta_mod.TOOL_ANNOTATIONS.get(name)
+            if ann and _ToolAnnotations is not None:
+                try:
+                    # destructiveHint defaults True when missing: the spec's
+                    # cautious default (a tool of unknown risk is assumed
+                    # destructive). All curated entries set all four
+                    # explicitly; this only guards a partial future entry.
+                    tool.annotations = _ToolAnnotations(
+                        readOnlyHint=bool(ann.get("readOnlyHint", False)),
+                        destructiveHint=bool(ann.get("destructiveHint", True)),
+                        idempotentHint=bool(ann.get("idempotentHint", False)),
+                        openWorldHint=bool(ann.get("openWorldHint", False)),
+                    )
+                    applied_ann += 1
+                except Exception as e:
+                    logger.warning(
+                        f"Annotation application failed for {name} "
+                        f"(non-fatal): {e}"
+                    )
+        logger.info(
+            f"Tool metadata applied: {applied_desc} descriptions, "
+            f"{applied_ann} annotations"
+        )
+    except Exception as e:
+        logger.warning(f"Tool metadata application failed (non-fatal): {e}")
 
 
 # ── Graceful Shutdown ─────────────────────────────────────────────────
@@ -517,7 +909,142 @@ def _register_shutdown_handlers():
         logger.info("Graceful shutdown handlers registered (sync fallback)")
 
 
+# ── Live Config Reload ────────────────────────────────────────────────
+# Watches $SASSYMCP_HOME/config.json while the HTTP server runs. Edits made
+# while the server is in use take effect without a manual restart:
+#   - ordinary settings are re-read into memory (anything the code looks up
+#     per-call via runtime_config.get() applies immediately);
+#   - bind settings (http.host / http.port / http.ssl) trigger an automatic
+#     restart so the new port actually takes effect: a graceful re-exec when
+#     standalone, or a SIGTERM handoff when running under `sassymcp supervise`
+#     (the supervisor owns respawning and would otherwise race us for the
+#     port).
+# Opt out entirely with SASSYMCP_NO_CONFIG_WATCH=1, or per-config with
+# http.liveReload=false (checked on every poll, so flipping it off stops the
+# watcher; flipping it back on needs one manual restart).
+
+_CONFIG_WATCH_INTERVAL = 2.0
+
+
+def _reexec_process() -> None:
+    """Replace this process with a fresh one launched the same way."""
+    if getattr(sys, "frozen", False):
+        argv = [sys.executable, *sys.argv[1:]]
+    elif str(sys.argv[0]).endswith("__main__.py"):
+        # Launched as `python -m sassymcp`
+        argv = [sys.executable, "-m", "sassymcp", *sys.argv[1:]]
+    else:
+        # Console script / `python -m sassymcp.server` / direct file — the
+        # -m form reaches the same main() either way.
+        argv = [sys.executable, "-m", "sassymcp.server", *sys.argv[1:]]
+    logger.warning(f"Config bind changed — re-executing: {' '.join(argv)}")
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except Exception:
+        pass
+    try:
+        os.execv(argv[0], argv)
+    except Exception as e:
+        logger.error(
+            f"Automatic restart failed ({e}) — please restart SassyMCP "
+            f"manually to apply the new bind."
+        )
+
+
+def _on_config_changed() -> None:
+    """Reload config.json and restart if the HTTP bind moved."""
+    from sassymcp._httpbind import BindConfigError
+    from sassymcp._httpbind import resolve_http_bind
+    from sassymcp.modules import runtime_config as _rc
+
+    _rc.reload()
+    try:
+        new_bind = resolve_http_bind()
+    except BindConfigError as e:
+        logger.error(
+            f"config.json changed but the new HTTP bind is invalid ({e}) — "
+            f"keeping {_BIND.host}:{_BIND.port}"
+        )
+        return
+    if new_bind != _BIND:
+        logger.warning(
+            f"HTTP bind changed in config.json: "
+            f"{_BIND.url} -> {new_bind.url} — restarting to apply"
+        )
+        if os.environ.get("SASSYMCP_SUPERVISED") == "1":
+            # Under the supervisor: exit gracefully and let it respawn us
+            # with the new config (it owns the port).
+            os.kill(os.getpid(), signal.SIGTERM)
+        else:
+            _reexec_process()
+    else:
+        logger.info("config.json reloaded (no bind change)")
+
+
+def _start_config_watcher() -> None:
+    """Start the config.json watcher thread. HTTP mode only; safe no-op otherwise."""
+    if os.environ.get("SASSYMCP_NO_CONFIG_WATCH", "").strip().lower() in ("1", "true", "yes"):
+        logger.info("Config watcher disabled (SASSYMCP_NO_CONFIG_WATCH=1)")
+        return
+    try:
+        from sassymcp._paths import CONFIG_FILE
+        from sassymcp.modules import runtime_config as _rc
+    except Exception as e:
+        logger.debug(f"Config watcher not started: {e}")
+        return
+    if not _rc.get("http.liveReload", True):
+        logger.info("Config watcher disabled (http.liveReload=false)")
+        return
+
+    def _watch() -> None:
+        def _mtime() -> float:
+            try:
+                return CONFIG_FILE.stat().st_mtime if CONFIG_FILE.exists() else 0.0
+            except OSError:
+                return 0.0
+
+        last = _mtime()
+        while True:
+            time.sleep(_CONFIG_WATCH_INTERVAL)
+            try:
+                if not _rc.get("http.liveReload", True):
+                    logger.info("Config watcher stopping (http.liveReload=false)")
+                    return
+                cur = _mtime()
+                if cur == last:
+                    continue
+                # Debounce: wait for the write to settle (atomic writes are
+                # instant, but editors can save twice in quick succession).
+                time.sleep(0.5)
+                settled = _mtime()
+                if settled != cur:
+                    continue  # still being written; catch it next poll
+                last = settled
+                _on_config_changed()
+            except Exception as e:
+                logger.warning(f"Config watcher error: {e}")
+
+    thread = threading.Thread(target=_watch, name="sassymcp-config-watch", daemon=True)
+    thread.start()
+    logger.info("Config watcher started (config.json live reload)")
+
+
 # ── Module Loading ─────────────────────────────────────────────────────
+
+# Strong references to fire-and-forget background tasks. asyncio only holds a
+# WEAK reference to a running task, so a task nobody keeps can be garbage
+# collected mid-flight. Observed directly: the licence checks below were being
+# reaped with "Task was destroyed but it is pending!" before they completed,
+# which silently weakens revocation checking. Entries remove themselves on done.
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
+def _spawn_background(loop, coro) -> None:
+    task = loop.create_task(coro)
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+
 
 def _load_modules():
     """Load all configured modules with infrastructure-first ordering."""
@@ -570,8 +1097,8 @@ def _load_modules():
     # in its context without an explicit sassy_hooks_activate call.
     try:
         from sassymcp.modules._tool_loader import (
-            get_score_boosted_modules,
             auto_activate_hooks_for_modules,
+            get_score_boosted_modules,
         )
         boosted = get_score_boosted_modules()
         if boosted:
@@ -579,8 +1106,54 @@ def _load_modules():
     except Exception as e:
         logger.warning(f"hook auto-activation failed (non-fatal): {e}")
 
+    # Continuity playbooks are always active: any agent that asks the server
+    # what to do (hooks_list, discovery surface) sees the session-startup /
+    # handoff / coordination protocol without having to know to activate it.
+    # This is the "no one loses focus" guarantee at the playbook layer; the
+    # audit wrapper's touch_client_peer is the guarantee at the record layer.
+    try:
+        from sassymcp.modules._hooks import activate_hook
+        for _hook in ("session_startup", "session_handoff", "coordination", "crosslink"):
+            activate_hook(_hook)
+    except Exception as e:
+        logger.warning(f"continuity hook activation failed (non-fatal): {e}")
+
+    # Best-effort: flip this process's auto-recorded peers to offline on a
+    # clean shutdown so the board doesn't show ghosts for stale_seconds.
+    try:
+        import atexit
+
+        from sassymcp.modules.coordination import mark_client_peers_offline
+        atexit.register(mark_client_peers_offline)
+    except Exception:
+        pass
+
     # Wire audit middleware after all tools are registered
     _wrap_all_tools()
+
+    # Remote policy gate (split architecture). Default-off; no-op unless
+    # remote_policy.enabled + endpoint + license key are configured.
+    _wrap_remote_policy()
+
+    # Spec: runtime tool-list changes require tools.listChanged declared.
+    _advertise_tools_list_changed()
+
+    # Apply curated tool descriptions + MCP annotations (generated modules).
+    # Runs before the schema-version computation so the version hash covers
+    # the final served metadata.
+    _apply_tool_metadata()
+
+    # Bind per-session tool profiles (dashboard-controlled gating of the
+    # MCP tool set). install() stashes the full registry and activates the
+    # default "full" profile; the control panel can then swap
+    # tool_manager._tools per session at runtime. Runs before the
+    # schema-version computation so the hash covers the full tool set.
+    try:
+        from sassymcp.modules import tool_profiles
+        tool_profiles.install(mcp._tool_manager,
+                              notify=_notify_tools_list_changed)
+    except Exception as e:
+        logger.warning(f"tool profile init failed (non-fatal): {e}")
 
     # Compute schema version for cache invalidation
     try:
@@ -601,7 +1174,9 @@ def _load_modules():
         modules_dir = Path(__file__).parent / "modules"
         enable_live_reload(mcp, modules_dir)
 
-    # License validation, two cadences:
+    # License validation, two cadences. Affects only the displayed
+    # supporter tier since v1.13.0 (nothing gates on it), but keeps the
+    # label honest — a refunded key shouldn't keep showing "pro":
     #   - Fast revocation check at startup: hits the billing Worker's
     #     edge-cached revocation oracle. If LS fired a refund/cancel
     #     webhook since last startup, the local license is removed
@@ -611,10 +1186,25 @@ def _load_modules():
     # Both are non-blocking — startup never waits on network.
     try:
         loop = asyncio.get_event_loop()
-        loop.create_task(fast_revocation_check())
-        loop.create_task(weekly_validation_check())
+        _spawn_background(loop, fast_revocation_check())
+        _spawn_background(loop, weekly_validation_check())
     except RuntimeError:
-        pass  # No event loop yet — will run on first request
+        # KNOWN GAP (audited 2026-09-14) — the old comment here read "will run on
+        # first request". Nothing retries, so that is not true.
+        #
+        # _load_modules() is called synchronously from main() BEFORE any loop is
+        # running (mcp.run() / uvicorn.run() come later, and uvicorn builds its
+        # own loop). So get_event_loop() either raises here, or hands back a loop
+        # that is never executed — in a boot harness the tasks were observed being
+        # collected with "Task was destroyed but it is pending!" and
+        # "coroutine ... was never awaited". Either way these two checks do not
+        # run. This is their only scheduling site in the codebase.
+        #
+        # Fixing it changes WHEN licence enforcement fires, so it is deliberately
+        # left to a decision rather than patched in passing. The fix is to start
+        # them from a hook on the loop that actually serves — a uvicorn/ASGI
+        # startup event for HTTP, or the first tool call for stdio.
+        pass
 
 
 # ── Entry Point ────────────────────────────────────────────────────────
@@ -639,6 +1229,7 @@ def _check_for_updates_at_startup(timeout_seconds: float = 3.0):
         return None
     try:
         import threading
+
         from sassymcp.modules import updater as _upd_mod
         # Reuse the per-server updater instance if registered, else make one.
         upd = getattr(mcp, "updater", None) or _upd_mod.Updater()
@@ -682,28 +1273,16 @@ def _print_banner(tool_count, host, port, first_run, *, transport="http",
                   scheme="http", token: str | None = None, update_info=None):
     """Print a human-readable startup banner with paste-and-go config snippets.
 
-    The snippet matches the current Claude Code / Claude Desktop / VS Code
-    Copilot / Cursor MCP shape:
-
-        {
-          "mcpServers": {
-            "sassymcp": {
-              "type": "http",
-              "url": "...",
-              "headers": {"Authorization": "Bearer ..."}
-            }
-          }
-        }
-
-    When `token` is provided, the `headers` block is emitted with the
-    real bearer value (NOT a placeholder), so the snippet works on the
-    first paste. When `token` is None, auth is off and the headers block
-    is omitted.
+    Security: the raw bearer token is NEVER written to stdout. Startup
+    logs, CI captures, and terminal recordings must not contain credentials.
+    Retrieve the token with `sassymcp show-token` (or generate-token).
+    Snippets use a masked placeholder the user replaces after show-token.
     """
     from sassymcp._paths import TOKENS_FILE
     url = f"{scheme}://{host}:{port}"
     endpoint = f"{url}/mcp/"
     typ = "sse" if transport == "sse" else "http"
+    token_placeholder = "<token-from-sassymcp-show-token>"
 
     bar = "=" * 62
     print(flush=True)
@@ -716,15 +1295,14 @@ def _print_banner(tool_count, host, port, first_run, *, transport="http",
     print(flush=True)
     print(f"   MCP endpoint:  {endpoint}", flush=True)
     if token:
-        # For pathologically short tokens (shouldn't happen — our minimum
-        # is 16 — but a future caller could pass a custom value), avoid
-        # dumping the whole thing in the preview line. The full token
-        # still appears in the copy-paste snippet below where it's needed.
+        # Never dump the full token. Preview shows only the first 4 chars
+        # plus an ellipsis (no trailing chars); short tokens show only
+        # asterisks so a misconfigured short value cannot leak.
         if len(token) >= 12:
-            preview = f"{token[:6]}...{token[-4:]}"
+            preview = f"{token[:4]}..."
         else:
             preview = "*" * len(token)
-        print(f"   Auth:          Bearer {preview}  (full token in snippet below)", flush=True)
+        print(f"   Auth:          Bearer {preview}  (use show-token for the full value)", flush=True)
     else:
         print("   Auth:          disabled  (SASSYMCP_NO_AUTH=1 or token bootstrap failed)", flush=True)
 
@@ -743,7 +1321,7 @@ def _print_banner(tool_count, host, port, first_run, *, transport="http",
     print("   Claude Code (CLI):", flush=True)
     if token:
         print(f'     claude mcp add --transport http sassymcp {endpoint} \\', flush=True)
-        print(f'       --header "Authorization: Bearer {token}"', flush=True)
+        print(f'       --header "Authorization: Bearer {token_placeholder}"', flush=True)
     else:
         print(f"     claude mcp add --transport http sassymcp {endpoint}", flush=True)
     print(flush=True)
@@ -757,7 +1335,7 @@ def _print_banner(tool_count, host, port, first_run, *, transport="http",
     if token:
         print(f'           "url": "{endpoint}",', flush=True)
         print('           "headers": {', flush=True)
-        print(f'             "Authorization": "Bearer {token}"', flush=True)
+        print(f'             "Authorization": "Bearer {token_placeholder}"', flush=True)
         print('           }', flush=True)
     else:
         print(f'           "url": "{endpoint}"', flush=True)
@@ -856,8 +1434,9 @@ def _cli_generate_token(argv: list[str]) -> int:
     """`sassymcp.exe generate-token` — create or rotate a bearer token."""
     import argparse
     import secrets
-    from sassymcp._paths import TOKENS_FILE
+
     from sassymcp._atomic import atomic_write_json
+    from sassymcp._paths import TOKENS_FILE
 
     p = argparse.ArgumentParser(
         prog="sassymcp generate-token",
@@ -929,6 +1508,7 @@ def _cli_generate_token(argv: list[str]) -> int:
 def _cli_show_token(argv: list[str]) -> int:
     """`sassymcp.exe show-token` — print existing tokens (or just the default)."""
     import argparse
+
     from sassymcp._paths import TOKENS_FILE
 
     p = argparse.ArgumentParser(
@@ -992,6 +1572,179 @@ def _cli_show_token(argv: list[str]) -> int:
     return 0
 
 
+def _cli_allow_host(argv: list[str]) -> int:
+    """`sassymcp allow-host <hostname>` — add a Host to the allowlist live.
+
+    Appends to ~/.sassymcp/allowed_hosts (atomic write). A running server
+    picks the new host up on its very next request — no restart — because
+    main() wraps the HTTP app with a per-request sync of the SDK's
+    allowlist. If the server is down, the file seeds the next boot.
+    """
+    import argparse
+
+    from sassymcp import _allowed_hosts as _ah
+
+    p = argparse.ArgumentParser(
+        prog="sassymcp allow-host",
+        description="Allow a Host header without restarting the server "
+                    "(e.g. a fresh Cloudflare quick-tunnel hostname).",
+    )
+    p.add_argument("hostname", help="hostname to allow, e.g. abc.trycloudflare.com "
+                   "(bare host, host:port, or host:* all accepted)")
+    p.add_argument("--json", action="store_true",
+                   help="emit machine-readable JSON")
+    args = p.parse_args(argv)
+
+    try:
+        host = _ah.add_host(args.hostname)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps({
+            "added": host,
+            "allowed_hosts": _ah.get_effective_hosts(),
+            "file": str(_ah._hosts_file()),
+            "note": "Takes effect on the running server's next request; no restart needed.",
+        }, indent=2))
+    else:
+        print(f"Allowed host: {host}")
+        print(f"Stored in: {_ah._hosts_file()}")
+        print("A running server accepts it on its next request — no restart needed.")
+        print("If the server is down, it is picked up at the next boot.")
+    return 0
+
+
+def _cli_deny_host(argv: list[str]) -> int:
+    """`sassymcp deny-host <hostname>` — remove a Host from the allowlist."""
+    import argparse
+
+    from sassymcp import _allowed_hosts as _ah
+
+    p = argparse.ArgumentParser(
+        prog="sassymcp deny-host",
+        description="Remove a Host from the allowlist (takes effect on the "
+                    "running server's next request). Loopback hosts are "
+                    "implicit and cannot be removed.",
+    )
+    p.add_argument("hostname", help="hostname to remove")
+    p.add_argument("--json", action="store_true",
+                   help="emit machine-readable JSON")
+    args = p.parse_args(argv)
+
+    try:
+        host = _ah.remove_host(args.hostname)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps({
+            "removed": host,
+            "allowed_hosts": _ah.get_effective_hosts(),
+        }, indent=2))
+    else:
+        print(f"Removed host: {host} (loopback hosts are implicit and stay allowed)")
+    return 0
+
+
+def _cli_list_hosts(argv: list[str]) -> int:
+    """`sassymcp list-hosts` — show the effective Host allowlist."""
+    import argparse
+
+    from sassymcp import _allowed_hosts as _ah
+
+    p = argparse.ArgumentParser(
+        prog="sassymcp list-hosts",
+        description="Show the effective Host allowlist (loopback defaults "
+                    "plus the allowlist file / SASSYMCP_ALLOWED_HOSTS seed).",
+    )
+    p.add_argument("--json", action="store_true",
+                   help="emit machine-readable JSON")
+    args = p.parse_args(argv)
+
+    effective = _ah.get_effective_hosts()
+    if args.json:
+        print(json.dumps({
+            "allowed_hosts": effective,
+            "wildcard_hosts": [h for h in effective if _ah.is_suffix_wildcard(h)],
+            "file_hosts": _ah.get_file_hosts(),
+            "file": str(_ah._hosts_file()),
+        }, indent=2))
+    else:
+        for h in effective:
+            suffix = " (suffix wildcard)" if _ah.is_suffix_wildcard(h) else ""
+            print(f"  {h}{suffix}")
+        print(f"(file: {_ah._hosts_file()})")
+    return 0
+
+
+def _cli_tunnel(argv: list[str]) -> int:
+    """`sassymcp tunnel` — one-command Cloudflare quick tunnel.
+
+    Starts a quick tunnel to the local bridge, reads the minted
+    *.trycloudflare.com hostname from cloudflared's output, and
+    allow-lists it automatically — no manual `allow-host` step, no
+    restart. Runs in the foreground until Ctrl-C (stopping it stops the
+    tunnel), like start-tunnel.bat.
+    """
+    import argparse
+
+    from sassymcp._tunnel import TunnelError, run_quick_tunnel
+
+    p = argparse.ArgumentParser(
+        prog="sassymcp tunnel",
+        description="Start a Cloudflare quick tunnel to this bridge and "
+                    "auto allow-list its hostname (no manual allow-host, "
+                    "no restart). Runs in the foreground until Ctrl-C.",
+    )
+    p.add_argument("--host", default="127.0.0.1",
+                   help="local bridge host to tunnel to (default: 127.0.0.1)")
+    p.add_argument("--port", type=int, default=21001,
+                   help="local bridge port to tunnel to (default: 21001)")
+    p.add_argument("--cloudflared", default=os.environ.get("SASSYMCP_CLOUDFLARED", "cloudflared"),
+                   help="cloudflared binary (default: 'cloudflared' on PATH; "
+                        "override with SASSYMCP_CLOUDFLARED)")
+    args = p.parse_args(argv)
+
+    try:
+        return run_quick_tunnel(
+            host=args.host, port=args.port, cloudflared=args.cloudflared,
+        )
+    except TunnelError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def _cli_mesh(argv: list[str]) -> int:
+    """Emit coordination-mesh data/actions as one JSON line, for external UIs
+    (e.g. the Sassy Brain desktop app) that shell out to a bundled/installed
+    sassymcp.exe instead of a python interpreter.
+
+    Usage: sassymcp mesh [board|brain|phone|peers|announce ...|delegate ...]
+    Reuses the same code paths as `python -m sassymcp.modules.coordination`,
+    `python -m sassymcp._brain_status`, and `python -m sassymcp._phone_status`.
+    """
+    import json
+    cmd = argv[0] if argv else "board"
+    try:
+        if cmd == "brain":
+            from sassymcp import _brain_status
+            out = _brain_status.snapshot()
+        elif cmd == "phone":
+            from sassymcp import _phone_status
+            out = _phone_status.snapshot()
+        else:  # board | peers | announce | delegate
+            from sassymcp.modules.coordination import _main as _coord_main
+            out = _coord_main(argv)
+        sys.stdout.write(json.dumps(out))
+        return 0
+    except SystemExit:
+        raise
+    except Exception as e:
+        sys.stdout.write(json.dumps({"error": str(e)}))
+        return 1
+
+
 def _dispatch_subcommand() -> int | None:
     """Sniff argv[1] for a subcommand before argparse takes over.
 
@@ -1005,12 +1758,22 @@ def _dispatch_subcommand() -> int | None:
         return _cli_generate_token(sys.argv[2:])
     if sub == "show-token":
         return _cli_show_token(sys.argv[2:])
+    if sub == "allow-host":
+        return _cli_allow_host(sys.argv[2:])
+    if sub == "deny-host":
+        return _cli_deny_host(sys.argv[2:])
+    if sub == "list-hosts":
+        return _cli_list_hosts(sys.argv[2:])
+    if sub == "tunnel":
+        return _cli_tunnel(sys.argv[2:])
     if sub == "install":
         from sassymcp.install import main as _install_main
         return _install_main(sys.argv[2:])
     if sub == "supervise":
         from sassymcp.supervisor import main as _supervise_main
         return _supervise_main(sys.argv[2:])
+    if sub == "mesh":
+        return _cli_mesh(sys.argv[2:])
     if sub in ("setup", "wizard"):
         # Interactive menu. Returns "run_server" if the user picks the
         # "Run as HTTP server" option, in which case we fall through to
@@ -1036,8 +1799,11 @@ def main():
 
     parser = argparse.ArgumentParser(
         description=f"SassyMCP Server v{__version__}",
-        epilog="Subcommands: setup | install | generate-token | show-token  "
-               "(e.g. `sassymcp.exe setup` opens the interactive wizard)",
+        epilog="Subcommands: setup | install | supervise | mesh | generate-token | show-token | "
+               "allow-host | deny-host | list-hosts | tunnel  "
+               "(e.g. `sassymcp.exe setup` opens the interactive wizard; "
+               "`sassymcp tunnel` starts a quick tunnel and auto allow-lists it)\n"
+               "Note: --serve is a silent alias of --http.",
     )
     parser.add_argument(
         "--http", "--serve", action="store_true",
@@ -1045,14 +1811,24 @@ def main():
     )
     parser.add_argument("--stdio", action="store_true",
                         help="Force stdio mode (for MCP clients that pipe stdin/stdout)")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=21001)
+    # --host/--port/--ssl defaults come from the import-time bind resolution
+    # (_BIND): CLI flags > SASSYMCP_HOST/_PORT/_SSL env > config.json
+    # http.host/http.port/http.ssl > built-in defaults. An explicit flag here
+    # was already accounted for during that resolution, so these defaults
+    # are always the final effective values.
+    parser.add_argument("--host", default=_BIND.host,
+                        help="Bind host (default: SASSYMCP_HOST / config http.host / 127.0.0.1)")
+    parser.add_argument("--port", type=int, default=_BIND.port,
+                        help="Bind port (default: SASSYMCP_PORT / config http.port / 21001)")
     parser.add_argument("--sse", action="store_true",
-                        help="Use legacy SSE transport instead of streamable-http")
+                        help="DEPRECATED: use legacy SSE transport instead of "
+                             "streamable-http. SSE is not part of MCP 2025-11-25; "
+                             "this flag will be removed in a future release.")
     parser.add_argument("--setup", action="store_true",
                         help="Force first-run setup wizard (regenerate persona.md)")
-    parser.add_argument("--ssl", action="store_true",
+    parser.add_argument("--ssl", action="store_true", default=_BIND.ssl,
                         help="Enable HTTPS with self-signed cert ($SASSYMCP_HOME/server.crt/key). "
+                             "Also enabled via SASSYMCP_SSL=1 / config http.ssl. "
                              "Auto-enabled when bearer auth is active AND --host is non-loopback "
                              "(bearer tokens MUST NOT cross the wire in plaintext).")
     parser.add_argument("--ssl-cert", default="",
@@ -1082,7 +1858,14 @@ def main():
             first_ever = not _persona_check.exists()
         except Exception:
             first_ever = False
-        if first_ever and sys.stdin.isatty() and sys.stdout.isatty():
+        try:
+            _stdin_is_tty = sys.stdin.isatty()
+        except ValueError:
+            # Closed stdin (neither a pipe nor a TTY) raises ValueError on
+            # isatty(). Treat it as non-interactive so startup falls through
+            # to the auto-detect below (HTTP) instead of crashing.
+            _stdin_is_tty = False
+        if first_ever and _stdin_is_tty and sys.stdout.isatty():
             from sassymcp._cli_wizard import run_wizard
             result = run_wizard()
             if result != "run_server":
@@ -1114,7 +1897,8 @@ def main():
     _register_shutdown_handlers()
 
     # First-run detection
-    from sassymcp._paths import HOME as _SASSY_HOME, PERSONA_FILE as _persona
+    from sassymcp._paths import HOME as _SASSY_HOME
+    from sassymcp._paths import PERSONA_FILE as _persona
     first_run = not _persona.exists()
     if args.setup or first_run:
         if args.setup:
@@ -1123,12 +1907,11 @@ def main():
             logger.info(f"FIRST RUN DETECTED: no persona.md found in {_SASSY_HOME}")
 
     tool_count = len(mcp._tool_manager._tools) if hasattr(mcp, "_tool_manager") else "?"
+    # Tier label is informational (supporter recognition) — nothing gates.
     _lic = validate_license()
     _tier_label = _lic.get("tier", "free")
     if _lic.get("addons"):
         _tier_label += "+" + ",".join(_lic["addons"])
-    if os.environ.get("SASSYMCP_LICENSE_BYPASS", "").strip() in ("1", "true", "yes"):
-        _tier_label = "BYPASS"
     logger.info(
         f"SassyMCP v{__version__} started | tier={_tier_label} | "
         f"{tool_count} tools | groups: {sorted(get_allowed_groups())}"
@@ -1147,7 +1930,9 @@ def main():
             # panel.port to the default rather than raising.
             _pinfo = _panel.start_panel(port=_cfg_get("panel.port", _panel.DEFAULT_PORT))
             if _pinfo.get("url"):
-                logger.info(f"Control Panel: {_pinfo['url']}")
+                # Log the TOKENLESS url — the tokenized ?token= form must
+                # never land in logs (see control_panel.panel_base_url).
+                logger.info(f"Control Panel: {_panel.panel_base_url()}")
     except Exception as _pe:
         logger.warning(f"Control Panel did not start: {_pe}")
 
@@ -1192,24 +1977,59 @@ def main():
                 )
                 args.ssl = True
 
+        if not _ACTIVE_AUTH_TOKEN and not host_is_loopback:
+            # SASSYMCP_NO_AUTH=1 (or token bootstrap failure) on a
+            # non-loopback bind is a fully open LAN server — that deserves
+            # a warning, not just the banner's info-level "Auth: disabled".
+            logger.warning(
+                f"Auth is DISABLED (SASSYMCP_NO_AUTH=1) on non-loopback "
+                f"host {args.host} — this server is OPEN to your LAN/network "
+                "with no credentials. Bind to 127.0.0.1 or enable auth."
+            )
+
+        # -- OAuth authorization server ---------------------------------
+        # When bearer auth is active and the effective issuer is a valid
+        # OAuth issuer, this server also acts as its own OAuth 2.0
+        # authorization server (metadata, DCR, /authorize, /token, /revoke
+        # via the SDK; /oauth/consent mounted below for operator approval).
+        # Bearer-token auth on /mcp itself is unchanged.
+        global _OAUTH_PROVIDER
+        _OAUTH_PROVIDER = _maybe_enable_oauth_server(args)
+
         if args.sse:
+            logger.warning(
+                "--sse is deprecated: the legacy SSE transport is not part of "
+                "MCP 2025-11-25 and will be removed in a future release. "
+                "Use streamable-http (the default) instead."
+            )
             logger.info(f"Starting SassyMCP (SSE) on {args.host}:{args.port}")
             app = mcp.sse_app()
         else:
             logger.info(f"Starting SassyMCP (streamable-http) on {args.host}:{args.port}")
             app = mcp.streamable_http_app()
 
+        if _OAUTH_PROVIDER is not None:
+            from sassymcp._oauth import create_consent_routes
+
+            app.routes.extend(
+                create_consent_routes(
+                    _OAUTH_PROVIDER, host_is_loopback=host_is_loopback
+                )
+            )
+
         uvicorn_kwargs = {"host": args.host, "port": args.port, "log_level": "info"}
 
         # SSL support
         if args.ssl:
             from pathlib import Path as _P2
-            from sassymcp._paths import SSL_CERT as _DEFAULT_CERT, SSL_KEY as _DEFAULT_KEY
+
+            from sassymcp._paths import SSL_CERT as _DEFAULT_CERT
+            from sassymcp._paths import SSL_KEY as _DEFAULT_KEY
             ssl_cert = args.ssl_cert or str(_DEFAULT_CERT)
             ssl_key = args.ssl_key or str(_DEFAULT_KEY)
             if not _P2(ssl_cert).exists() or not _P2(ssl_key).exists():
                 logger.info("SSL cert/key not found — generating self-signed certificate...")
-                _generate_self_signed_cert()
+                _generate_self_signed_cert(args.host)
                 ssl_cert = str(_DEFAULT_CERT)
                 ssl_key = str(_DEFAULT_KEY)
             uvicorn_kwargs["ssl_certfile"] = ssl_cert
@@ -1224,6 +2044,54 @@ def main():
             token=_ACTIVE_AUTH_TOKEN,
             update_info=update_info,
         )
+
+        # Live config reload: edits to config.json made while the server runs
+        # take effect without a manual restart (bind changes re-exec).
+        # Stdio mode is excluded — the MCP client owns our pipes there.
+        _start_config_watcher()
+
+        # Hot-swappable Host allowlist (v1.21.0): wrap the app so the SDK's
+        # allowlist is re-synced from ~/.sassymcp/allowed_hosts on every
+        # HTTP request (mtime-cached, one stat() when unchanged). A host
+        # added with `sassymcp allow-host <hostname>` takes effect on the
+        # next request — no restart. Enforcement stays the SDK's
+        # TransportSecurityMiddleware; this only keeps its list current.
+        #
+        # NB: pass mcp.settings.transport_security — the object FastMCP
+        # actually holds. Its pydantic Settings COPIES the nested settings
+        # at construction, so mutating the TransportSecuritySettings
+        # object _build_server() created would change nothing the
+        # middleware reads.
+        try:
+            from sassymcp._allowed_hosts import wrap_allowed_hosts_sync
+
+            _ts = getattr(getattr(mcp, "settings", None), "transport_security", None)
+            if _ts is not None:
+                app = wrap_allowed_hosts_sync(app, _ts)
+                from sassymcp._paths import ALLOWED_HOSTS_FILE as _AHF
+
+                logger.info(f"Allowed hosts hot-swap on ({_AHF}); "
+                            "`sassymcp allow-host <host>` adds one live")
+                # A suffix wildcard (e.g. *.trycloudflare.com) makes the
+                # bearer token the ONLY gate for every host under it. With
+                # auth off that is an open server — say so loudly instead
+                # of letting it pass silently.
+                if not _ACTIVE_AUTH_TOKEN:
+                    try:
+                        from sassymcp._allowed_hosts import get_effective_hosts as _geh
+                        if any(h.startswith("*.") for h in _geh()):
+                            logger.warning(
+                                "SECURITY: a suffix-wildcard allowlist entry "
+                                "(*.suffix) is active AND bearer auth is OFF "
+                                "(SASSYMCP_NO_AUTH=1) — any host under that "
+                                "suffix can reach this server with no "
+                                "credentials. Enable auth or remove the "
+                                "wildcard (`sassymcp deny-host '*.suffix'`)."
+                            )
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.warning(f"Allowed-hosts hot-swap wrapper not installed: {e}")
 
         uvicorn.run(app, **uvicorn_kwargs)
 

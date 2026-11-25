@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-KDJHO5NKNLX6
 """Single-writer-safe JSON-line append for the SassyMCP audit log.
 
 Today every audit-log call does:

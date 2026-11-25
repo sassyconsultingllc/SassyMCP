@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-YRKBF4XKWDMT
 """SassyMCP Smart Tool Loader v1.0 — Production + Nuclear features.
 
 Tracks which tools are actually called, scores them, and enables
@@ -18,31 +21,29 @@ Features:
 Storage: ~/.sassymcp/tool_usage.json
 """
 
-import asyncio
 import hashlib
 import importlib
 import inspect
 import json
 import logging
 import math
-import os
 import threading
 import time
-from collections import defaultdict
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger("sassymcp.loader")
 
 # Optional live reload (pip install watchdog)
 try:
-    from watchdog.observers import Observer
     from watchdog.events import FileSystemEventHandler
+    from watchdog.observers import Observer
     WATCHDOG_AVAILABLE = True
 except ImportError:
     WATCHDOG_AVAILABLE = False
 
 from sassymcp._paths import HOME as USAGE_DIR
+
 USAGE_FILE = USAGE_DIR / "tool_usage.json"
 DECAY_HALF_LIFE = 7 * 86400  # 7 days in seconds — older usage decays
 
@@ -152,7 +153,7 @@ class ToolUsageTracker:
 # Module-level singleton. Guarded by a lock so a race during server
 # startup (where module register() calls and the audit wrapper both
 # invoke get_tracker() back-to-back) can't end up with two trackers.
-_tracker: Optional[ToolUsageTracker] = None
+_tracker: ToolUsageTracker | None = None
 _TRACKER_LOCK = threading.Lock()
 
 
@@ -173,9 +174,10 @@ def get_tracker() -> ToolUsageTracker:
 
 TOOL_GROUPS = {
     "meta": {
-        "modules": ["meta"],
-        "description": "Context estimation, tool usage stats, group management (always loaded)",
+        "modules": ["meta", "batch"],
+        "description": "Context estimation, tool usage stats, group management, batch fan-out (always loaded)",
         "always_load": True,
+        "network": "none",
         "max_concurrent": 10,
         "calls_per_minute": 120,
     },
@@ -183,13 +185,15 @@ TOOL_GROUPS = {
         "modules": ["fileops", "shell", "ui_automation", "editor", "audit", "session"],
         "description": "File operations, shell commands, desktop automation, surgical editing, audit logging, persistent terminal sessions",
         "always_load": True,
+        "network": "none",
         "max_concurrent": 10,
         "calls_per_minute": 120,
     },
     "infrastructure": {
-        "modules": ["observability", "state_manager", "runtime_config"],
-        "description": "Metrics, health, persistent state, runtime config (always loaded)",
+        "modules": ["observability", "state_manager", "runtime_config", "offline"],
+        "description": "Metrics, health, persistent state, runtime config, offline/local-model fallback (always loaded)",
         "always_load": True,
+        "network": "none",
         "max_concurrent": 10,
         "calls_per_minute": 120,
     },
@@ -197,6 +201,15 @@ TOOL_GROUPS = {
         "modules": ["adb", "phone_screen"],
         "description": "ADB device control, screen mirroring",
         "always_load": False,
+        "network": "none",
+        "max_concurrent": 3,
+        "calls_per_minute": 30,
+    },
+    "iphone": {
+        "modules": ["iphone"],
+        "description": "Experimental iPhone (iOS) control via libimobiledevice",
+        "always_load": False,
+        "network": "none",
         "max_concurrent": 3,
         "calls_per_minute": 30,
     },
@@ -205,13 +218,15 @@ TOOL_GROUPS = {
                      "bluetooth", "eventlog", "clipboard"],
         "description": "System monitoring, networking, clipboard, events",
         "always_load": False,
+        "network": "mixed",
         "max_concurrent": 5,
         "calls_per_minute": 60,
     },
     "forensics": {
         "modules": ["security_audit", "registry"],
-        "description": "Security audit, registry inspection — paid forensics add-on",
+        "description": "Security audit, registry inspection",
         "always_load": False,
+        "network": "none",
         "max_concurrent": 3,
         "calls_per_minute": 30,
     },
@@ -219,6 +234,7 @@ TOOL_GROUPS = {
         "modules": ["linux"],
         "description": "Remote Linux SSH commands via plink (streaming)",
         "always_load": False,
+        "network": "lan",
         "max_concurrent": 3,
         "calls_per_minute": 30,
     },
@@ -226,6 +242,7 @@ TOOL_GROUPS = {
         "modules": ["github_quick"],
         "description": "Daily-driver GitHub tools (6 tools)",
         "always_load": True,
+        "network": "internet",
         "max_concurrent": 5,
         "calls_per_minute": 30,
     },
@@ -233,13 +250,15 @@ TOOL_GROUPS = {
         "modules": ["github_ops"],
         "description": "Full GitHub API (80 tools) — heavy context cost",
         "always_load": False,
+        "network": "internet",
         "max_concurrent": 5,
         "calls_per_minute": 30,
     },
     "v020": {
-        "modules": ["vision", "app_launcher", "web_inspector", "crosslink"],
-        "description": "Vision, app launcher, web inspector, crosslink",
+        "modules": ["vision", "app_launcher", "web_inspector", "crosslink", "coordination"],
+        "description": "Vision, app launcher, web inspector, crosslink, multi-AI coordination",
         "always_load": False,
+        "network": "mixed",
         "max_concurrent": 5,
         "calls_per_minute": 60,
     },
@@ -247,6 +266,7 @@ TOOL_GROUPS = {
         "modules": ["persona"],
         "description": "Expert-mode persona, decision framework, engineering standards",
         "always_load": True,
+        "network": "none",
         "max_concurrent": 10,
         "calls_per_minute": 120,
     },
@@ -254,20 +274,15 @@ TOOL_GROUPS = {
         "modules": ["utility"],
         "description": "Env vars, toast notifications, zip/tar archives, file diff, HTTP requests",
         "always_load": True,
+        "network": "mixed",
         "max_concurrent": 10,
         "calls_per_minute": 120,
-    },
-    "selfmod": {
-        "modules": ["selfmod"],
-        "description": "Self-modification: edit MCP source, hot-reload modules, git-backed rollback",
-        "always_load": True,
-        "max_concurrent": 3,
-        "calls_per_minute": 30,
     },
     "setup": {
         "modules": ["setup_wizard", "tools_manager"],
         "description": "First-run setup wizard, external tool bootstrap, auth token generation",
         "always_load": True,
+        "network": "mixed",
         "max_concurrent": 3,
         "calls_per_minute": 30,
     },
@@ -275,6 +290,7 @@ TOOL_GROUPS = {
         "modules": ["memory"],
         "description": "Persistent cross-session memory, task handoffs, milestones, pattern learning",
         "always_load": True,
+        "network": "none",
         "max_concurrent": 10,
         "calls_per_minute": 120,
     },
@@ -282,6 +298,7 @@ TOOL_GROUPS = {
         "modules": ["updater"],
         "description": "Kali-style version checks and self-update (check, list, changelog, apply)",
         "always_load": True,
+        "network": "internet",
         "max_concurrent": 2,
         "calls_per_minute": 12,
     },
@@ -289,6 +306,7 @@ TOOL_GROUPS = {
         "modules": ["combos"],
         "description": "Multi-step combo tools (pr_review, phone_observe, codebase_grep) — collapse N round-trips into one",
         "always_load": False,  # opt-in via score boost when used
+        "network": "mixed",
         "max_concurrent": 3,
         "calls_per_minute": 30,
     },
@@ -296,6 +314,7 @@ TOOL_GROUPS = {
         "modules": ["prompts"],
         "description": "MCP prompts — slash-menu shortcuts (pr-review, phone-status, resume, brain-status, setup-sassy)",
         "always_load": True,  # cheap; just registers prompts, no tools
+        "network": "none",
         "max_concurrent": 10,
         "calls_per_minute": 120,
     },
@@ -325,7 +344,7 @@ for _gname, _ginfo in TOOL_GROUPS.items():
         _MODULE_TO_GROUP[_mod] = _gname
 
 
-def get_group_for_module(module_name: str) -> Optional[str]:
+def get_group_for_module(module_name: str) -> str | None:
     """Return the group name a module belongs to, or None."""
     return _MODULE_TO_GROUP.get(module_name)
 
@@ -340,7 +359,7 @@ def register_tool_group(tool_name: str, module_name: str):
         _TOOL_TO_GROUP[tool_name] = group
 
 
-def get_group_for_tool(tool_name: str) -> Optional[str]:
+def get_group_for_tool(tool_name: str) -> str | None:
     """Reverse lookup: tool name → group name. Uses explicit registry built at load time."""
     return _TOOL_TO_GROUP.get(tool_name)
 
@@ -367,8 +386,8 @@ def resolve_dependencies(modules: list[str]) -> list[str]:
 # scorer is sassy_adb_shell never sees the android group auto-loaded.
 USAGE_BOOST_THRESHOLD = 0.5
 
-# Tools with score < this are dropped from the default load entirely (Pro
-# tier still loads everything via SASSYMCP_LOAD_ALL=1 or per-group toggle).
+# Tools with score < this are dropped from the default load entirely
+# (everything still loads via SASSYMCP_LOAD_ALL=1 or per-group toggle).
 # Saves context on the long tail of "registered but never used" tools.
 USAGE_PRUNE_THRESHOLD = 0.05
 
@@ -496,9 +515,8 @@ def auto_activate_hooks_for_modules(module_names: list[str]) -> list[str]:
     target_modules = set(module_names)
     activated: list[str] = []
     for hook_name, hook_data in _HOOKS.items():
-        if hook_data.get("module") in target_modules:
-            if activate_hook(hook_name) is not None:
-                activated.append(hook_name)
+        if hook_data.get("module") in target_modules and activate_hook(hook_name) is not None:
+            activated.append(hook_name)
     if activated:
         logger.info(f"auto-activated hooks for boosted modules: {activated}")
     return activated
@@ -529,7 +547,7 @@ def get_group_info() -> dict:
 
 # ── Schema Versioning ────────────────────────────────────────────────
 
-_schema_version: Optional[str] = None
+_schema_version: str | None = None
 
 
 def compute_schema_version(tool_definitions: list[dict]) -> str:
@@ -546,7 +564,7 @@ def compute_schema_version(tool_definitions: list[dict]) -> str:
     return _schema_version
 
 
-def get_schema_version() -> Optional[str]:
+def get_schema_version() -> str | None:
     """Return the last computed schema version hash."""
     return _schema_version
 

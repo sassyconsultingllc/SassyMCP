@@ -1,3 +1,8 @@
+<!--
+   Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+   Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+   CodeMark: SCLLC1-SassyMCP-SFQRQWRRZARE
+-->
 ```json
 {
   "severity": "high",
@@ -129,3 +134,16 @@
 5. **Windows token file ACL check omitted** – `_check_file_permissions` returns `True` on Windows without actually verifying file security; implement proper Windows ACL verification.
 
 **Release‑readiness verdict:** **hold** – critical security and packaging defects must be addressed before the product can be safely shipped.
+
+---
+
+## Remediation status (v1.14.0 — 2026-07-28)
+
+| Finding | Status | Notes |
+|---|---|---|
+| Windows token ACL no-op / world-readable tokens | **Fixed** | `auth._check_windows_acl` + `_lockdown_windows_acl`; bootstrap calls lockdown after write |
+| Full bearer token printed to stdout banner | **Fixed** | Banner uses `<token-from-sassymcp-show-token>`; retrieve via `show-token` |
+| MSI absolute developer paths | **Fixed** | `$(var.ExtractRoot)` relative define + candle `-dExtractRoot=` |
+| MSI `InstallScope=perMachine` (admin elevation) | **Fixed** | `perUser` + `LocalAppDataFolder` install root |
+| SelfMod rewrite/hot-reload after install | **Fixed (v1.14.1+)** | SelfMod removed entirely — no tools, no group, no opt-in gate |
+| Marketplace install path | **Fixed (v1.14.0)** | Listing uses SHA256-pinned `.mcpb` + PyPI; no unverified exe curl |

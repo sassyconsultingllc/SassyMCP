@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-P3WSGGQ26ZUS
 """LemonSqueezy activation, validation, and deactivation flow.
 
 These tests cover the integration boundary between sassymcp.license
@@ -28,8 +31,6 @@ import json
 import sys
 import time
 from pathlib import Path
-
-import pytest
 
 
 def _fresh_modules(monkeypatch, sassy_home: Path):
@@ -157,6 +158,28 @@ def test_unmapped_variant_defaults_to_free(tmp_path, monkeypatch):
     # so the buyer isn't silently shortchanged
     assert "warning" in result
     assert "999999" in result["warning"]
+
+
+def test_commercial_variant_maps_to_commercial_tier_by_default(tmp_path, monkeypatch):
+    """The live commercial-license variant resolves through the baked-in
+    DEFAULT_VARIANT_MAP (no env override) to the 'commercial' tier, with no
+    misconfig warning, and the label survives a round-trip through
+    validate_license."""
+    lic, ls = _fresh_modules(monkeypatch, tmp_path / "h")
+    assert ls.DEFAULT_VARIANT_MAP["2352600"] == {"tier": "commercial", "addons": []}
+    _mock_ls_response(monkeypatch, ls, {
+        "_http_status": 200,
+        "activated": True,
+        "license_key": {"id": 7, "status": "active", "expires_at": None},
+        "instance": {"id": "inst-commercial", "name": "sassymcp:user@host"},
+        "meta": {"customer_email": "work@example.com", "variant_id": 2352600},
+    })
+
+    result = lic.activate_via_lemonsqueezy("COMM-ERCI-ALKE-Y000")
+    assert result["valid"] is True
+    assert result["tier"] == "commercial"
+    assert "warning" not in result
+    assert lic.validate_license()["tier"] == "commercial"
 
 
 # ── Activation: failure modes ─────────────────────────────────────────
@@ -326,7 +349,7 @@ def test_deactivate_network_error_keeps_local_file(tmp_path, monkeypatch):
 
 
 def test_deactivate_with_no_license_is_safe(tmp_path, monkeypatch):
-    lic, ls = _fresh_modules(monkeypatch, tmp_path / "h")
+    lic, _ls = _fresh_modules(monkeypatch, tmp_path / "h")
     result = lic.deactivate_via_lemonsqueezy()
     assert result["status"] == "no_license"
 
@@ -410,7 +433,7 @@ def test_fast_revocation_check_skips_legacy_keys(tmp_path, monkeypatch):
 
 
 def test_fast_revocation_check_no_file_is_safe(tmp_path, monkeypatch):
-    lic, ls = _fresh_modules(monkeypatch, tmp_path / "h")
+    lic, _ls = _fresh_modules(monkeypatch, tmp_path / "h")
     # No license file at all
     removed = asyncio.run(lic.fast_revocation_check())
     assert removed is False
@@ -444,7 +467,7 @@ def test_license_key_hash_is_stable(tmp_path, monkeypatch):
     """The hash function is the public contract between the local
     install and the billing Worker. Pin a known value so a future
     refactor can't break the lookup silently."""
-    lic, ls = _fresh_modules(monkeypatch, tmp_path / "h")
+    _lic, ls = _fresh_modules(monkeypatch, tmp_path / "h")
     import hashlib
     sample = "ABCD-EFGH-IJKL-MNOP"
     expected = hashlib.sha256(sample.encode("utf-8")).hexdigest()

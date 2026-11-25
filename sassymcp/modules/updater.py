@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-7RCCQFURONNW
 """SassyMCP Updater — Kali-style version checking and self-update.
 
 Mirrors `apt update` / `apt list --upgradable` / `apt upgrade` semantics
@@ -21,17 +24,20 @@ import json
 import logging
 import os
 import re
+import sys
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
 from sassymcp import __version__
+from sassymcp import _platform
 
 logger = logging.getLogger("sassymcp.updater")
 
 GITHUB_API = "https://api.github.com/repos/sassyconsultingllc/SassyMCP/releases"
+PYPI_API = "https://pypi.org/pypi/sassymcp/json"
 CACHE_TTL_SECONDS = 300
 USER_AGENT = f"sassymcp/{__version__} (+https://github.com/sassyconsultingllc/SassyMCP)"
 
@@ -54,6 +60,13 @@ def _normalize(v: str) -> tuple[int, ...]:
     return nums + (pre_rank,)
 
 
+def _in_pipx() -> bool:
+    """Detect whether the running sassymcp was installed via pipx."""
+    # pipx installs into $PIPX_HOME/venvs/<pkg>/ or ~/.local/pipx/venvs/<pkg>/
+    exe = os.path.realpath(sys.executable)
+    return "pipx" in exe.lower() or "/pipx/" in exe
+
+
 class Updater:
     def __init__(self) -> None:
         self._cache: dict[str, Any] = {}
@@ -69,6 +82,89 @@ class Updater:
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
+
+    def _check_pypi(self) -> dict[str, Any]:
+        """Query PyPI for the latest version of sassymcp."""
+        try:
+            data = self._http_json(PYPI_API)
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError,
+                json.JSONDecodeError) as e:
+            return {"error": f"PyPI unreachable: {e}"}
+        info = data.get("info", {})
+        latest = info.get("version", "")
+        return {
+            "source": "pypi",
+            "latest": latest,
+            "current": __version__,
+            "upgradable": _normalize(latest) > _normalize(__version__) if latest else False,
+            "url": f"https://pypi.org/project/sassymcp/{latest}/",
+            "summary": info.get("summary", ""),
+        }
+
+    def check_all_sources(self, force: bool = False) -> dict[str, Any]:
+        """Check GitHub Releases and PyPI for the latest version.
+
+        Returns a combined report showing what is available from each source
+        and the recommended upgrade path.
+        """
+        gh = self.check(force=force)
+        pypi = self._check_pypi()
+
+        sources: list[dict[str, Any]] = []
+
+        # GitHub Releases
+        if "error" not in gh:
+            sources.append({
+                "source": "github",
+                "latest": gh.get("latest"),
+                "upgradable": gh.get("upgradable", False),
+                "url": gh.get("release_url"),
+                "published_at": gh.get("published_at"),
+            })
+        else:
+            sources.append({"source": "github", "error": gh["error"]})
+
+        # PyPI
+        if "error" not in pypi:
+            sources.append({
+                "source": "pypi",
+                "latest": pypi.get("latest"),
+                "upgradable": pypi.get("upgradable", False),
+                "url": pypi.get("url"),
+            })
+        else:
+            sources.append({"source": "pypi", "error": pypi["error"]})
+
+        # Determine the overall newest version across sources
+        newest_ver = __version__
+        newest_source = None
+        for src in sources:
+            ver = src.get("latest")
+            if ver and _normalize(ver) > _normalize(newest_ver):
+                newest_ver = ver
+                newest_source = src["source"]
+
+        any_upgrade = newest_source is not None
+
+        # Suggest the right upgrade command based on install method
+        upgrade_hint = ""
+        if any_upgrade:
+            import shutil
+            if shutil.which("pipx") and _in_pipx():
+                upgrade_hint = f"pipx upgrade sassymcp"
+            elif shutil.which("pip"):
+                upgrade_hint = f"pip install --upgrade sassymcp"
+            else:
+                upgrade_hint = f"pip install sassymcp=={newest_ver}"
+
+        return {
+            "current": __version__,
+            "newest": newest_ver,
+            "newest_source": newest_source,
+            "upgrade_available": any_upgrade,
+            "upgrade_hint": upgrade_hint,
+            "sources": sources,
+        }
 
     def _refresh(self, force: bool = False) -> dict[str, Any]:
         now = time.time()
@@ -102,23 +198,56 @@ class Updater:
         self._cache_ts = now
         return result
 
-    def check(self, force: bool = False) -> dict[str, Any]:
+    def check(self, force: bool = False, include_pypi: bool = True) -> dict[str, Any]:
+        """Check for a newer SassyMCP release across GitHub and PyPI.
+
+        Returns status from both sources and an overall upgradable flag.
+        """
         state = self._refresh(force=force)
         if "error" in state:
             return state
-        msg = (
-            f"{state['current']} → {state['latest']} available"
-            if state["upgradable"]
-            else f"{state['current']} is the latest"
-        )
-        return {
+
+        result: dict[str, Any] = {
             "current": state["current"],
             "latest": state["latest"],
             "upgradable": state["upgradable"],
-            "summary": msg,
             "release_url": state["release_url"],
             "published_at": state["latest_published_at"],
         }
+
+        # Check PyPI alongside GitHub Releases
+        if include_pypi:
+            pypi = self._check_pypi()
+            if "error" not in pypi:
+                result["pypi_latest"] = pypi.get("latest")
+                result["pypi_url"] = pypi.get("url")
+                pypi_upgradable = pypi.get("upgradable", False)
+                if pypi_upgradable:
+                    result["upgradable"] = True
+                    # If PyPI is newer than GitHub's latest, surface that
+                    if not state.get("latest") or _normalize(pypi["latest"]) > _normalize(state["latest"]):
+                        result["latest"] = pypi["latest"]
+            else:
+                result["pypi_error"] = pypi["error"]
+
+        msg = (
+            f"{result['current']} → {result['latest']} available"
+            if result["upgradable"]
+            else f"{result['current']} is the latest"
+        )
+        result["summary"] = msg
+
+        # Add upgrade hint if an upgrade is available
+        if result["upgradable"]:
+            import shutil
+            if shutil.which("pipx") and _in_pipx():
+                result["upgrade_hint"] = "pipx upgrade sassymcp"
+            elif shutil.which("pip"):
+                result["upgrade_hint"] = "pip install --upgrade sassymcp"
+            else:
+                result["upgrade_hint"] = f"pip install sassymcp=={result['latest']}"
+
+        return result
 
     def list_assets(self, tag: str | None = None) -> dict[str, Any]:
         state = self._refresh()
@@ -217,12 +346,10 @@ class Updater:
     ) -> dict[str, Any]:
         """Download an asset to staging. Does NOT execute it.
 
-        require_checksum (default True): refuse to return a run command if
-        the release publishes a SHA-256 sidecar AND verification fails. If
-        no sidecar is published, downgrades to a warning rather than
-        refusing — many older releases predate sidecar publication. Set
-        require_checksum=False to bypass entirely (e.g., when checksum
-        sidecar is being introduced and old assets haven't been backfilled).
+        require_checksum (default True): refuse to stage the asset unless a
+        SHA-256 sidecar verifies. Missing sidecar is a hard fail under the
+        default (v1.16.0+ publish policy). Set require_checksum=False only
+        for an audited legacy release that never published checksums.
         """
         info = self.list_assets(tag=tag)
         if "error" in info:
@@ -291,52 +418,101 @@ class Updater:
                 }
             checksum_status["status"] = "verified"
         else:
-            # Sidecar not published — downgrade to warning unless caller
-            # explicitly required a checksum.
             checksum_status["status"] = "no_sidecar_published"
-            if require_checksum is True and sidecar_name is None:
-                # Default policy: allow but flag loudly. This avoids
-                # breaking older releases that don't yet publish sidecars.
-                checksum_status["warning"] = (
-                    "No SHA-256 sidecar found for this release. Verify the "
-                    "download out-of-band before running. Future releases "
-                    "should ship <asset>.sha256 or SHA256SUMS alongside."
-                )
+            if require_checksum:
+                try:
+                    dest.unlink()
+                except OSError:
+                    pass
+                return {
+                    "error": (
+                        "No SHA-256 sidecar published for this release — "
+                        "refusing to stage."
+                    ),
+                    "tag": info["tag"],
+                    "asset": asset_name,
+                    "checksum": checksum_status,
+                    "hint": (
+                        "v1.16.0+ requires SHA256SUMS or <asset>.sha256 on "
+                        "the GitHub release. Pass require_checksum=False "
+                        "only for an audited legacy release, or wait until "
+                        "the sidecar is published."
+                    ),
+                }
+            checksum_status["warning"] = (
+                "No SHA-256 sidecar found. Staging anyway because "
+                "require_checksum=False. Verify the download out-of-band "
+                "before running."
+            )
 
         name_lower = asset_name.lower()
+        # Staging dir for extracted bundles (same on every host).
+        extract_dir = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "SassyMCP" / info["tag"]
         if name_lower.endswith(".msi"):
             # Legacy MSI assets — kept working for older releases (<= v1.3.0).
-            run_cmd = f'msiexec /i "{dest}"'
+            if _platform.IS_WINDOWS:
+                run_cmd = f'msiexec /i "{dest}"'
+                next_step = f"Run: {run_cmd}"
+            else:
+                # An MSI cannot install on POSIX — say so explicitly instead
+                # of handing the user a Windows-only command (audit F-4).
+                next_step = (
+                    f"The .msi asset is Windows-only and cannot install on "
+                    f"{_platform.OS_LABEL}. Download the standalone .exe "
+                    f"(Windows) or use `pip install sassymcp` from release "
+                    f"{info['tag']} instead."
+                )
+        elif name_lower.endswith((".tar.gz", ".tgz")):
+            # tar preserves the executable bit — no chmod needed.
+            run_cmd = f'tar -xzf "{dest}" -C "{extract_dir}"'
+            next_step = f"Run: {run_cmd}"
         elif name_lower.endswith(".zip"):
             # Portable bundle — extract over the existing install dir.
-            extract_dir = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "SassyMCP" / info["tag"]
-            run_cmd = f'Expand-Archive -Path "{dest}" -DestinationPath "{extract_dir}" -Force'
+            if _platform.IS_WINDOWS:
+                run_cmd = f'Expand-Archive -Path "{dest}" -DestinationPath "{extract_dir}" -Force'
+            else:
+                # zip archives do not preserve the executable bit — re-add
+                # it to the main binary after extracting (audit F-4).
+                run_cmd = (f'unzip -o "{dest}" -d "{extract_dir}" && '
+                           f'chmod +x "{extract_dir}/sassymcp"')
+            next_step = f"Run: {run_cmd}"
         else:
             run_cmd = f'"{dest}"'
+            next_step = f"Run: {run_cmd}"
         return {
             "tag": info["tag"],
             "asset": asset_name,
             "downloaded_to": str(dest),
             "size_bytes": dest.stat().st_size,
-            "next_step": f"Run: {run_cmd}",
-            "via_gated_url": bool(license_key),
+            "next_step": next_step,
+            # The license-gated download mirror was retired (see the note above);
+            # `license_key` no longer exists in this scope and referencing it
+            # raised NameError on every successful download. Always False now.
+            # The key is kept rather than dropped so existing callers that read
+            # it keep working.
+            "via_gated_url": False,
             "checksum": checksum_status,
         }
 
 
 def register(server) -> None:
+    import sys
+
     upd = Updater()
+    _frozen = getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS")
 
     @server.tool()
-    async def sassy_update_check(force: bool = False) -> dict:
-        """Check for a newer SassyMCP release (apt-update equivalent).
+    def sassy_update_check(force: bool = False) -> dict:
+        """Check for a newer SassyMCP release across GitHub Releases and PyPI.
 
         Caches the result for 5 minutes; pass force=True to bypass the cache.
+        Returns the newest version found, source breakdown, and the upgrade
+        command suited to the running install.
         """
         return upd.check(force=force)
 
     @server.tool()
-    async def sassy_update_list(tag: str | None = None) -> dict:
+    def sassy_update_list(tag: str | None = None) -> dict:
         """List downloadable assets for a release (apt-list-upgradable equivalent).
 
         tag defaults to the latest release.
@@ -344,19 +520,33 @@ def register(server) -> None:
         return upd.list_assets(tag=tag)
 
     @server.tool()
-    async def sassy_update_changelog(tag: str | None = None) -> dict:
+    def sassy_update_changelog(tag: str | None = None) -> dict:
         """Return the release notes body for a tag (defaults to latest)."""
         return upd.changelog(tag=tag)
 
     @server.tool()
-    async def sassy_update_apply(asset_name: str, tag: str | None = None, dest_dir: str | None = None) -> dict:
+    def sassy_update_apply(asset_name: str, tag: str | None = None, dest_dir: str | None = None) -> dict:
         """Download an asset to staging. Returns the path + a run command.
 
         Does NOT execute the installer — the user runs the returned command
-        when ready. If SASSYMCP_LICENSE_KEY is set in the environment, the
-        download goes through the gated sassyconsultingllc.com endpoint.
+        when ready. Disabled in packaged/frozen builds so marketplace installs
+        remain a fixed graded version; upgrade by installing a new release
+        artifact instead.
         """
+        if _frozen:
+            return {
+                "error": "update_apply unavailable in packaged build",
+                "reason": (
+                    "This SassyMCP is a fixed graded install. Download a new "
+                    "release .mcpb / exe from GitHub Releases instead of "
+                    "in-place apply."
+                ),
+                "runtime": "frozen",
+            }
         return upd.apply(asset_name=asset_name, tag=tag, dest_dir=dest_dir)
 
     server.updater = upd
-    logger.info("Updater module loaded")
+    logger.info(
+        "Updater module loaded%s",
+        " (apply disabled in frozen build)" if _frozen else "",
+    )

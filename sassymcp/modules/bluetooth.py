@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-OPYIGAVYMW57
 """Bluetooth - Device enumeration and diagnostics (cross-platform).
 
 Host enumeration is routed at the head (see _platform):
@@ -26,11 +29,15 @@ def register(server):
         """List paired Bluetooth devices."""
         argv = _platform.pick(
             windows=["powershell.exe", "-NoProfile", "-Command",
-                     "Get-PnpDevice -Class Bluetooth | Where { $_.Status -eq 'OK' } "
-                     "| Select FriendlyName,DeviceID,Status | FT -Auto"],
+                     ("Get-PnpDevice -Class Bluetooth | Where { $_.Status -eq 'OK' } "
+                     "| Select FriendlyName,DeviceID,Status | FT -Auto")],
             macos=(["blueutil", "--paired"] if _platform.which("blueutil")
                    else ["system_profiler", "SPBluetoothDataType"]),
-            linux=["bluetoothctl", "paired-devices"],
+            # BlueZ >= 5.65 replaced `paired-devices` with `devices Paired`.
+            linux=["/bin/sh", "-c",
+                   ('out=$(bluetoothctl devices Paired 2>&1); '
+                    'case "$out" in *Invalid*|*"Too many"*) bluetoothctl paired-devices ;; '
+                    '*) printf "%s\\n" "${out:-No paired devices}" ;; esac')],
             feature="paired Bluetooth devices",
         )
         return await _run(argv)
@@ -40,8 +47,8 @@ def register(server):
         """List all Bluetooth devices."""
         argv = _platform.pick(
             windows=["powershell.exe", "-NoProfile", "-Command",
-                     "Get-PnpDevice -Class Bluetooth "
-                     "| Select FriendlyName,DeviceID,Status,InstanceId | FT -Auto"],
+                     ("Get-PnpDevice -Class Bluetooth "
+                     "| Select FriendlyName,DeviceID,Status,InstanceId | FT -Auto")],
             macos=(["blueutil", "--inquiry"] if _platform.which("blueutil")
                    else ["system_profiler", "SPBluetoothDataType"]),
             linux=["bluetoothctl", "devices"],

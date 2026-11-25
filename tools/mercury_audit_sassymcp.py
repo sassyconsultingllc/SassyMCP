@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-34Y3S6NXOBFD
 """Send SassyMCP source to Inception Mercury-2 for full audit.
 
 Mercury-2 has a 128K context window, so the SassyMCP source is split into

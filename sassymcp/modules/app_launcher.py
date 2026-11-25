@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-GC4IDUQDMCXT
 """AppLauncher - Application control and window management (cross-platform).
 
 Launch apps by name, focus/close/resize/snap windows, and manage the desktop
@@ -17,12 +20,15 @@ in); wmctrl/xdotool (Linux, optional).
 
 import asyncio
 import json
+import re
+import shlex
+import shutil
 import subprocess
 import time
+from typing import Any
 
 from sassymcp import _platform
 from sassymcp.modules._security import validate_path as _validate_path
-
 
 # ══════════════════════════════════════════════════════════════════════════
 # macOS — AppleScript / System Events
@@ -38,7 +44,7 @@ async def _osa(script: str, *args: str, timeout: int = 15) -> str:
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         try:
             proc.kill()
         except Exception:
@@ -220,19 +226,59 @@ async def _linux_exec(*argv, timeout: int = 10) -> tuple[int, str]:
         return proc.returncode, (out + err).decode("utf-8", errors="replace").strip()
     except FileNotFoundError:
         return 127, f"{argv[0]} not found"
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return 124, "timed out"
 
 
 def _linux_unsupported(action: str) -> str:
+    from sassymcp import _linuxwm
     return json.dumps({"error": _platform.unsupported(
-        f"{action} on Linux requires wmctrl (apt install wmctrl) or xdotool")})
+        f"{action}: {_linuxwm.missing_hint()}")})
+
+
+async def _linux_wm(fn_name: str, *args) -> str:
+    """Run a _linuxwm action off-loop; JSON result or a clean unsupported."""
+    from sassymcp import _linuxwm
+    if not _linuxwm.available():
+        return _linux_unsupported(fn_name.replace("_", " "))
+    res = await asyncio.to_thread(getattr(_linuxwm, fn_name), *args)
+    return json.dumps(res)
+
+
+_LINUX_APP_NAME_RE = re.compile(r"^[A-Za-z0-9._+-]+$")
+
+
+def _linux_launch_argv(name: str) -> tuple[list[str] | None, str | None]:
+    """Resolve `name` to an argv list. Never builds a shell string.
+
+    `sassy_launch_app` previously interpolated `name` into `/bin/sh -c
+    "nohup {name} ..."`, which is command injection (`name=x; curl|sh`).
+    PATH lookup only; no arguments, no path separators, no metacharacters.
+    """
+    try:
+        parts = shlex.split(name, posix=True)
+    except ValueError as e:
+        return None, f"invalid name: {e}"
+    if len(parts) != 1:
+        return None, (
+            "name must be a single PATH command with no arguments or "
+            "shell metacharacters"
+        )
+    exe = parts[0]
+    if (not exe) or ("/" in exe) or ("\\" in exe) or exe in (".", ".."):
+        return None, "name must be a PATH command, not a filesystem path"
+    if not _LINUX_APP_NAME_RE.fullmatch(exe):
+        return None, "name contains characters that are not a PATH command"
+    resolved = shutil.which(exe)
+    if not resolved:
+        return None, f"not found on PATH: {exe}"
+    return [resolved], None
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # Windows — pywinauto / win32 (behavior preserved verbatim)
 # ══════════════════════════════════════════════════════════════════════════
-async def _win_launch_app(name: str, wait_seconds: float) -> str:
+def _win_launch_app(name: str, wait_seconds: float) -> str:
     import pyautogui
     try:
         pyautogui.press("win")
@@ -265,7 +311,7 @@ async def _win_launch_app(name: str, wait_seconds: float) -> str:
         return json.dumps({"error": str(e)})
 
 
-async def _win_focus(title: str) -> str:
+def _win_focus(title: str) -> str:
     try:
         from pywinauto import Desktop
         desktop = Desktop(backend="uia")
@@ -284,10 +330,10 @@ async def _win_focus(title: str) -> str:
         return json.dumps({"error": str(e)})
 
 
-async def _win_close(title: str, force: bool) -> str:
+def _win_close(title: str, force: bool) -> str:
     try:
-        from pywinauto import Desktop
         import psutil
+        from pywinauto import Desktop
 
         desktop = Desktop(backend="uia")
         title_lower = title.lower()
@@ -309,7 +355,7 @@ async def _win_close(title: str, force: bool) -> str:
         return json.dumps({"error": str(e)})
 
 
-async def _win_resize(title, x, y, width, height, maximize, minimize, restore) -> str:
+def _win_resize(title, x, y, width, height, maximize, minimize, restore) -> str:
     try:
         from pywinauto import Desktop
         desktop = Desktop(backend="uia")
@@ -353,10 +399,11 @@ async def _win_resize(title, x, y, width, height, maximize, minimize, restore) -
         return json.dumps({"error": str(e)})
 
 
-async def _win_snap(title: str, position: str, monitor: int) -> str:
+def _win_snap(title: str, position: str, monitor: int) -> str:
     try:
-        from pywinauto import Desktop
         import ctypes
+
+        from pywinauto import Desktop
 
         # Get actual work area (excludes taskbar) for the target monitor
         try:
@@ -407,9 +454,8 @@ async def _win_snap(title: str, position: str, monitor: int) -> str:
         for w in desktop.windows():
             try:
                 wt = w.window_text()
-                if wt and w.is_visible():
-                    if title_lower in wt.lower():
-                        candidates.append(w)
+                if wt and w.is_visible() and title_lower in wt.lower():
+                    candidates.append(w)
             except Exception:
                 continue
         if not candidates:
@@ -446,14 +492,26 @@ def register(server):
         Chrome", "code"). Waits wait_seconds, then reports the window if found.
         """
         if _platform.IS_WINDOWS:
-            return await _win_launch_app(name, wait_seconds)
+            return await asyncio.to_thread(_win_launch_app, name, wait_seconds)
         if _platform.IS_MACOS:
             return await _mac_launch_app(name, wait_seconds)
-        rc, out = await _linux_exec("/bin/sh", "-c", f"nohup {name} >/dev/null 2>&1 &")
-        return json.dumps({"launched": name} if rc == 0 else {"error": out})
+        argv, err = _linux_launch_argv(name)
+        if err:
+            return json.dumps({"error": err})
+        try:
+            proc = subprocess.Popen(
+                argv,
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError as e:
+            return json.dumps({"error": str(e)})
+        await asyncio.sleep(max(0.0, float(wait_seconds)))
+        return json.dumps({"launched": name, "pid": proc.pid, "path": argv[0]})
 
     @server.tool()
-    async def sassy_launch_exe(path: str, args: str = "") -> str:
+    def sassy_launch_exe(path: str, args: str = "") -> dict[str, Any]:
         """Launch an executable directly by path.
 
         Windows: .exe/.msi. macOS: a .app bundle (via `open`) or any executable
@@ -463,63 +521,57 @@ def register(server):
         from pathlib import Path as P
         ok, err = _validate_path(path)
         if not ok:
-            return json.dumps({"error": err})
+            return {"error": err}
         p = P(path)
         extra = shlex.split(args) if args else []
 
         if _platform.IS_WINDOWS:
             if not p.is_file():
-                return json.dumps({"error": f"File not found: {path}"})
+                return {"error": f"File not found: {path}"}
             if p.suffix.lower() not in (".exe", ".msi"):
-                return json.dumps({"error": f"Only .exe and .msi files allowed, got: {p.suffix}"})
+                return {"error": f"Only .exe and .msi files allowed, got: {p.suffix}"}
             try:
                 proc = subprocess.Popen([str(p)] + extra, creationflags=subprocess.DETACHED_PROCESS)
                 time.sleep(1)
-                return json.dumps({"launched": path, "pid": proc.pid, "args": args or None})
+                return {"launched": path, "pid": proc.pid, "args": args or None}
             except Exception as e:
-                return json.dumps({"error": str(e)})
+                return {"error": str(e)}
 
         if _platform.IS_MACOS and p.suffix.lower() == ".app":
             argv = ["open", str(p)] + (["--args", *extra] if extra else [])
             try:
                 proc = subprocess.Popen(argv)
-                return json.dumps({"launched": path, "pid": proc.pid, "method": "open", "args": args or None})
+                return {"launched": path, "pid": proc.pid, "method": "open", "args": args or None}
             except Exception as e:
-                return json.dumps({"error": str(e)})
+                return {"error": str(e)}
 
         # macOS non-.app and Linux: direct exec of an existing executable.
         if not p.is_file():
-            return json.dumps({"error": f"File not found: {path}"})
+            return {"error": f"File not found: {path}"}
         try:
             proc = subprocess.Popen([str(p)] + extra, start_new_session=True)
             time.sleep(0.5)
-            return json.dumps({"launched": path, "pid": proc.pid, "args": args or None})
+            return {"launched": path, "pid": proc.pid, "args": args or None}
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return {"error": str(e)}
 
     @server.tool()
     async def sassy_focus_window(title: str) -> str:
         """Bring a window to the foreground by title substring."""
         if _platform.IS_WINDOWS:
-            return await _win_focus(title)
+            return await asyncio.to_thread(_win_focus, title)
         if _platform.IS_MACOS:
             return await _mac_focus(title)
-        if _platform.which("wmctrl"):
-            rc, out = await _linux_exec("wmctrl", "-a", title)
-            return json.dumps({"focused": title} if rc == 0 else {"error": out or f"Window not found: {title}"})
-        return _linux_unsupported("window focus")
+        return await _linux_wm("focus", title)
 
     @server.tool()
     async def sassy_close_window(title: str, force: bool = False) -> str:
         """Close a window by title. Graceful unless force=True (kills the process)."""
         if _platform.IS_WINDOWS:
-            return await _win_close(title, force)
+            return await asyncio.to_thread(_win_close, title, force)
         if _platform.IS_MACOS:
             return await _mac_close(title, force)
-        if _platform.which("wmctrl"):
-            rc, out = await _linux_exec("wmctrl", "-c", title)
-            return json.dumps({"closed": title} if rc == 0 else {"error": out or f"Window not found: {title}"})
-        return _linux_unsupported("window close")
+        return await _linux_wm("close", title, force)
 
     @server.tool()
     async def sassy_resize_window(
@@ -536,17 +588,13 @@ def register(server):
         maximize/minimize/restore for window state changes.
         """
         if _platform.IS_WINDOWS:
-            return await _win_resize(title, x, y, width, height, maximize, minimize, restore)
+            return await asyncio.to_thread(_win_resize, title, x, y, width, height, maximize, minimize, restore)
         if _platform.IS_MACOS:
             return await _mac_resize(title, x, y, width, height, maximize, minimize, restore)
-        if _platform.which("wmctrl"):
-            if minimize:
-                rc, out = await _linux_exec("xdotool", "search", "--name", title, "windowminimize")
-            else:
-                g = f"0,{max(x,0)},{max(y,0)},{max(width,-1)},{max(height,-1)}"
-                rc, out = await _linux_exec("wmctrl", "-r", title, "-e", g)
-            return json.dumps({"resized": title} if rc == 0 else {"error": out})
-        return _linux_unsupported("window resize")
+        if minimize or maximize or restore:
+            state = "minimize" if minimize else "maximize" if maximize else "restore"
+            return await _linux_wm("set_state", title, state)
+        return await _linux_wm("move_resize", title, x, y, width, height)
 
     @server.tool()
     async def sassy_snap_window(title: str, position: str = "left", monitor: int = 0) -> str:
@@ -556,7 +604,7 @@ def register(server):
                   center. monitor: 0 = primary (Windows multi-monitor aware).
         """
         if _platform.IS_WINDOWS:
-            return await _win_snap(title, position, monitor)
+            return await asyncio.to_thread(_win_snap, title, position, monitor)
         if _platform.IS_MACOS:
             return await _mac_snap(title, position)
-        return _linux_unsupported("window snap")
+        return await _linux_wm("snap", title, position, monitor)

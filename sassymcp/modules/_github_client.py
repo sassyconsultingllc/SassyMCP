@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-JSN7R5WX5A4D
 """SassyMCP GitHub Client - Shared HTTP client for GitHub API.
 
 Handles authentication, rate limiting, retries, and proper SHA management.
@@ -6,12 +9,13 @@ Used by both github_ops (full) and github_quick (lean) modules.
 Requires GITHUB_TOKEN env var or GITHUB_PERSONAL_ACCESS_TOKEN.
 """
 
+from __future__ import annotations
+
 import asyncio
-import base64
-import json
 import logging
 import os
-from typing import Any, Optional
+import re
+from typing import Any
 
 from sassymcp import __version__
 
@@ -32,6 +36,36 @@ class GitHubAPIError(Exception):
         super().__init__(f"GitHub API {status}: {message} [{url}]")
 
 
+# GitHub owner/repo names: letters, digits, '_', '-', '.'. Validated
+# centrally in request() so all ~86 tools get it without per-call-site
+# edits (audit: "owner/repo unvalidated"). A fabricated 400-style
+# GitHubAPIError is raised so every existing `except GitHubAPIError`
+# handler returns the clean error string.
+_OWNER_REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.\-]+$")
+_REPOS_PATH = re.compile(r"^/?repos/([^/]+)/([^/]+?)(?:/|$)")
+
+
+def _validate_owner_repo(path: str) -> None:
+    """Reject owner/repo segments outside the safe charset.
+
+    Skips full URLs (not our path space) and paths that don't start with
+    repos/{owner}/{repo} (e.g. /user, /search/*, GraphQL).
+    """
+    if path.startswith("http"):
+        return
+    m = _REPOS_PATH.match(path)
+    if not m:
+        return
+    owner, repo = m.group(1), m.group(2)
+    for label, value in (("owner", owner), ("repo", repo)):
+        if not _OWNER_REPO_PATTERN.match(value):
+            raise GitHubAPIError(
+                400,
+                f"invalid {label} {value!r}: only letters, digits, '_', '-', '.' allowed",
+                path,
+            )
+
+
 class GitHubClient:
     """Async GitHub REST API client with retry logic and rate-limit awareness."""
 
@@ -49,7 +83,7 @@ class GitHubClient:
             "X-GitHub-Api-Version": "2022-11-28",
             "User-Agent": f"SassyMCP/{__version__}",
         }
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -66,10 +100,11 @@ class GitHubClient:
         path: str,
         *,
         json_body: Any = None,
-        params: Optional[dict] = None,
+        params: dict | None = None,
         retries: int = 3,
     ) -> httpx.Response:
         """Make an authenticated GitHub API request with retry + rate-limit handling."""
+        _validate_owner_repo(path)
         client = await self._get_client()
         url = f"{self.BASE}/{path.lstrip('/')}" if not path.startswith("http") else path
 
@@ -138,7 +173,7 @@ class GitHubClient:
 
     # -- Helpers used by tools --
 
-    async def get_file_sha(self, owner: str, repo: str, path: str, branch: str = "") -> Optional[str]:
+    async def get_file_sha(self, owner: str, repo: str, path: str, branch: str = "") -> str | None:
         """Get the real blob SHA for a file (not ETag). Returns None if file doesn't exist."""
         params = {"ref": branch} if branch else {}
         resp = await self.get(f"repos/{owner}/{repo}/contents/{path}", params=params)
@@ -208,7 +243,7 @@ class GitHubClient:
 
 
 # Module-level singleton
-_client: Optional[GitHubClient] = None
+_client: GitHubClient | None = None
 
 
 def get_client() -> GitHubClient:

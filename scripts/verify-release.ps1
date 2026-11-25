@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-CAJU3HNNRRDV
 # Runs the verification commands declared in a release's notes.
 #
 # Convention: docs/releases/vX.Y.Z.md may contain a section like

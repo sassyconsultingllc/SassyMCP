@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+// Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+// CodeMark: SCLLC1-SassyMCP-UTW2ZJTW6J4K
 // SassyMCP OAuth Proxy Worker
 //
 // Sits between claude.ai (OAuth 2.1 client) and the SassyMCP bridge
@@ -17,6 +20,9 @@
 //   token:<access_token> — {client_id, issued_at, expires_at}
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
+// CORS * is required for MCP OAuth 2.1 DCR: Claude Web (and other hosted
+// clients) call /register and /token from origins we do not control.
+// Authorization is PKCE + PRE_AUTH_SECRET, not origin allowlisting.
 const CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",

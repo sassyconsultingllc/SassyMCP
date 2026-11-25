@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Shane Smith / Sassy Consulting LLC. All rights reserved.
+# Proprietary source. This notice is Copyright Management Information (17 U.S.C. 1202); removal or alteration prohibited.
+# CodeMark: SCLLC1-SassyMCP-66AHMHCOLKTF
 """LemonSqueezy License API client.
 
 SassyMCP sells through LemonSqueezy. LS issues the customer-facing
@@ -55,10 +58,12 @@ BILLING_TIMEOUT_SECONDS = 4
 # live, either by editing this file or by setting SASSYMCP_LS_VARIANT_MAP
 # to a JSON string mapping variant_id (string or int) → {tier, addons}.
 DEFAULT_VARIANT_MAP: dict[str, dict[str, Any]] = {
-    # Example shape — replace with real LS variant IDs:
-    # "123456": {"tier": "pro", "addons": []},
-    # "234567": {"tier": "pro", "addons": ["forensics"]},
-    # "345678": {"tier": "free", "addons": ["forensics"]},
+    # SassyMCP / SassyMCP Supporter ($25, license keys ON, activation limit 2).
+    "1753676": {"tier": "pro", "addons": []},
+    # SassyMCP Commercial License ($99/seat, license keys ON, activation
+    # limit 2). Records the commercial-use seat (LICENSE v2.0); like every
+    # tier it is a label only and gates nothing.
+    "2352600": {"tier": "commercial", "addons": []},
 }
 
 
