@@ -8,6 +8,9 @@ resolution-markers = [
     "python_full_version < '3.14' and sys_platform != 'win32'",
 ]
 
+[manifest]
+constraints = [{ name = "pydantic-settings", specifier = ">=2.14.2" }]
+
 [[package]]
 name = "annotated-types"
 version = "0.7.0"
@@ -1529,7 +1532,7 @@ name = "pyobjc-framework-cocoa"
 version = "12.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core" },
+    { name = "pyobjc-core", marker = "sys_platform != 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/02/a3/16ca9a15e77c061a9250afbae2eae26f2e1579eb8ca9462ae2d2c71e1169/pyobjc_framework_cocoa-12.1.tar.gz", hash = "sha256:5556c87db95711b985d5efdaaf01c917ddd41d148b1e52a0c66b1a2e2c5c1640", size = 2772191, upload-time = "2025-11-14T10:13:02.069Z" }
 wheels = [
@@ -3059,8 +3062,8 @@ name = "pyobjc-framework-quartz"
 version = "12.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core" },
-    { name = "pyobjc-framework-cocoa" },
+    { name = "pyobjc-core", marker = "sys_platform != 'win32'" },
+    { name = "pyobjc-framework-cocoa", marker = "sys_platform != 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/94/18/cc59f3d4355c9456fc945eae7fe8797003c4da99212dd531ad1b0de8a0c6/pyobjc_framework_quartz-12.1.tar.gz", hash = "sha256:27f782f3513ac88ec9b6c82d9767eef95a5cf4175ce88a1e5a65875fee799608", size = 3159099, upload-time = "2025-11-14T10:21:24.31Z" }
 wheels = [
@@ -3852,9 +3855,8 @@ version = "0.6.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "comtypes", marker = "sys_platform == 'win32'" },
-    { name = "python-xlib", marker = "sys_platform == 'linux'" },
     { name = "pywin32", marker = "sys_platform == 'win32'" },
-    { name = "six" },
+    { name = "six", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/2c/85/cc65e3b64e7473cc86c07f0b5c415d509402c03ef19dadc39c583835eb5f/pywinauto-0.6.9.tar.gz", hash = "sha256:94d710bfa796df245250f952ffa65d97233d9807bcd42e052b71b81af469b6de", size = 434734, upload-time = "2025-01-06T11:30:01.801Z" }
 wheels = [
@@ -4041,6 +4043,7 @@ dependencies = [
     { name = "pyautogui" },
     { name = "pyobjc-framework-cocoa", marker = "sys_platform == 'darwin'" },
     { name = "pyobjc-framework-quartz", marker = "sys_platform == 'darwin'" },
+    { name = "python-xlib", marker = "sys_platform == 'linux'" },
     { name = "pywinauto", marker = "sys_platform == 'win32'" },
     { name = "uvicorn" },
 ]
@@ -4096,6 +4099,7 @@ requires-dist = [
     { name = "pytesseract", marker = "extra == 'all'", specifier = ">=0.3.10" },
     { name = "pytesseract", marker = "extra == 'vision'", specifier = ">=0.3.10" },
     { name = "pytest", marker = "extra == 'dev'" },
+    { name = "python-xlib", marker = "sys_platform == 'linux'", specifier = ">=0.33" },
     { name = "pywebview", marker = "extra == 'all'", specifier = ">=5.0" },
     { name = "pywebview", marker = "extra == 'desktop'", specifier = ">=5.0" },
     { name = "pywinauto", marker = "sys_platform == 'win32'", specifier = ">=0.6.8" },
